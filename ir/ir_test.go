@@ -21,6 +21,31 @@ func TestEdgeRelationships(t *testing.T) {
 	require.False(t, edge.SharesPort(Edge{PortA: 3, PortB: 9}))
 }
 
+func TestComponentsRebuildAfterDeletion(t *testing.T) {
+	t.Parallel()
+
+	var graph Graph
+	left := graph.NewNode("left")
+	right := graph.NewNode("right")
+	edgeID := graph.ConnectNodes(left, RightSide, LeftSide, right)
+
+	var components Components
+	components.Build(&graph)
+	leftComponent, ok := components.ID(left)
+	require.True(t, ok)
+	rightComponent, ok := components.ID(right)
+	require.True(t, ok)
+	require.Equal(t, leftComponent, rightComponent)
+
+	require.NoError(t, graph.DeleteEdge(edgeID))
+	components.Build(&graph)
+	leftComponent, ok = components.ID(left)
+	require.True(t, ok)
+	rightComponent, ok = components.ID(right)
+	require.True(t, ok)
+	require.NotEqual(t, leftComponent, rightComponent)
+}
+
 func TestGraphValidate(t *testing.T) {
 	t.Parallel()
 

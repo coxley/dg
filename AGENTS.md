@@ -133,6 +133,12 @@ format. Cache failures never block diagram editing or saving.
 order. It reports ports at their anchor cells. It checks compact edge segments,
 so its cost does not depend on rendered edge length.
 
+`Layout.Selection()` owns index-aligned node and edge selection sets. It
+supports individual replacement and toggling, area intersection, iteration,
+whole-layout selection, and connected-component expansion. `ir.Components`
+provides the reusable union-find index; rebuilding it after graph mutations
+keeps edge deletion semantics correct.
+
 ### `document`
 
 `document.Document` is the versioned persisted schema. It stores live semantic
@@ -176,7 +182,13 @@ The TUI also supports:
 - ANSI highlighting for selected node outlines and edges
 - port-only highlighting while creating or reconnecting an edge
 - node creation at the cursor
-- two-step port-to-port edge creation
+- `l` line tool with direct port-to-port mouse dragging and a live orthogonal
+  preview
+- direct endpoint reconnection by dragging an edge within three cells of its
+  connected port
+- reconnection previews omit the original edge until the drag commits or
+  cancels
+- selected edges take mouse-hit priority over overlapping nodes and ports
 - edge endpoint reassignment without changing the edge ID
 - mouse hit selection and overlapping-hit cycling
 - mouse node dragging
@@ -189,6 +201,11 @@ The TUI also supports:
 - one history interaction per committed label edit, move, drag, connection, or
   deletion
 - committed final placement when focus loss or shutdown interrupts a drag
+- focus-colored area selection by dragging from an empty cell
+- Ctrl-click toggling for non-contiguous node and edge selection
+- Ctrl-A expansion through selected connected components, followed by
+  whole-document selection
+- grouped movement and deletion as one history interaction
 
 The model accepts pasted single-line labels and rejects pasted newlines before
 they reach the layout.

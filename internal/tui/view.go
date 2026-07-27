@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"math"
 	"strconv"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
@@ -15,10 +17,14 @@ const (
 )
 
 func (m *Model) View() tea.View {
+	frame, rows := m.frame, m.frameRows
+	if m.reconnecting && m.connectDragging {
+		frame, rows = m.connectFrame, m.connectFrameRows
+	}
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
-		m.frame,
-		m.frameRows,
+		frame,
+		rows,
 		m.viewport,
 		m.width,
 		m.diagramHeight(),
@@ -75,6 +81,12 @@ func (m *Model) appendStatusText(dst []byte) []byte {
 		dst = append(dst, '/')
 		return strconv.AppendInt(dst, int64(displayWidth(m.editBuffer)), 10)
 	}
+	if nodes, edges := m.selectedCounts(); nodes != 0 || edges != 0 {
+		dst = append(dst, "selected  nodes "...)
+		dst = strconv.AppendInt(dst, int64(nodes), 10)
+		dst = append(dst, "  edges "...)
+		return strconv.AppendInt(dst, int64(edges), 10)
+	}
 
 	dst = append(dst, m.mode.String()...)
 	dst = append(dst, "  ("...)
@@ -98,14 +110,14 @@ func (m *Model) appendStatusText(dst []byte) []byte {
 func (m *Model) helpLine() string {
 	switch m.mode {
 	case modeMove:
-		return "arrows/hjkl move node • enter/m/esc finish • mouse drag • ctrl+c quit"
+		return "arrows move selection • enter/m/esc finish • mouse drag • ctrl+c quit"
 	case modeEditLabel:
 		return "type • ctrl-a/e ends • alt-b back word • ctrl-w/u delete • enter/esc save"
 	case modeConnect:
 		if m.reconnecting {
-			return "select replacement port • enter/c/click move endpoint • esc cancel"
+			return "drag to replacement port • enter move endpoint • esc cancel"
 		}
-		return "select destination port • enter/c/click connect • esc cancel"
+		return "drag between ports • enter connects selected port • esc cancel"
 	case modeSavePath:
 		if m.status != "" {
 			return m.status
@@ -115,7 +127,7 @@ func (m *Model) helpLine() string {
 		}
 		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "arrows/hjkl move • tab cycle • n new • m move • e edit • c connect • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
+		return "arrows move • drag empty select • ctrl-click toggle • ctrl-a expand/all • n new • m move • e edit • l line/drag edge ends • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
 	}
 }
 
@@ -157,13 +169,25 @@ func (m *Model) appendViewport(
 		documentY := uint64(origin.Y) + uint64(screenY)
 		if documentY < uint64(frame.Bounds.Min.Y) ||
 			documentY >= uint64(frame.Bounds.Max().Y) {
-			dst = appendSpaces(dst, width)
+			dst = appendViewportSpaces(
+				dst,
+				width,
+				uint64(origin.X),
+				documentY,
+				m,
+			)
 			dst = append(dst, '\n')
 			continue
 		}
 		row := int(documentY - uint64(frame.Bounds.Min.Y))
 		if row >= len(rows) {
-			dst = appendSpaces(dst, width)
+			dst = appendViewportSpaces(
+				dst,
+				width,
+				uint64(origin.X),
+				documentY,
+				m,
+			)
 			dst = append(dst, '\n')
 			continue
 		}
@@ -219,11 +243,14 @@ func appendViewportRow(
 		visibleEnd := min(clusterEnd, viewportEnd)
 		targetX := int(visibleStart - viewportStart)
 		if gap := targetX - screenX; gap != 0 {
-			if styled {
-				dst = append(dst, selectionEnd...)
-				styled = false
-			}
-			dst = appendSpaces(dst, gap)
+			dst, styled = appendHighlightedSpaces(
+				dst,
+				gap,
+				viewportStart+uint64(screenX),
+				uint64(documentY),
+				model,
+				styled,
+			)
 		}
 		screenX = targetX
 
@@ -240,7 +267,14 @@ func appendViewportRow(
 			dst = append(dst, selectionEnd...)
 			styled = false
 		}
-		if visibleStart == clusterStart && visibleEnd == clusterEnd {
+		preview, hasPreview := previewGlyph(
+			model,
+			visibleStart,
+			uint64(documentY),
+		)
+		if hasPreview && clusterWidth == 1 {
+			dst = utf8.AppendRune(dst, preview)
+		} else if visibleStart == clusterStart && visibleEnd == clusterEnd {
 			dst = append(dst, cluster...)
 		} else {
 			dst = appendSpaces(dst, int(visibleEnd-visibleStart))
@@ -249,8 +283,20 @@ func appendViewportRow(
 	}
 	if styled {
 		dst = append(dst, selectionEnd...)
+		styled = false
 	}
-	return appendSpaces(dst, width-screenX)
+	dst, styled = appendHighlightedSpaces(
+		dst,
+		width-screenX,
+		viewportStart+uint64(screenX),
+		uint64(documentY),
+		model,
+		styled,
+	)
+	if styled {
+		dst = append(dst, selectionEnd...)
+	}
+	return dst
 }
 
 func (m *Model) highlightedRange(y, start, end uint32) bool {
@@ -263,8 +309,30 @@ func (m *Model) highlightedRange(y, start, end uint32) bool {
 }
 
 func (m *Model) highlightedPoint(point layout.Point) bool {
+	if m.selecting && m.marqueeArea().contains(point) {
+		return true
+	}
 	if m.mode == modeConnect {
 		return m.portAt(point)
+	}
+	if m.hasSelection() {
+		for nodeID := range m.geo.Selection().Nodes() {
+			if m.highlightForHit(
+				layout.Hit{ID: nodeID, Kind: layout.HitNode},
+				point,
+			) {
+				return true
+			}
+		}
+		for edgeID := range m.geo.Selection().Edges() {
+			if m.highlightForHit(
+				layout.Hit{ID: edgeID, Kind: layout.HitEdge},
+				point,
+			) {
+				return true
+			}
+		}
+		return false
 	}
 	hit, ok := m.primaryHighlight()
 	if !ok {
@@ -288,13 +356,94 @@ func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
 }
 
 func (m *Model) portAt(point layout.Point) bool {
+	_, ok := m.usablePortAt(point)
+	return ok
+}
+
+func (m *Model) usablePortAt(point layout.Point) (uint32, bool) {
 	for i := range m.geo.Ports {
 		portID := uint32(i)
 		if m.geo.PortUsable(portID) && m.geo.Ports[i].Anchor == point {
-			return true
+			return portID, true
 		}
 	}
-	return false
+	return 0, false
+}
+
+func (m *Model) connectionPreviewConnections(
+	point layout.Point,
+) (layout.Connections, bool) {
+	if m.connectPreviewLen < 2 {
+		return 0, false
+	}
+	var connections layout.Connections
+	for i := 1; i < int(m.connectPreviewLen); i++ {
+		start, finish := m.connectPreview[i-1], m.connectPreview[i]
+		if !pointOnOrthogonalSegment(point, start, finish) {
+			continue
+		}
+		connections |= connectionToward(point, start)
+		connections |= connectionToward(point, finish)
+	}
+	return connections, connections != 0
+}
+
+func (m *Model) refreshConnectionPreview() {
+	if !m.connectStarted || !m.geo.PortExists(m.connectSource) {
+		m.connectPreviewLen = 0
+		return
+	}
+	source := m.geo.Ports[m.connectSource]
+	end := m.cursor
+	var destination layout.Port
+	hasDestination := false
+	if portID, ok := m.usablePortAt(m.cursor); ok &&
+		portID != m.connectSource {
+		destination = m.geo.Ports[portID]
+		end = destination.Exit
+		hasDestination = true
+	}
+	bend := layout.NewPoint(end.X, source.Exit.Y)
+	if source.Exit.X == source.Anchor.X {
+		bend = layout.NewPoint(source.Exit.X, end.Y)
+	}
+	m.connectPreview = [...]layout.Point{
+		source.Anchor,
+		source.Exit,
+		bend,
+		end,
+		destination.Anchor,
+	}
+	m.connectPreviewLen = 4
+	if hasDestination {
+		m.connectPreviewLen++
+	}
+}
+
+func pointOnOrthogonalSegment(point, start, end layout.Point) bool {
+	return start.X == end.X &&
+		point.X == start.X &&
+		point.Y >= min(start.Y, end.Y) &&
+		point.Y <= max(start.Y, end.Y) ||
+		start.Y == end.Y &&
+			point.Y == start.Y &&
+			point.X >= min(start.X, end.X) &&
+			point.X <= max(start.X, end.X)
+}
+
+func connectionToward(point, other layout.Point) layout.Connections {
+	switch {
+	case other.Y < point.Y:
+		return layout.North
+	case other.X > point.X:
+		return layout.East
+	case other.Y > point.Y:
+		return layout.South
+	case other.X < point.X:
+		return layout.West
+	default:
+		return 0
+	}
 }
 
 func (m *Model) primaryHighlight() (layout.Hit, bool) {
@@ -331,4 +480,76 @@ func appendSpaces(dst []byte, count int) []byte {
 		dst = append(dst, ' ')
 	}
 	return dst
+}
+
+func appendViewportSpaces(
+	dst []byte,
+	count int,
+	startX, y uint64,
+	model *Model,
+) []byte {
+	dst, styled := appendHighlightedSpaces(
+		dst,
+		count,
+		startX,
+		y,
+		model,
+		false,
+	)
+	if styled {
+		dst = append(dst, selectionEnd...)
+	}
+	return dst
+}
+
+func appendHighlightedSpaces(
+	dst []byte,
+	count int,
+	startX, y uint64,
+	model *Model,
+	styled bool,
+) ([]byte, bool) {
+	if model == nil ||
+		!model.selecting &&
+			(model.mode != modeConnect || !model.connectStarted) {
+		if styled {
+			dst = append(dst, selectionEnd...)
+		}
+		return appendSpaces(dst, count), false
+	}
+	for offset := range max(count, 0) {
+		x := startX + uint64(offset)
+		selected := model != nil &&
+			x <= math.MaxUint32 &&
+			y <= math.MaxUint32 &&
+			model.highlightedPoint(
+				layout.NewPoint(uint32(x), uint32(y)),
+			)
+		if selected && !styled {
+			dst = append(dst, selectionStart...)
+			styled = true
+		} else if !selected && styled {
+			dst = append(dst, selectionEnd...)
+			styled = false
+		}
+		if preview, ok := previewGlyph(model, x, y); ok {
+			dst = utf8.AppendRune(dst, preview)
+		} else {
+			dst = append(dst, ' ')
+		}
+	}
+	return dst, styled
+}
+
+func previewGlyph(model *Model, x, y uint64) (rune, bool) {
+	if model == nil || x > math.MaxUint32 || y > math.MaxUint32 {
+		return 0, false
+	}
+	connections, ok := model.connectionPreviewConnections(
+		layout.NewPoint(uint32(x), uint32(y)),
+	)
+	if !ok {
+		return 0, false
+	}
+	return render.Glyph(connections), true
 }

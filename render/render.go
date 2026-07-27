@@ -62,6 +62,30 @@ func (e *Encoder) EncodeFrame(dst []byte, l *layout.Layout) (Frame, error) {
 	if err != nil {
 		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
 	}
+	return e.encodeFrame(dst, l, grid)
+}
+
+// EncodeFrameWithoutEdge renders a frame while omitting edgeID.
+func (e *Encoder) EncodeFrameWithoutEdge(
+	dst []byte,
+	l *layout.Layout,
+	edgeID uint32,
+) (Frame, error) {
+	if l == nil {
+		return Frame{}, errors.New("nil layout")
+	}
+	grid, err := layout.RasterizeWithoutEdgeInto(e.grid.Cells, l, edgeID)
+	if err != nil {
+		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
+	}
+	return e.encodeFrame(dst, l, grid)
+}
+
+func (e *Encoder) encodeFrame(
+	dst []byte,
+	l *layout.Layout,
+	grid layout.Grid,
+) (Frame, error) {
 	e.grid = grid
 
 	e.labels = slices.Grow(e.labels[:0], len(grid.Cells))[:len(grid.Cells)]
@@ -110,7 +134,7 @@ func encodeFrame(
 				buf.WriteString(labels[index])
 			case continuations[index]:
 			default:
-				buf.WriteRune(glyph(grid.Cells[index]))
+				buf.WriteRune(Glyph(grid.Cells[index]))
 			}
 		}
 		buf.WriteRune('\n')
@@ -155,7 +179,8 @@ func placeLabel(
 	return nil
 }
 
-func glyph(connections layout.Connections) rune {
+// Glyph returns the box-drawing rune for connections.
+func Glyph(connections layout.Connections) rune {
 	switch connections {
 	case 0:
 		return ' '

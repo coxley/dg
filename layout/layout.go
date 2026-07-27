@@ -145,6 +145,7 @@ type Layout struct {
 	portUsable  []bool
 	draftUsable []bool
 	history     *History
+	selection   Selection
 }
 
 // Option configures a Layout.
@@ -161,6 +162,7 @@ func New(options ...Option) (*Layout, error) {
 		option(l)
 	}
 	l.graph = cloneGraph(l.graph)
+	l.selection.attach(l)
 	if err := l.initializeGeometry(); err != nil {
 		return nil, err
 	}
@@ -238,6 +240,7 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.origins[nodeID] = point
 	l.Nodes[nodeID] = node
+	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.commitNodePorts(nodeID)
 	if l.history != nil {
 		l.history.record(historyChange{
@@ -307,14 +310,14 @@ func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 
 // ConnectNodes connects side-constrained center ports and returns the edge index.
 func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) uint32 {
-	existed := false
-	if l.history != nil {
-		portA, _ := l.graph.PickCenterPort(nodeA, sideA)
-		portB, _ := l.graph.PickCenterPort(nodeB, sideB)
-		_, existed = l.connectedEdge(portA, portB)
-	}
+	portA, _ := l.graph.PickCenterPort(nodeA, sideA)
+	portB, _ := l.graph.PickCenterPort(nodeB, sideB)
+	_, existed := l.connectedEdge(portA, portB)
 	edgeID := l.graph.ConnectNodes(nodeA, sideA, sideB, nodeB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	if !existed {
+		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
+	}
 	if l.history != nil && !existed {
 		l.history.record(historyChange{
 			kind:      historyCreateEdge,
@@ -343,12 +346,12 @@ func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
 	if portA == portB {
 		return 0, ir.ErrSamePort
 	}
-	existed := false
-	if l.history != nil {
-		_, existed = l.connectedEdge(portA, portB)
-	}
+	_, existed := l.connectedEdge(portA, portB)
 	edgeID := l.graph.ConnectPorts(portA, portB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	if !existed {
+		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
+	}
 	if l.history != nil && !existed {
 		l.history.record(historyChange{
 			kind:      historyCreateEdge,
@@ -381,6 +384,7 @@ func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
 		return err
 	}
 	l.Edges[edgeID] = Edge{}
+	l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 	if l.history != nil && previous != l.graph.Edges[edgeID] {
 		l.history.record(historyChange{
 			kind:       historyReconnectEdge,
@@ -428,6 +432,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		}
 		if l.graph.EdgeIncidentTo(uint32(edgeID), nodeID) {
 			l.Edges[edgeID] = Edge{}
+			l.selection.discard(Hit{ID: uint32(edgeID), Kind: HitEdge})
 		}
 	}
 	for _, portID := range l.graph.Nodes[nodeID].Ports {
@@ -439,6 +444,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	}
 	l.origins[nodeID] = Point{}
 	l.Nodes[nodeID] = Node{}
+	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	if l.history != nil {
 		l.history.record(historyChange{
 			kind: historyDeleteNode,
@@ -490,6 +496,15 @@ func (l *Layout) EdgePorts(edgeID uint32) (uint32, uint32, error) {
 	}
 	edge := l.graph.Edges[edgeID]
 	return edge.PortA, edge.PortB, nil
+}
+
+// EdgeNodes returns the node IDs joined by an edge.
+func (l *Layout) EdgeNodes(edgeID uint32) (uint32, uint32, error) {
+	portA, portB, err := l.EdgePorts(edgeID)
+	if err != nil {
+		return 0, 0, err
+	}
+	return l.graph.Ports[portA].Node, l.graph.Ports[portB].Node, nil
 }
 
 // NodePorts yields the IDs of ports owned by nodeID.

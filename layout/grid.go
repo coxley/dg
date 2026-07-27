@@ -98,6 +98,24 @@ func Rasterize(l *Layout) (Grid, error) {
 // RasterizeInto converts layout geometry into directional cell occupancy,
 // reusing cells when it has sufficient capacity.
 func RasterizeInto(cells []Connections, l *Layout) (Grid, error) {
+	return rasterizeInto(cells, l, math.MaxUint32)
+}
+
+// RasterizeWithoutEdgeInto converts layout geometry into directional cell
+// occupancy while omitting edgeID.
+func RasterizeWithoutEdgeInto(
+	cells []Connections,
+	l *Layout,
+	edgeID uint32,
+) (Grid, error) {
+	return rasterizeInto(cells, l, edgeID)
+}
+
+func rasterizeInto(
+	cells []Connections,
+	l *Layout,
+	excludedEdge uint32,
+) (Grid, error) {
 	if l == nil {
 		return Grid{}, errors.New("nil layout")
 	}
@@ -121,7 +139,7 @@ func RasterizeInto(cells []Connections, l *Layout) (Grid, error) {
 		}
 	}
 	for i := range l.Edges {
-		if l.Edges[i].Empty() {
+		if uint32(i) == excludedEdge || l.Edges[i].Empty() {
 			continue
 		}
 		if err := grid.AddPath(l.Edges[i].Points); err != nil {

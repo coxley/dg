@@ -118,6 +118,7 @@ func (m *Model) replaceLabelRange(start, end int, replacement []byte) {
 
 func (m *Model) startLabelEdit(hit layout.Hit) {
 	label := m.geo.Label(hit.ID)
+	m.selectOnly(hit)
 	m.target = hit
 	m.editBuffer = append(m.editBuffer[:0], label...)
 	m.editDraft = m.editDraft[:0]
