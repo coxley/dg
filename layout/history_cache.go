@@ -179,7 +179,11 @@ func (h *History) Restore(path string) (bool, error) {
 		h.setCacheError(nil)
 		return false, nil
 	}
-	currentDigest, err := semanticHistoryDigest(h.layout.historyState())
+	currentState := h.layout.historyState()
+	if len(cache.Saved.Layers) == 0 {
+		currentState.order = nil
+	}
+	currentDigest, err := semanticHistoryDigest(currentState)
 	if err != nil {
 		return false, err
 	}
@@ -401,8 +405,14 @@ type historyCacheLayout struct {
 	Nodes   []historyCacheNode `json:"nodes"`
 	Ports   []historyCachePort `json:"ports"`
 	Edges   []historyCacheEdge `json:"edges"`
+	Layers  []historyCacheHit  `json:"layers,omitempty"`
 	Padding Padding            `json:"padding"`
 	Router  Router             `json:"router"`
+}
+
+type historyCacheHit struct {
+	ID   uint32  `json:"id"`
+	Kind HitKind `json:"kind"`
 }
 
 type historyCacheNode struct {
@@ -441,6 +451,9 @@ type historyCacheChange struct {
 	AfterLabel  string            `json:"after_label,omitempty"`
 	BeforeEdge  historyCacheEdge  `json:"before_edge"`
 	AfterEdge   historyCacheEdge  `json:"after_edge"`
+	LayerHit    historyCacheHit   `json:"layer_hit"`
+	BeforeLayer uint32            `json:"before_layer"`
+	AfterLayer  uint32            `json:"after_layer"`
 	Node        historyCacheHNode `json:"node"`
 }
 
@@ -451,6 +464,12 @@ type historyCacheHNode struct {
 	Size   Size                `json:"size,omitzero"`
 	Ports  []historyCacheHPort `json:"ports,omitempty"`
 	Edges  []historyCacheHEdge `json:"edges,omitempty"`
+	Layers []historyCacheLayer `json:"layers,omitempty"`
+}
+
+type historyCacheLayer struct {
+	Hit   historyCacheHit `json:"hit"`
+	Index uint32          `json:"index"`
 }
 
 type historyCacheHPort struct {
@@ -546,8 +565,12 @@ func cacheLayout(state layoutHistoryState) historyCacheLayout {
 		Nodes:   make([]historyCacheNode, len(state.graph.Nodes)),
 		Ports:   make([]historyCachePort, len(state.graph.Ports)),
 		Edges:   make([]historyCacheEdge, len(state.graph.Edges)),
+		Layers:  make([]historyCacheHit, len(state.order)),
 		Padding: state.padding,
 		Router:  state.router,
+	}
+	for i, hit := range state.order {
+		cache.Layers[i] = cacheHit(hit)
 	}
 	for i, node := range state.graph.Nodes {
 		if !state.graph.NodeExists(uint32(i)) {
@@ -589,8 +612,16 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 		},
 		origins: make([]Point, len(c.Nodes)),
 		sizes:   make([]Size, len(c.Nodes)),
+		order:   make([]Hit, len(c.Layers)),
 		padding: c.Padding,
 		router:  c.Router,
+	}
+	for i, hit := range c.Layers {
+		decoded, ok := hit.hit()
+		if !ok {
+			return layoutHistoryState{}, false
+		}
+		state.order[i] = decoded
 	}
 	for i, node := range c.Nodes {
 		if node.Live {
@@ -626,6 +657,11 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 	if err := state.graph.Validate(); err != nil {
 		return layoutHistoryState{}, false
 	}
+	if len(state.order) != 0 {
+		if err := validateDrawOrder(&state.graph, state.order); err != nil {
+			return layoutHistoryState{}, false
+		}
+	}
 	return state, true
 }
 
@@ -645,6 +681,9 @@ func cacheChange(change historyChange) historyCacheChange {
 		AfterLabel:  change.afterLabel,
 		BeforeEdge:  cacheEdge(change.beforeEdge),
 		AfterEdge:   cacheEdge(change.afterEdge),
+		LayerHit:    cacheHit(change.layerHit),
+		BeforeLayer: change.beforeLayer,
+		AfterLayer:  change.afterLayer,
 		Node:        cacheHistoryNode(change.node),
 	}
 }
@@ -665,6 +704,13 @@ func cacheHistoryNode(node historyNode) historyCacheHNode {
 		Size:   node.Size,
 		Ports:  make([]historyCacheHPort, len(node.Ports)),
 		Edges:  make([]historyCacheHEdge, len(node.Edges)),
+		Layers: make([]historyCacheLayer, len(node.Layers)),
+	}
+	for i, layer := range node.Layers {
+		cached.Layers[i] = historyCacheLayer{
+			Hit:   cacheHit(layer.Hit),
+			Index: layer.Index,
+		}
 	}
 	for i, port := range node.Ports {
 		cached.Ports[i] = historyCacheHPort{
@@ -700,11 +746,15 @@ func (c historyCacheFile) historyEntries() ([]historyEntry, bool) {
 }
 
 func (c historyCacheChange) historyChange() (historyChange, bool) {
-	if c.Kind < historyCreateNode || c.Kind > historySetNodeSize {
+	if c.Kind < historyCreateNode || c.Kind > historySetLayer {
 		return historyChange{}, false
 	}
 	node, ok := c.Node.historyNode()
 	if !ok {
+		return historyChange{}, false
+	}
+	layerHit, ok := c.LayerHit.hit()
+	if !ok && c.Kind == historySetLayer {
 		return historyChange{}, false
 	}
 	return historyChange{
@@ -718,6 +768,9 @@ func (c historyCacheChange) historyChange() (historyChange, bool) {
 		afterLabel:  c.AfterLabel,
 		beforeEdge:  ir.Edge{PortA: c.BeforeEdge.PortA, PortB: c.BeforeEdge.PortB},
 		afterEdge:   ir.Edge{PortA: c.AfterEdge.PortA, PortB: c.AfterEdge.PortB},
+		layerHit:    layerHit,
+		beforeLayer: c.BeforeLayer,
+		afterLayer:  c.AfterLayer,
 		node:        node,
 	}, true
 }
@@ -730,6 +783,7 @@ func (c historyCacheHNode) historyNode() (historyNode, bool) {
 		Size:   c.Size,
 		Ports:  make([]historyPort, len(c.Ports)),
 		Edges:  make([]historyEdge, len(c.Edges)),
+		Layers: make([]historyLayer, len(c.Layers)),
 	}
 	for i, port := range c.Ports {
 		side, ok := historySide(port.Side)
@@ -751,7 +805,23 @@ func (c historyCacheHNode) historyNode() (historyNode, bool) {
 			Edge: ir.Edge{PortA: edge.PortA, PortB: edge.PortB},
 		}
 	}
+	for i, layer := range c.Layers {
+		hit, ok := layer.Hit.hit()
+		if !ok {
+			return historyNode{}, false
+		}
+		node.Layers[i] = historyLayer{Hit: hit, Index: layer.Index}
+	}
 	return node, true
+}
+
+func cacheHit(hit Hit) historyCacheHit {
+	return historyCacheHit(hit)
+}
+
+func (c historyCacheHit) hit() (Hit, bool) {
+	hit := Hit(c)
+	return hit, hit.Kind == HitNode || hit.Kind == HitEdge
 }
 
 func historySide(value string) (ir.Side, bool) {
@@ -770,11 +840,17 @@ func historySide(value string) (ir.Side, bool) {
 }
 
 type semanticHistoryState struct {
-	Nodes   []semanticHistoryNode `json:"nodes"`
-	Ports   []semanticHistoryPort `json:"ports"`
-	Edges   []semanticHistoryEdge `json:"edges"`
-	Padding Padding               `json:"padding"`
-	Router  Router                `json:"router"`
+	Nodes   []semanticHistoryNode  `json:"nodes"`
+	Ports   []semanticHistoryPort  `json:"ports"`
+	Edges   []semanticHistoryEdge  `json:"edges"`
+	Layers  []semanticHistoryLayer `json:"layers,omitempty"`
+	Padding Padding                `json:"padding"`
+	Router  Router                 `json:"router"`
+}
+
+type semanticHistoryLayer struct {
+	Kind HitKind `json:"kind"`
+	ID   uint32  `json:"id"`
 }
 
 type semanticHistoryNode struct {
@@ -795,6 +871,11 @@ type semanticHistoryEdge struct {
 }
 
 func semanticHistoryDigest(state layoutHistoryState) (string, error) {
+	if len(state.order) != 0 {
+		if err := validateDrawOrder(&state.graph, state.order); err != nil {
+			return "", fmt.Errorf("hash history state: %w", err)
+		}
+	}
 	semantic := semanticHistoryState{
 		Padding: state.padding,
 		Router:  state.router,
@@ -803,11 +884,13 @@ func semanticHistoryDigest(state layoutHistoryState) (string, error) {
 		Edges:   make([]semanticHistoryEdge, 0, len(state.graph.Edges)),
 	}
 	portIDs := make([]uint32, len(state.graph.Ports))
+	nodeIDs := make([]uint32, len(state.graph.Nodes))
 	for nodeID := range state.graph.Nodes {
 		if !state.graph.NodeExists(uint32(nodeID)) {
 			continue
 		}
 		source := state.graph.Nodes[nodeID]
+		nodeIDs[nodeID] = uint32(len(semantic.Nodes))
 		node := semanticHistoryNode{
 			Label:  source.Label,
 			Origin: state.origins[nodeID],
@@ -825,15 +908,29 @@ func semanticHistoryDigest(state layoutHistoryState) (string, error) {
 		}
 		semantic.Nodes = append(semantic.Nodes, node)
 	}
+	edgeIDs := make([]uint32, len(state.graph.Edges))
 	for edgeID := range state.graph.Edges {
 		if !state.graph.EdgeExists(uint32(edgeID)) {
 			continue
 		}
 		edge := state.graph.Edges[edgeID]
+		edgeIDs[edgeID] = uint32(len(semantic.Edges))
 		semantic.Edges = append(semantic.Edges, semanticHistoryEdge{
 			PortA: portIDs[edge.PortA],
 			PortB: portIDs[edge.PortB],
 		})
+	}
+	for _, hit := range state.order {
+		layer := semanticHistoryLayer{Kind: hit.Kind}
+		switch hit.Kind {
+		case HitNode:
+			layer.ID = nodeIDs[hit.ID]
+		case HitEdge:
+			layer.ID = edgeIDs[hit.ID]
+		default:
+			return "", fmt.Errorf("hash history state: invalid layer %+v", hit)
+		}
+		semantic.Layers = append(semantic.Layers, layer)
 	}
 	data, err := json.Marshal(semantic)
 	if err != nil {

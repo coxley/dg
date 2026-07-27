@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"cmp"
 	"math"
+	"slices"
 	"strconv"
 	"unicode/utf8"
 
@@ -127,7 +129,7 @@ func (m *Model) helpLine() string {
 		}
 		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "arrows move • left-drag move • right-drag resize • drag empty select • ctrl-click toggle • ctrl-a expand/all • n new • e edit • l line/drag edge ends • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
+		return "arrows move • left-drag move • right-drag resize • [/] layer • shift-[/] back/front • drag empty select • ctrl-click toggle • ctrl-a expand/all • n new • e edit • l line • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
 	}
 }
 
@@ -373,76 +375,70 @@ func (m *Model) usablePortAt(point layout.Point) (uint32, bool) {
 func (m *Model) connectionPreviewConnections(
 	point layout.Point,
 ) (layout.Connections, bool) {
-	if m.connectPreviewLen < 2 {
+	index, ok := slices.BinarySearchFunc(
+		m.connectRaster,
+		point,
+		func(cell layout.RasterCell, point layout.Point) int {
+			if order := cmp.Compare(cell.Point.Y, point.Y); order != 0 {
+				return order
+			}
+			return cmp.Compare(cell.Point.X, point.X)
+		},
+	)
+	if !ok {
 		return 0, false
 	}
-	var connections layout.Connections
-	for i := 1; i < int(m.connectPreviewLen); i++ {
-		start, finish := m.connectPreview[i-1], m.connectPreview[i]
-		if !pointOnOrthogonalSegment(point, start, finish) {
-			continue
-		}
-		connections |= connectionToward(point, start)
-		connections |= connectionToward(point, finish)
-	}
-	return connections, connections != 0
+	return m.connectRaster[index].Connections, true
 }
 
 func (m *Model) refreshConnectionPreview() {
 	if !m.connectStarted || !m.geo.PortExists(m.connectSource) {
-		m.connectPreviewLen = 0
+		m.connectPreview = m.connectPreview[:0]
+		m.connectRaster = m.connectRaster[:0]
 		return
 	}
-	source := m.geo.Ports[m.connectSource]
-	end := m.cursor
-	var destination layout.Port
-	hasDestination := false
+	var (
+		preview []layout.Point
+		err     error
+	)
+	if m.reconnecting {
+		preview, err = m.geo.PreviewRouteWithoutEdge(
+			m.connectPreview[:0],
+			m.connectSource,
+			m.cursor,
+			m.connectEdge,
+		)
+	} else {
+		preview, err = m.geo.PreviewRoute(
+			m.connectPreview[:0],
+			m.connectSource,
+			m.cursor,
+		)
+	}
+	if err != nil {
+		m.connectPreview = m.connectPreview[:0]
+		m.connectRaster = m.connectRaster[:0]
+		return
+	}
+	m.connectPreview = preview
+	destination := layout.NoPortID
 	if portID, ok := m.usablePortAt(m.cursor); ok &&
 		portID != m.connectSource {
-		destination = m.geo.Ports[portID]
-		end = destination.Exit
-		hasDestination = true
+		destination = portID
 	}
-	bend := layout.NewPoint(end.X, source.Exit.Y)
-	if source.Exit.X == source.Anchor.X {
-		bend = layout.NewPoint(source.Exit.X, end.Y)
-	}
-	m.connectPreview = [...]layout.Point{
-		source.Anchor,
-		source.Exit,
-		bend,
-		end,
-		destination.Anchor,
-	}
-	m.connectPreviewLen = 4
-	if hasDestination {
-		m.connectPreviewLen++
-	}
-}
-
-func pointOnOrthogonalSegment(point, start, end layout.Point) bool {
-	return start.X == end.X &&
-		point.X == start.X &&
-		point.Y >= min(start.Y, end.Y) &&
-		point.Y <= max(start.Y, end.Y) ||
-		start.Y == end.Y &&
-			point.Y == start.Y &&
-			point.X >= min(start.X, end.X) &&
-			point.X <= max(start.X, end.X)
-}
-
-func connectionToward(point, other layout.Point) layout.Connections {
-	switch {
-	case other.Y < point.Y:
-		return layout.North
-	case other.X > point.X:
-		return layout.East
-	case other.Y > point.Y:
-		return layout.South
-	case other.X < point.X:
-		return layout.West
-	default:
-		return 0
+	m.connectRaster, err = m.encoder.RasterizeEdge(
+		m.connectRaster[:0],
+		m.geo,
+		layout.RasterEdge{
+			Points: preview,
+			PortA:  m.connectSource,
+			PortB:  destination,
+		},
+	)
+	if err != nil {
+		m.connectPreview = m.connectPreview[:0]
+		m.connectRaster = m.connectRaster[:0]
+		return
 	}
 }
 
@@ -545,9 +541,8 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 	if model == nil || x > math.MaxUint32 || y > math.MaxUint32 {
 		return 0, false
 	}
-	connections, ok := model.connectionPreviewConnections(
-		layout.NewPoint(uint32(x), uint32(y)),
-	)
+	point := layout.NewPoint(uint32(x), uint32(y))
+	connections, ok := model.connectionPreviewConnections(point)
 	if !ok {
 		return 0, false
 	}

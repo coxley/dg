@@ -24,6 +24,7 @@ type Document struct {
 	Nodes   []Node  `json:"nodes"`
 	Ports   []Port  `json:"ports"`
 	Edges   []Edge  `json:"edges"`
+	Layers  []Layer `json:"layers,omitempty"`
 	Options Options `json:"options"`
 }
 
@@ -69,6 +70,20 @@ type Edge struct {
 	PortB uint32 `json:"port_b"`
 }
 
+// Layer identifies one node or edge in back-to-front order.
+type Layer struct {
+	Kind LayerKind `json:"kind"`
+	ID   uint32    `json:"id"`
+}
+
+// LayerKind identifies a drawable object type.
+type LayerKind string
+
+const (
+	LayerNode LayerKind = "node"
+	LayerEdge LayerKind = "edge"
+)
+
 // Options stores layout and routing configuration.
 type Options struct {
 	Padding Padding `json:"padding"`
@@ -89,10 +104,11 @@ type Router struct {
 
 // Costs stores route-scoring dimensions.
 type Costs struct {
-	Step       uint32 `json:"step"`
-	SharedStep uint32 `json:"shared_step"`
-	Bend       uint32 `json:"bend"`
-	Crossing   uint32 `json:"crossing"`
+	Step         uint32 `json:"step"`
+	SharedStep   uint32 `json:"shared_step"`
+	Bend         uint32 `json:"bend"`
+	Crossing     uint32 `json:"crossing"`
+	EndpointStep uint32 `json:"endpoint_step"`
 }
 
 // FromLayout returns a compact document containing the layout's live objects.
@@ -112,10 +128,11 @@ func FromLayout(geo *layout.Layout) Document {
 			},
 			Router: Router{
 				Costs: Costs{
-					Step:       router.Costs.Step,
-					SharedStep: router.Costs.SharedStep,
-					Bend:       router.Costs.Bend,
-					Crossing:   router.Costs.Crossing,
+					Step:         router.Costs.Step,
+					SharedStep:   router.Costs.SharedStep,
+					Bend:         router.Costs.Bend,
+					Crossing:     router.Costs.Crossing,
+					EndpointStep: router.Costs.EndpointStep,
 				},
 				ReroutePasses: router.ReroutePasses,
 			},
@@ -123,11 +140,13 @@ func FromLayout(geo *layout.Layout) Document {
 	}
 
 	portIDs := make([]uint32, len(graph.Ports))
+	nodeIDs := make([]uint32, len(graph.Nodes))
 	for nodeID := range graph.Nodes {
 		if !graph.NodeExists(uint32(nodeID)) {
 			continue
 		}
 		source := &graph.Nodes[nodeID]
+		nodeIDs[nodeID] = uint32(len(doc.Nodes))
 		node := Node{
 			Label: source.Label,
 			Origin: Point{
@@ -150,15 +169,33 @@ func FromLayout(geo *layout.Layout) Document {
 		}
 		doc.Nodes = append(doc.Nodes, node)
 	}
+	edgeIDs := make([]uint32, len(graph.Edges))
 	for edgeID := range graph.Edges {
 		if !graph.EdgeExists(uint32(edgeID)) {
 			continue
 		}
 		edge := graph.Edges[edgeID]
+		edgeIDs[edgeID] = uint32(len(doc.Edges))
 		doc.Edges = append(doc.Edges, Edge{
 			PortA: portIDs[edge.PortA],
 			PortB: portIDs[edge.PortB],
 		})
+	}
+	for hit := range geo.DrawOrder() {
+		switch hit.Kind {
+		case layout.HitNode:
+			doc.Layers = append(doc.Layers, Layer{
+				Kind: LayerNode,
+				ID:   nodeIDs[hit.ID],
+			})
+		case layout.HitEdge:
+			doc.Layers = append(doc.Layers, Layer{
+				Kind: LayerEdge,
+				ID:   edgeIDs[hit.ID],
+			})
+		case layout.HitPort:
+			continue
+		}
 	}
 	return doc
 }
@@ -187,7 +224,8 @@ func Unmarshal(data []byte) (Document, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 
-	var doc Document
+	doc := Document{}
+	doc.Options.Router.Costs.EndpointStep = layout.DefaultRouter().Costs.EndpointStep
 	if err := decoder.Decode(&doc); err != nil {
 		return Document{}, fmt.Errorf("decode document: %w", err)
 	}
@@ -216,15 +254,21 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 	}
 	router := layout.Router{
 		Costs: layout.Costs{
-			Step:       d.Options.Router.Costs.Step,
-			SharedStep: d.Options.Router.Costs.SharedStep,
-			Bend:       d.Options.Router.Costs.Bend,
-			Crossing:   d.Options.Router.Costs.Crossing,
+			Step:         d.Options.Router.Costs.Step,
+			SharedStep:   d.Options.Router.Costs.SharedStep,
+			Bend:         d.Options.Router.Costs.Bend,
+			Crossing:     d.Options.Router.Costs.Crossing,
+			EndpointStep: d.Options.Router.Costs.EndpointStep,
 		},
 		ReroutePasses: d.Options.Router.ReroutePasses,
 	}
+	drawOrder, err := d.drawOrder()
+	if err != nil {
+		return nil, err
+	}
 	baseOptions := []layout.Option{
 		layout.WithGraph(graph),
+		layout.WithDrawOrder(drawOrder),
 		layout.WithPadding(
 			d.Options.Padding.Horizontal,
 			d.Options.Padding.Vertical,
@@ -252,6 +296,54 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		history.Clear()
 	}
 	return geo, nil
+}
+
+func (d Document) drawOrder() ([]layout.Hit, error) {
+	if len(d.Layers) == 0 {
+		return nil, nil
+	}
+	want := len(d.Nodes) + len(d.Edges)
+	if len(d.Layers) != want {
+		return nil, fmt.Errorf(
+			"document contains %d layers, want %d",
+			len(d.Layers),
+			want,
+		)
+	}
+	order := make([]layout.Hit, len(d.Layers))
+	seenNodes := make([]bool, len(d.Nodes))
+	seenEdges := make([]bool, len(d.Edges))
+	for i, layer := range d.Layers {
+		var seen []bool
+		switch layer.Kind {
+		case LayerNode:
+			order[i] = layout.Hit{ID: layer.ID, Kind: layout.HitNode}
+			seen = seenNodes
+		case LayerEdge:
+			order[i] = layout.Hit{ID: layer.ID, Kind: layout.HitEdge}
+			seen = seenEdges
+		default:
+			return nil, fmt.Errorf("layer %d has unknown kind %q", i, layer.Kind)
+		}
+		if uint64(layer.ID) >= uint64(len(seen)) {
+			return nil, fmt.Errorf(
+				"layer %d references unknown %s %d",
+				i,
+				layer.Kind,
+				layer.ID,
+			)
+		}
+		if seen[layer.ID] {
+			return nil, fmt.Errorf(
+				"layer %d duplicates %s %d",
+				i,
+				layer.Kind,
+				layer.ID,
+			)
+		}
+		seen[layer.ID] = true
+	}
+	return order, nil
 }
 
 func (d Document) graph() (ir.Graph, error) {

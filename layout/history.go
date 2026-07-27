@@ -26,6 +26,7 @@ const (
 	historyDeleteEdge
 	historyReconnectEdge
 	historySetNodeSize
+	historySetLayer
 )
 
 type historyPort struct {
@@ -38,6 +39,11 @@ type historyEdge struct {
 	Edge ir.Edge
 }
 
+type historyLayer struct {
+	Hit   Hit
+	Index uint32
+}
+
 type historyNode struct {
 	ID     uint32
 	Label  string
@@ -45,6 +51,7 @@ type historyNode struct {
 	Size   Size
 	Ports  []historyPort
 	Edges  []historyEdge
+	Layers []historyLayer
 }
 
 type historyChange struct {
@@ -59,6 +66,9 @@ type historyChange struct {
 	afterLabel  string
 	beforeEdge  ir.Edge
 	afterEdge   ir.Edge
+	layerHit    Hit
+	beforeLayer uint32
+	afterLayer  uint32
 	node        historyNode
 }
 
@@ -275,8 +285,12 @@ func (h *History) record(change historyChange) {
 func (h *History) coalesce(change historyChange) bool {
 	if change.kind != historySetLabel &&
 		change.kind != historyPlaceNode &&
-		change.kind != historySetNodeSize {
+		change.kind != historySetNodeSize &&
+		change.kind != historySetLayer {
 		return false
+	}
+	if change.kind == historySetLayer {
+		return h.coalesceLayer(change)
 	}
 	for i := len(h.active.changes) - 1; i >= 0; i-- {
 		previous := &h.active.changes[i]
@@ -284,7 +298,7 @@ func (h *History) coalesce(change historyChange) bool {
 			(previous.kind == historyCreateNode || previous.kind == historyDeleteNode) {
 			return false
 		}
-		if previous.id != change.id || previous.kind != change.kind {
+		if previous.kind != change.kind || previous.id != change.id {
 			continue
 		}
 		if coalesceChange(previous, change) {
@@ -293,6 +307,33 @@ func (h *History) coalesce(change historyChange) bool {
 		return true
 	}
 	return false
+}
+
+func (h *History) coalesceLayer(change historyChange) bool {
+	for i := len(h.active.changes) - 1; i >= 0; i-- {
+		previous := &h.active.changes[i]
+		if previous.kind != historySetLayer {
+			if layerCoalescingBarrier(previous.kind) {
+				return false
+			}
+			continue
+		}
+		if previous.layerHit != change.layerHit {
+			return false
+		}
+		if coalesceChange(previous, change) {
+			h.active.changes = slices.Delete(h.active.changes, i, i+1)
+		}
+		return true
+	}
+	return false
+}
+
+func layerCoalescingBarrier(kind historyKind) bool {
+	return kind == historyCreateNode ||
+		kind == historyDeleteNode ||
+		kind == historyCreateEdge ||
+		kind == historyDeleteEdge
 }
 
 func coalesceChange(previous *historyChange, change historyChange) bool {
@@ -306,6 +347,9 @@ func coalesceChange(previous *historyChange, change historyChange) bool {
 	case historySetNodeSize:
 		previous.afterSize = change.afterSize
 		return previous.beforeSize == previous.afterSize
+	case historySetLayer:
+		previous.afterLayer = change.afterLayer
+		return previous.beforeLayer == previous.afterLayer
 	default:
 		return false
 	}
@@ -426,20 +470,34 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 		return h.layout.setNodeSize(change.id, size)
 	case historyCreateEdge:
 		if forward {
-			return h.layout.restoreHistoryEdge(change.id, change.afterEdge)
+			return h.layout.restoreHistoryEdge(
+				change.id,
+				change.afterEdge,
+				int(change.afterLayer),
+			)
 		}
 		return h.layout.DeleteEdge(change.id)
 	case historyDeleteEdge:
 		if forward {
 			return h.layout.DeleteEdge(change.id)
 		}
-		return h.layout.restoreHistoryEdge(change.id, change.beforeEdge)
+		return h.layout.restoreHistoryEdge(
+			change.id,
+			change.beforeEdge,
+			int(change.beforeLayer),
+		)
 	case historyReconnectEdge:
 		edge := change.beforeEdge
 		if forward {
 			edge = change.afterEdge
 		}
-		return h.layout.restoreHistoryEdge(change.id, edge)
+		return h.layout.restoreHistoryEdge(change.id, edge, -1)
+	case historySetLayer:
+		index := change.beforeLayer
+		if forward {
+			index = change.afterLayer
+		}
+		return h.layout.setLayerIndex(change.layerHit, int(index))
 	default:
 		return fmt.Errorf("unknown history change %d", change.kind)
 	}
@@ -449,6 +507,7 @@ type layoutHistoryState struct {
 	graph   ir.Graph
 	origins []Point
 	sizes   []Size
+	order   []Hit
 	padding Padding
 	router  Router
 }
@@ -458,6 +517,7 @@ func (l *Layout) historyState() layoutHistoryState {
 		graph:   l.graph.Clone(),
 		origins: slices.Clone(l.origins),
 		sizes:   slices.Clone(l.explicitSizes),
+		order:   slices.Clone(l.drawOrder),
 		padding: l.padding,
 		router:  l.router,
 	}
@@ -467,6 +527,7 @@ func (l *Layout) restoreHistoryState(state layoutHistoryState) error {
 	l.graph = state.graph.Clone()
 	l.padding = state.padding
 	l.router = state.router
+	l.drawOrder = slices.Clone(state.order)
 	if err := l.initializeGeometry(); err != nil {
 		return err
 	}
@@ -514,6 +575,23 @@ func (l *Layout) historyNode(nodeID uint32) historyNode {
 			})
 		}
 	}
+	for index, hit := range l.drawOrder {
+		if hit == (Hit{ID: nodeID, Kind: HitNode}) {
+			node.Layers = append(node.Layers, historyLayer{
+				Hit:   hit,
+				Index: uint32(index),
+			})
+			continue
+		}
+		if hit.Kind == HitEdge &&
+			l.graph.EdgeExists(hit.ID) &&
+			l.graph.EdgeIncidentTo(hit.ID, nodeID) {
+			node.Layers = append(node.Layers, historyLayer{
+				Hit:   hit,
+				Index: uint32(index),
+			})
+		}
+	}
 	return node
 }
 
@@ -550,10 +628,20 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	for _, edge := range node.Edges {
 		l.Edges[edge.ID] = Edge{}
 	}
+	if len(node.Layers) == 0 {
+		l.appendLayer(Hit{ID: node.ID, Kind: HitNode})
+		for _, edge := range node.Edges {
+			l.appendLayer(Hit{ID: edge.ID, Kind: HitEdge})
+		}
+	} else {
+		for _, layer := range node.Layers {
+			l.insertLayer(layer.Hit, int(layer.Index))
+		}
+	}
 	return nil
 }
 
-func (l *Layout) restoreHistoryEdge(edgeID uint32, edge ir.Edge) error {
+func (l *Layout) restoreHistoryEdge(edgeID uint32, edge ir.Edge, layer int) error {
 	if !l.graph.PortExists(edge.PortA) || !l.graph.PortExists(edge.PortB) {
 		return errors.New("restore edge with deleted port")
 	}
@@ -562,6 +650,14 @@ func (l *Layout) restoreHistoryEdge(edgeID uint32, edge ir.Edge) error {
 	l.graph = l.graph.Clone()
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	l.Edges[edgeID] = Edge{}
+	hit := Hit{ID: edgeID, Kind: HitEdge}
+	if !l.hasLayer(hit) {
+		if layer < 0 {
+			l.appendLayer(hit)
+		} else {
+			l.insertLayer(hit, layer)
+		}
+	}
 	return nil
 }
 

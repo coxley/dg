@@ -7,12 +7,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
 	"time"
 
+	"github.com/coxley/dg/ir"
 	"github.com/stretchr/testify/require"
 )
 
@@ -182,6 +184,63 @@ func TestHistoryRestoreKeepsSavedRenderAndRecoversRedoTail(t *testing.T) {
 	require.Equal(t, NewPoint(20, 30), restored.Nodes[restoredID].Rect.Min)
 }
 
+func TestHistoryRestoreRecoversLayerRedoTail(t *testing.T) {
+	t.Parallel()
+
+	store := newMapHistoryStore()
+	history, err := NewHistory(WithHistoryStore(store))
+	require.NoError(t, err)
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	back, err := geo.NewNodeAt("back", NewPoint(2, 2))
+	require.NoError(t, err)
+	front, err := geo.NewNodeAt("front", NewPoint(20, 2))
+	require.NoError(t, err)
+	edgeID := geo.ConnectNodes(
+		back,
+		ir.RightSide,
+		ir.LeftSide,
+		front,
+	)
+	edgeHit := Hit{ID: edgeID, Kind: HitEdge}
+	backHit := Hit{ID: back, Kind: HitNode}
+	require.NoError(t, geo.SendToBack(edgeHit))
+	savedOrder := slices.Collect(geo.DrawOrder())
+	require.NoError(t, history.Store("diagram.json"))
+
+	require.NoError(t, geo.BringToFront(backHit))
+	unsavedOrder := slices.Collect(geo.DrawOrder())
+	require.NoError(t, history.Flush())
+
+	restoredHistory, err := NewHistory(WithHistoryStore(store))
+	require.NoError(t, err)
+	restored, err := New(WithHistory(restoredHistory))
+	require.NoError(t, err)
+	restoredBack, err := restored.NewNodeAt("back", NewPoint(2, 2))
+	require.NoError(t, err)
+	restoredFront, err := restored.NewNodeAt("front", NewPoint(20, 2))
+	require.NoError(t, err)
+	restoredEdge := restored.ConnectNodes(
+		restoredBack,
+		ir.RightSide,
+		ir.LeftSide,
+		restoredFront,
+	)
+	require.NoError(t, restored.SendToBack(Hit{
+		ID:   restoredEdge,
+		Kind: HitEdge,
+	}))
+
+	ok, err := restoredHistory.Restore("diagram.json")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, savedOrder, slices.Collect(restored.DrawOrder()))
+	changed, err := restoredHistory.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, unsavedOrder, slices.Collect(restored.DrawOrder()))
+}
+
 func TestHistoryRestoreRecoversExactDeletedSlots(t *testing.T) {
 	t.Parallel()
 
@@ -303,4 +362,18 @@ func TestHistoryOptionsValidateCacheConfiguration(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = historyCacheKey("")
 	require.Error(t, err)
+}
+
+func TestHistoryCacheRejectsInvalidLayerOrder(t *testing.T) {
+	t.Parallel()
+
+	cache := historyCacheLayout{
+		Nodes: []historyCacheNode{{Live: true, Label: "node"}},
+		Layers: []historyCacheHit{{
+			ID:   1,
+			Kind: HitNode,
+		}},
+	}
+	_, ok := cache.layoutState()
+	require.False(t, ok)
 }

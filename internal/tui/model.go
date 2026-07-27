@@ -61,22 +61,22 @@ type Model struct {
 	geo     *layout.Layout
 	history *layout.History
 
-	cursor            layout.Point
-	viewport          layout.Point
-	hits              []layout.Hit
-	active            int
-	target            layout.Hit
-	connectSource     uint32
-	connectEdge       uint32
-	connectOldPort    uint32
-	reconnecting      bool
-	connectStarted    bool
-	connectDragging   bool
-	connectPreview    [5]layout.Point
-	connectPreviewLen uint8
-	edgeDragPending   bool
-	edgeDragHit       layout.Hit
-	edgeDragStart     layout.Point
+	cursor          layout.Point
+	viewport        layout.Point
+	hits            []layout.Hit
+	active          int
+	target          layout.Hit
+	connectSource   uint32
+	connectEdge     uint32
+	connectOldPort  uint32
+	reconnecting    bool
+	connectStarted  bool
+	connectDragging bool
+	connectPreview  []layout.Point
+	connectRaster   []layout.RasterCell
+	edgeDragPending bool
+	edgeDragHit     layout.Hit
+	edgeDragStart   layout.Point
 
 	mode             mode
 	editBuffer       []byte
@@ -239,10 +239,23 @@ func (m *Model) updateCommand(key tea.Key) {
 		m.cycleHit(-1)
 		return
 	}
+	if key.Mod == tea.ModShift {
+		switch key.Code {
+		case '[', '{':
+			m.reorderLayer(true, true)
+		case ']', '}':
+			m.reorderLayer(true, false)
+		}
+		return
+	}
 	if key.Mod != 0 {
 		return
 	}
-	switch key.Code {
+	m.updateNavigationCommand(key.Code)
+}
+
+func (m *Model) updateNavigationCommand(code rune) {
+	switch code {
 	case tea.KeyUp:
 		m.move(0, -1)
 	case tea.KeyRight:
@@ -253,6 +266,14 @@ func (m *Model) updateCommand(key tea.Key) {
 		m.move(-1, 0)
 	case tea.KeyTab:
 		m.cycleHit(1)
+	case '[':
+		m.reorderLayer(false, true)
+	case ']':
+		m.reorderLayer(false, false)
+	case '{':
+		m.reorderLayer(true, true)
+	case '}':
+		m.reorderLayer(true, false)
 	case tea.KeyEnter:
 		if m.mode == modeConnect {
 			m.completeConnection()
@@ -274,6 +295,56 @@ func (m *Model) updateCommand(key tea.Key) {
 	case tea.KeyEscape:
 		m.cancelMode()
 	}
+}
+
+func (m *Model) reorderLayer(all, backward bool) {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
+	hit, ok := m.selectedLayer()
+	if !ok {
+		hit, ok = m.activeHit()
+	}
+	if !ok || hit.Kind == layout.HitPort {
+		m.status = "select a node or edge to reorder"
+		return
+	}
+	var err error
+	switch {
+	case all && backward:
+		err = m.geo.SendToBack(hit)
+	case all:
+		err = m.geo.BringToFront(hit)
+	case backward:
+		err = m.geo.SendBackward(hit)
+	default:
+		err = m.geo.BringForward(hit)
+	}
+	if err != nil {
+		m.status = err.Error()
+		return
+	}
+	if err := m.render(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	m.selectOnly(hit)
+	m.target = hit
+	m.refreshHits()
+	m.selectTarget()
+	m.status = ""
+}
+
+func (m *Model) selectedLayer() (layout.Hit, bool) {
+	var selected layout.Hit
+	ok := false
+	for hit := range m.geo.DrawOrder() {
+		if m.geo.Selection().Contains(hit) {
+			selected, ok = hit, true
+		}
+	}
+	return selected, ok
 }
 
 func (m *Model) move(dx, dy int) {
@@ -697,7 +768,8 @@ func (m *Model) clearConnection() {
 	m.reconnecting = false
 	m.connectStarted = false
 	m.connectDragging = false
-	m.connectPreviewLen = 0
+	m.connectPreview = m.connectPreview[:0]
+	m.connectRaster = m.connectRaster[:0]
 	m.edgeDragPending = false
 	m.edgeDragHit = layout.Hit{}
 	m.edgeDragStart = layout.Point{}

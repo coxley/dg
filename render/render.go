@@ -25,6 +25,16 @@ type Encoder struct {
 	lines         []layout.LabelLine
 }
 
+// RasterizeEdge appends transient edge cells over the most recently encoded
+// frame.
+func (e *Encoder) RasterizeEdge(
+	dst []layout.RasterCell,
+	l *layout.Layout,
+	edge layout.RasterEdge,
+) ([]layout.RasterCell, error) {
+	return layout.RasterizeEdgeInto(dst, &e.grid, l, edge)
+}
+
 // Unicode renders layout connectivity and labels with box-drawing characters.
 func Unicode(l *layout.Layout) (string, error) {
 	b, err := Encode(nil, l)
@@ -60,7 +70,7 @@ func (e *Encoder) EncodeFrame(dst []byte, l *layout.Layout) (Frame, error) {
 	if l == nil {
 		return Frame{}, errors.New("nil layout")
 	}
-	grid, err := layout.RasterizeInto(e.grid.Cells, l)
+	grid, err := layout.RasterizeOwnedInto(e.grid.Cells, e.grid.Owners, l)
 	if err != nil {
 		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
 	}
@@ -76,7 +86,12 @@ func (e *Encoder) EncodeFrameWithoutEdge(
 	if l == nil {
 		return Frame{}, errors.New("nil layout")
 	}
-	grid, err := layout.RasterizeWithoutEdgeInto(e.grid.Cells, l, edgeID)
+	grid, err := layout.RasterizeWithoutEdgeOwnedInto(
+		e.grid.Cells,
+		e.grid.Owners,
+		l,
+		edgeID,
+	)
 	if err != nil {
 		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
 	}
@@ -140,6 +155,7 @@ func encodeFrame(
 				bounds.Min.Add(0, uint32(lineID)),
 				l.Label(nodeID)[line.Start:line.End],
 				bounds.Size.Width,
+				layout.Hit{ID: nodeID, Kind: layout.HitNode},
 			); err != nil {
 				return Frame{}, lines, fmt.Errorf(
 					"place node %d label line %d: %w",
@@ -180,6 +196,7 @@ func placeLabelLine(
 	origin layout.Point,
 	text string,
 	maxWidth uint32,
+	owner layout.Hit,
 ) error {
 	x := origin.X
 	used := uint32(0)
@@ -201,13 +218,26 @@ func placeLabelLine(
 		if !ok {
 			return fmt.Errorf("label cell %+v outside grid", point)
 		}
-		labels[index] = value
+		visible := grid.Owners[index] == owner
 		for offset := 1; offset < width; offset++ {
 			continuationX := x + uint32(offset)
 			continuation, ok := grid.Index(layout.Point{X: continuationX, Y: origin.Y})
 			if !ok {
 				return fmt.Errorf("label cell at x=%d outside grid", continuationX)
 			}
+			visible = visible && grid.Owners[continuation] == owner
+		}
+		if !visible {
+			x += uint32(width)
+			used += uint32(width)
+			continue
+		}
+		labels[index] = value
+		for offset := 1; offset < width; offset++ {
+			continuation, _ := grid.Index(layout.Point{
+				X: x + uint32(offset),
+				Y: origin.Y,
+			})
 			continuations[continuation] = true
 		}
 		x += uint32(width)

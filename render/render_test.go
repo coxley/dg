@@ -42,12 +42,14 @@ func TestEncoderReusesScratch(t *testing.T) {
 	frame, err := encoder.EncodeFrame(nil, geo)
 	require.NoError(t, err)
 	cells := &encoder.grid.Cells[0]
+	owners := &encoder.grid.Owners[0]
 	labels := &encoder.labels[0]
 	continuations := &encoder.continuations[0]
 
 	frame, err = encoder.EncodeFrame(frame.Text[:0], geo)
 	require.NoError(t, err)
 	require.Same(t, cells, &encoder.grid.Cells[0])
+	require.Same(t, owners, &encoder.grid.Owners[0])
 	require.Same(t, labels, &encoder.labels[0])
 	require.Same(t, continuations, &encoder.continuations[0])
 	require.Equal(
@@ -57,6 +59,30 @@ func TestEncoderReusesScratch(t *testing.T) {
 			"└──────┘\n",
 		string(frame.Text),
 	)
+}
+
+func TestUnicodeOccludesLowerNode(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	back := newNodeAt(t, geo, "back", layout.Point{})
+	front := newNodeAt(t, geo, "front", layout.Point{})
+	size := layout.Size{Width: 9, Height: 3}
+	require.NoError(t, geo.SetNodeSize(back, size))
+	require.NoError(t, geo.SetNodeSize(front, size))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(t, "┌───────┐\n│ front │\n└───────┘\n", got)
+
+	require.NoError(t, geo.SendToBack(layout.Hit{
+		ID:   front,
+		Kind: layout.HitNode,
+	}))
+	got, err = Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(t, "┌───────┐\n│ back  │\n└───────┘\n", got)
 }
 
 func TestUnicodeWideLabel(t *testing.T) {
@@ -240,5 +266,24 @@ func BenchmarkEncode(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkEncoderEncode(b *testing.B) {
+	geo := newLayout(b)
+	source := newNodeAt(b, geo, "source", layout.Point{})
+	sink := newNodeAt(b, geo, "sink", layout.Point{X: 18, Y: 6})
+	geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+	require.NoError(b, geo.Build())
+
+	var encoder Encoder
+	var dst []byte
+	b.ReportAllocs()
+	for b.Loop() {
+		frame, err := encoder.EncodeFrame(dst[:0], geo)
+		if err != nil {
+			b.Fatal(err)
+		}
+		dst = frame.Text
 	}
 }

@@ -215,6 +215,34 @@ func TestDocumentValidation(t *testing.T) {
 			},
 			want: "duplicates ports",
 		},
+		{
+			name: "incomplete layers",
+			mutate: func(doc *Document) {
+				doc.Layers = doc.Layers[:2]
+			},
+			want: "contains 2 layers, want 3",
+		},
+		{
+			name: "unknown layer kind",
+			mutate: func(doc *Document) {
+				doc.Layers[0].Kind = "port"
+			},
+			want: "unknown kind",
+		},
+		{
+			name: "unknown layer ID",
+			mutate: func(doc *Document) {
+				doc.Layers[0].ID = 9
+			},
+			want: "references unknown node",
+		},
+		{
+			name: "duplicate layer",
+			mutate: func(doc *Document) {
+				doc.Layers[1] = doc.Layers[0]
+			},
+			want: "duplicates node",
+		},
 	}
 
 	for _, test := range tests {
@@ -261,14 +289,20 @@ func validDocument() Document {
 			{Side: SideLeft, Offset: 0.5},
 		},
 		Edges: []Edge{{PortA: 0, PortB: 1}},
+		Layers: []Layer{
+			{Kind: LayerNode, ID: 0},
+			{Kind: LayerNode, ID: 1},
+			{Kind: LayerEdge, ID: 0},
+		},
 		Options: Options{
 			Padding: Padding{Horizontal: 1},
 			Router: Router{
 				Costs: Costs{
-					Step:       10,
-					SharedStep: 2,
-					Bend:       5,
-					Crossing:   15,
+					Step:         10,
+					SharedStep:   2,
+					Bend:         5,
+					Crossing:     15,
+					EndpointStep: 40,
 				},
 				ReroutePasses: 1,
 			},
@@ -337,6 +371,8 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 						SharedStep: rapid.Uint32Range(0, 100).Draw(t, "shared step cost"),
 						Bend:       rapid.Uint32Range(0, 100).Draw(t, "bend cost"),
 						Crossing:   rapid.Uint32Range(0, 100).Draw(t, "crossing cost"),
+						EndpointStep: rapid.Uint32Range(0, 100).
+							Draw(t, "endpoint step cost"),
 					},
 					ReroutePasses: rapid.Uint8Range(0, 4).Draw(t, "reroute passes"),
 				},
@@ -375,6 +411,12 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			doc.Nodes = append(doc.Nodes, node)
 		}
 		if portCount < 2 {
+			for nodeID := range doc.Nodes {
+				doc.Layers = append(doc.Layers, Layer{
+					Kind: LayerNode,
+					ID:   uint32(nodeID),
+				})
+			}
 			return doc
 		}
 
@@ -393,6 +435,14 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			rapid.SliceOfNDistinct(edge, 0, maxEdges, rapid.ID[Edge]).
 				Draw(t, "edges")...,
 		)
+		layers := make([]Layer, 0, len(doc.Nodes)+len(doc.Edges))
+		for nodeID := range doc.Nodes {
+			layers = append(layers, Layer{Kind: LayerNode, ID: uint32(nodeID)})
+		}
+		for edgeID := range doc.Edges {
+			layers = append(layers, Layer{Kind: LayerEdge, ID: uint32(edgeID)})
+		}
+		doc.Layers = rapid.Permutation(layers).Draw(t, "layers")
 		return doc
 	})
 }

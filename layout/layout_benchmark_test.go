@@ -11,6 +11,8 @@ import (
 var (
 	benchmarkHitCount   int
 	benchmarkLabelLines []LabelLine
+	benchmarkPreview    []Point
+	benchmarkRaster     []RasterCell
 )
 
 func BenchmarkAppendLabelLines(b *testing.B) {
@@ -139,6 +141,60 @@ func BenchmarkLayoutHits(b *testing.B) {
 			benchmarkHitCount = hits
 		})
 	}
+}
+
+func BenchmarkPreviewRoute(b *testing.B) {
+	geo, _ := newBenchmarkLayout(b)
+	require.NoError(b, geo.Build())
+	_, sourcePort, err := geo.EdgePorts(0)
+	require.NoError(b, err)
+	destination := NewPoint(25, 10)
+	preview, err := geo.PreviewRouteWithoutEdge(
+		nil,
+		sourcePort,
+		destination,
+		0,
+	)
+	require.NoError(b, err)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		preview, err = geo.PreviewRouteWithoutEdge(
+			preview[:0],
+			sourcePort,
+			destination,
+			0,
+		)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	benchmarkPreview = preview
+}
+
+func BenchmarkRasterizePreviewEdge(b *testing.B) {
+	geo, _ := newBenchmarkLayout(b)
+	require.NoError(b, geo.Build())
+	base, err := RasterizeOwnedInto(nil, nil, geo)
+	require.NoError(b, err)
+	portA, portB, err := geo.EdgePorts(0)
+	require.NoError(b, err)
+	edge := RasterEdge{
+		Points: geo.Edges[0].Points,
+		PortA:  portA,
+		PortB:  portB,
+	}
+	raster, err := RasterizeEdgeInto(nil, &base, geo, edge)
+	require.NoError(b, err)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		raster, err = RasterizeEdgeInto(raster[:0], &base, geo, edge)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	benchmarkRaster = raster
 }
 
 func TestLayoutBuildReusesScratch(t *testing.T) {

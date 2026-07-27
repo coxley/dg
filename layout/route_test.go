@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"math"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -78,27 +79,97 @@ func TestStepCostSharesOnlyCommonPortSegments(t *testing.T) {
 		{PortA: 0, PortB: 2},
 		{PortA: 3, PortB: 4},
 	}}
+	geo := Layout{
+		graph: graph,
+		Ports: []Port{
+			{Anchor: NewPoint(2, 1)},
+			{Anchor: NewPoint(20, 1)},
+			{Anchor: NewPoint(20, 3)},
+			{Anchor: NewPoint(20, 5)},
+			{Anchor: NewPoint(20, 7)},
+		},
+	}
 	occupancy := newRouteOccupancy()
 	occupancy.add(0, []Point{{X: 1, Y: 1}, {X: 2, Y: 1}})
 	router := DefaultRouter()
 
 	cost, crossings, ok := router.stepCost(
+		&geo,
 		1,
 		Point{X: 1, Y: 1},
 		Point{X: 2, Y: 1},
 		&occupancy,
-		&graph,
 	)
 	require.True(t, ok)
 	require.Equal(t, uint64(router.Costs.SharedStep), cost)
 	require.Zero(t, crossings)
 
 	_, _, ok = router.stepCost(
+		&geo,
 		2,
 		Point{X: 1, Y: 1},
 		Point{X: 2, Y: 1},
 		&occupancy,
-		&graph,
+	)
+	require.False(t, ok)
+}
+
+func TestPreviewStepCostSharesDestinationPort(t *testing.T) {
+	t.Parallel()
+
+	geo := Layout{
+		graph: ir.Graph{Edges: []ir.Edge{{PortA: 0, PortB: 1}}},
+		Ports: []Port{
+			{Anchor: NewPoint(1, 1)},
+			{Anchor: NewPoint(20, 1)},
+			{Anchor: NewPoint(1, 3)},
+		},
+	}
+	occupancy := newRouteOccupancy()
+	occupancy.add(0, []Point{NewPoint(18, 1), NewPoint(19, 1)})
+	router := DefaultRouter()
+	preview := routeEdge{
+		id:       math.MaxUint32,
+		ports:    ir.Edge{PortA: 2, PortB: 1},
+		hasPorts: true,
+	}
+
+	cost, crossings, ok := router.stepCostFor(
+		&geo,
+		preview,
+		NewPoint(18, 1),
+		NewPoint(19, 1),
+		&occupancy,
+	)
+	require.True(t, ok)
+	require.Equal(t, uint64(router.Costs.SharedStep), cost)
+	require.Zero(t, crossings)
+}
+
+func TestStepCostRejectsEarlyCommonEndpointMerge(t *testing.T) {
+	t.Parallel()
+
+	graph := ir.Graph{Edges: []ir.Edge{
+		{PortA: 0, PortB: 1},
+		{PortA: 0, PortB: 2},
+	}}
+	geo := Layout{
+		graph: graph,
+		Ports: []Port{
+			{Anchor: NewPoint(20, 2)},
+			{Anchor: NewPoint(1, 2)},
+			{Anchor: NewPoint(1, 4)},
+		},
+	}
+	occupancy := newRouteOccupancy()
+	occupancy.add(0, []Point{NewPoint(1, 2), NewPoint(2, 2)})
+
+	_, _, ok := DefaultRouter().stepCost(
+		&geo,
+		1,
+		NewPoint(1, 2),
+		NewPoint(2, 2),
+		&occupancy,
 	)
 	require.False(t, ok)
 }
@@ -110,6 +181,7 @@ func TestStepCostChargesUnrelatedCrossing(t *testing.T) {
 		{PortA: 0, PortB: 1},
 		{PortA: 2, PortB: 3},
 	}}
+	geo := Layout{graph: graph}
 	occupancy := newRouteOccupancy()
 	occupancy.add(0, []Point{
 		{X: 2, Y: 1},
@@ -119,11 +191,11 @@ func TestStepCostChargesUnrelatedCrossing(t *testing.T) {
 	router := DefaultRouter()
 
 	cost, crossings, ok := router.stepCost(
+		&geo,
 		1,
 		Point{X: 1, Y: 2},
 		Point{X: 2, Y: 2},
 		&occupancy,
-		&graph,
 	)
 	want := uint64(router.Costs.Step + router.Costs.Crossing)
 	require.True(t, ok)
@@ -138,6 +210,7 @@ func TestStepCostRejectsUnrelatedTouch(t *testing.T) {
 		{PortA: 0, PortB: 1},
 		{PortA: 2, PortB: 3},
 	}}
+	geo := Layout{graph: graph}
 	occupancy := newRouteOccupancy()
 	occupancy.add(0, []Point{
 		{X: 2, Y: 2},
@@ -146,11 +219,11 @@ func TestStepCostRejectsUnrelatedTouch(t *testing.T) {
 	router := DefaultRouter()
 
 	_, _, ok := router.stepCost(
+		&geo,
 		1,
 		Point{X: 1, Y: 2},
 		Point{X: 2, Y: 2},
 		&occupancy,
-		&graph,
 	)
 	require.False(t, ok)
 }
@@ -199,10 +272,10 @@ func TestRerouteCrossingsReconsidersEarlierEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	_, crossings, ok := router.scorePath(
+		&geo,
 		0,
 		geo.scratch.paths[0],
 		&geo.scratch.occupancy,
-		&graph,
 	)
 	require.True(t, ok)
 	require.Zero(t, crossings)
@@ -233,6 +306,185 @@ func TestRasterizeMergesRouteWithNodeBorder(t *testing.T) {
 	require.True(t, ok)
 	want := North | East | South
 	require.Equal(t, want, got)
+}
+
+func TestRouteAllowsOverlappingEndpointNodes(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("left", NewPoint(0, 1))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", NewPoint(5, 1))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(left, Size{Width: 8, Height: 3}))
+	require.NoError(t, geo.SetNodeSize(right, Size{Width: 9, Height: 3}))
+	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+
+	require.NoError(t, geo.Build())
+	require.False(t, geo.Edges[edgeID].Empty())
+}
+
+func TestRoutePrefersDetourAroundEndpointNodes(t *testing.T) {
+	t.Parallel()
+
+	build := func(t *testing.T, endpointStep uint32) (*Layout, uint32) {
+		t.Helper()
+
+		router := DefaultRouter()
+		router.Costs.EndpointStep = endpointStep
+		geo, err := New(WithRouter(router))
+		require.NoError(t, err)
+		source, err := geo.NewNodeAt("source", NewPoint(1, 1))
+		require.NoError(t, err)
+		destination, err := geo.NewNodeAt("destination", NewPoint(1, 7))
+		require.NoError(t, err)
+		require.NoError(t, geo.SetNodeSize(
+			source,
+			Size{Width: 8, Height: 4},
+		))
+		require.NoError(t, geo.SetNodeSize(
+			destination,
+			Size{Width: 10, Height: 5},
+		))
+		edgeID := geo.ConnectNodes(
+			source,
+			ir.Top,
+			ir.Top,
+			destination,
+		)
+		require.NoError(t, geo.Build())
+		return geo, edgeID
+	}
+
+	direct, directEdge := build(t, 0)
+	require.True(t, routeTraversesEndpoint(
+		direct,
+		directEdge,
+	))
+
+	detour, detourEdge := build(t, DefaultRouter().Costs.EndpointStep)
+	require.False(t, routeTraversesEndpoint(
+		detour,
+		detourEdge,
+	))
+}
+
+func TestPreviewRouteTreatsPointAsFloatingPort(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(1, 2))
+	require.NoError(t, err)
+	obstacle, err := geo.NewNodeAt("obstacle", NewPoint(13, 1))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(obstacle, Size{
+		Width:  10,
+		Height: 6,
+	}))
+	require.NoError(t, geo.Build())
+	sourcePort, ok := geo.graph.PickCenterPort(source, ir.RightSide)
+	require.True(t, ok)
+	cursor := NewPoint(25, 3)
+
+	preview, err := geo.PreviewRoute(nil, sourcePort, cursor)
+	require.NoError(t, err)
+	require.Equal(t, geo.Ports[sourcePort].Anchor, preview[0])
+	require.Equal(t, cursor, preview[len(preview)-1])
+	for i := 1; i < len(preview); i++ {
+		for _, point := range segmentPoints(preview[i-1], preview[i]) {
+			require.False(
+				t,
+				geo.Nodes[obstacle].Rect.Contains(point),
+				"preview crosses obstacle at %+v: %+v",
+				point,
+				preview,
+			)
+		}
+	}
+}
+
+func TestPreviewRouteWithoutEdgeValidatesEdge(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	nodeID, err := geo.NewNodeAt("node", NewPoint(2, 2))
+	require.NoError(t, err)
+	portID, ok := geo.graph.PickCenterPort(nodeID, ir.RightSide)
+	require.True(t, ok)
+
+	_, err = geo.PreviewRouteWithoutEdge(
+		nil,
+		portID,
+		NewPoint(20, 2),
+		0,
+	)
+	require.ErrorIs(t, err, ir.ErrEdgeNotFound)
+}
+
+func TestRasterizeOccludesUnrelatedCrossingByLayer(t *testing.T) {
+	t.Parallel()
+
+	vertical := Hit{ID: 0, Kind: HitEdge}
+	horizontal := Hit{ID: 1, Kind: HitEdge}
+	geo := Layout{
+		graph: ir.Graph{Edges: []ir.Edge{
+			{PortA: 0, PortB: 1},
+			{PortA: 2, PortB: 3},
+		}},
+		Ports: []Port{
+			{Anchor: NewPoint(2, 0)},
+			{Anchor: NewPoint(2, 4)},
+			{Anchor: NewPoint(0, 2)},
+			{Anchor: NewPoint(4, 2)},
+		},
+		Edges: []Edge{
+			{Points: []Point{NewPoint(2, 0), NewPoint(2, 4)}},
+			{Points: []Point{NewPoint(0, 2), NewPoint(4, 2)}},
+		},
+		drawOrder: []Hit{vertical, horizontal},
+	}
+
+	grid, err := Rasterize(&geo)
+	require.NoError(t, err)
+	connections, ok := grid.At(NewPoint(2, 2))
+	require.True(t, ok)
+	require.Equal(t, East|West, connections)
+	owner, ok := grid.OwnerAt(NewPoint(2, 2))
+	require.True(t, ok)
+	require.Equal(t, horizontal, owner)
+
+	geo.drawOrder[0], geo.drawOrder[1] =
+		geo.drawOrder[1], geo.drawOrder[0]
+	grid, err = Rasterize(&geo)
+	require.NoError(t, err)
+	connections, ok = grid.At(NewPoint(2, 2))
+	require.True(t, ok)
+	require.Equal(t, North|South, connections)
+	owner, ok = grid.OwnerAt(NewPoint(2, 2))
+	require.True(t, ok)
+	require.Equal(t, vertical, owner)
+}
+
+func routeTraversesEndpoint(geo *Layout, edgeID uint32) bool {
+	edge := geo.graph.Edges[edgeID]
+	source := geo.graph.Ports[edge.PortA].Node
+	destination := geo.graph.Ports[edge.PortB].Node
+	points := geo.Edges[edgeID].Points
+	for i := 1; i < len(points); i++ {
+		for _, point := range segmentPoints(points[i-1], points[i]) {
+			if point == points[0] || point == points[len(points)-1] {
+				continue
+			}
+			if geo.Nodes[source].Rect.Contains(point) ||
+				geo.Nodes[destination].Rect.Contains(point) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func segmentPoints(a, b Point) []Point {

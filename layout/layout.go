@@ -150,6 +150,7 @@ type Layout struct {
 	draftPorts    []Port
 	portUsable    []bool
 	draftUsable   []bool
+	drawOrder     []Hit
 	history       *History
 	selection     Selection
 }
@@ -250,6 +251,7 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 	l.Nodes[nodeID] = node
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.commitNodePorts(nodeID)
+	l.appendLayer(Hit{ID: nodeID, Kind: HitNode})
 	if l.history != nil {
 		l.history.record(historyChange{
 			kind: historyCreateNode,
@@ -380,12 +382,14 @@ func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) 
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	if !existed {
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
+		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
 	if l.history != nil && !existed {
 		l.history.record(historyChange{
-			kind:      historyCreateEdge,
-			id:        edgeID,
-			afterEdge: l.graph.Edges[edgeID],
+			kind:       historyCreateEdge,
+			id:         edgeID,
+			afterEdge:  l.graph.Edges[edgeID],
+			afterLayer: uint32(len(l.drawOrder) - 1),
 		})
 	}
 	return edgeID
@@ -414,12 +418,14 @@ func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	if !existed {
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
+		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
 	if l.history != nil && !existed {
 		l.history.record(historyChange{
-			kind:      historyCreateEdge,
-			id:        edgeID,
-			afterEdge: l.graph.Edges[edgeID],
+			kind:       historyCreateEdge,
+			id:         edgeID,
+			afterEdge:  l.graph.Edges[edgeID],
+			afterLayer: uint32(len(l.drawOrder) - 1),
 		})
 	}
 	return edgeID, nil
@@ -465,15 +471,17 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 		return fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
 	}
 	previous := l.graph.Edges[edgeID]
+	layer, _ := l.removeLayer(Hit{ID: edgeID, Kind: HitEdge})
 	if err := l.graph.DeleteEdge(edgeID); err != nil {
 		return err
 	}
 	l.Edges[edgeID] = Edge{}
 	if l.history != nil {
 		l.history.record(historyChange{
-			kind:       historyDeleteEdge,
-			id:         edgeID,
-			beforeEdge: previous,
+			kind:        historyDeleteEdge,
+			id:          edgeID,
+			beforeEdge:  previous,
+			beforeLayer: uint32(layer),
 		})
 	}
 	return nil
@@ -495,6 +503,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		}
 		if l.graph.EdgeIncidentTo(uint32(edgeID), nodeID) {
 			l.Edges[edgeID] = Edge{}
+			l.removeLayer(Hit{ID: uint32(edgeID), Kind: HitEdge})
 			l.selection.discard(Hit{ID: uint32(edgeID), Kind: HitEdge})
 		}
 	}
@@ -508,6 +517,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	l.origins[nodeID] = Point{}
 	l.explicitSizes[nodeID] = Size{}
 	l.Nodes[nodeID] = Node{}
+	l.removeLayer(Hit{ID: nodeID, Kind: HitNode})
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	if l.history != nil {
 		l.history.record(historyChange{
@@ -645,41 +655,109 @@ func (l *Layout) Obstacles() iter.Seq[Rect] {
 	}
 }
 
-// Hits yields all geometry occupying point in node, port, then edge order.
+// Hits yields visible geometry occupying point.
 func (l *Layout) Hits(point Point) iter.Seq[Hit] {
 	return func(yield func(Hit) bool) {
-		for i := range l.Nodes {
-			if !l.Nodes[i].Empty() &&
-				l.Nodes[i].Rect.Contains(point) &&
-				!yield(Hit{ID: uint32(i), Kind: HitNode}) {
+		owner, ok := l.visibleObjectAt(point)
+		if !ok || !yield(owner) {
+			return
+		}
+		if owner.Kind == HitEdge {
+			return
+		}
+		if l.graph.NodeExists(owner.ID) {
+			for _, portID := range l.graph.Nodes[owner.ID].Ports {
+				if l.portUsable[portID] &&
+					l.Ports[portID].Anchor == point &&
+					!yield(Hit{ID: portID, Kind: HitPort}) {
+					return
+				}
+			}
+			for i := len(l.drawOrder) - 1; i >= 0; i-- {
+				hit := l.drawOrder[i]
+				if hit.Kind == HitEdge &&
+					l.edgeEndpointNodeAt(hit.ID, owner.ID, point) &&
+					!yield(hit) {
+					return
+				}
+			}
+			return
+		}
+		for portID, port := range l.Ports {
+			if port.Anchor == point &&
+				!yield(Hit{ID: uint32(portID), Kind: HitPort}) {
 				return
 			}
 		}
-		if l.graph.AllPortsLive() {
-			for i := range l.Ports {
-				if (len(l.portUsable) == 0 || l.portUsable[i]) &&
-					l.Ports[i].Anchor == point &&
-					!yield(Hit{ID: uint32(i), Kind: HitPort}) {
-					return
-				}
-			}
-		} else {
-			for i := range l.Ports {
-				if l.graph.PortExists(uint32(i)) &&
-					l.portUsable[i] &&
-					l.Ports[i].Anchor == point &&
-					!yield(Hit{ID: uint32(i), Kind: HitPort}) {
-					return
-				}
-			}
-		}
-		for i := range l.Edges {
-			if l.Edges[i].Contains(point) &&
-				!yield(Hit{ID: uint32(i), Kind: HitEdge}) {
+		for edgeID, edge := range l.Edges {
+			if edge.Contains(point) &&
+				l.edgeEndpointAt(uint32(edgeID), point) &&
+				!yield(Hit{ID: uint32(edgeID), Kind: HitEdge}) {
 				return
 			}
 		}
 	}
+}
+
+func (l *Layout) visibleObjectAt(point Point) (Hit, bool) {
+	if len(l.drawOrder) == 0 {
+		for edgeID := len(l.Edges) - 1; edgeID >= 0; edgeID-- {
+			if l.Edges[edgeID].Contains(point) &&
+				!l.edgeEndpointAt(uint32(edgeID), point) {
+				return Hit{ID: uint32(edgeID), Kind: HitEdge}, true
+			}
+		}
+		for nodeID := len(l.Nodes) - 1; nodeID >= 0; nodeID-- {
+			if l.Nodes[nodeID].Rect.Contains(point) {
+				return Hit{ID: uint32(nodeID), Kind: HitNode}, true
+			}
+		}
+		return Hit{}, false
+	}
+	for i := len(l.drawOrder) - 1; i >= 0; i-- {
+		hit := l.drawOrder[i]
+		switch hit.Kind {
+		case HitNode:
+			if l.Nodes[hit.ID].Rect.Contains(point) {
+				return hit, true
+			}
+		case HitEdge:
+			if l.Edges[hit.ID].Contains(point) &&
+				!l.edgeEndpointAt(hit.ID, point) {
+				return hit, true
+			}
+		case HitPort:
+			continue
+		}
+	}
+	return Hit{}, false
+}
+
+func (l *Layout) edgeEndpointAt(edgeID uint32, point Point) bool {
+	if !l.graph.EdgeExists(edgeID) {
+		edge := l.Edges[edgeID]
+		if len(edge.Points) < 2 ||
+			point != edge.Points[0] && point != edge.Points[len(edge.Points)-1] {
+			return false
+		}
+		for _, node := range l.Nodes {
+			if !node.Empty() && node.Rect.OnBoundary(point) {
+				return true
+			}
+		}
+		return false
+	}
+	edge := l.graph.Edges[edgeID]
+	return l.Ports[edge.PortA].Anchor == point ||
+		l.Ports[edge.PortB].Anchor == point
+}
+
+func (l *Layout) edgeEndpointNodeAt(edgeID, nodeID uint32, point Point) bool {
+	edge := l.graph.Edges[edgeID]
+	return l.graph.Ports[edge.PortA].Node == nodeID &&
+		l.Ports[edge.PortA].Anchor == point ||
+		l.graph.Ports[edge.PortB].Node == nodeID &&
+			l.Ports[edge.PortB].Anchor == point
 }
 
 func pointOnSegment(point, a, b Point) bool {
@@ -708,6 +786,9 @@ func (l *Layout) initializeGeometry() error {
 	l.Ports = make([]Port, len(l.graph.Ports))
 	l.portUsable = make([]bool, len(l.graph.Ports))
 	l.Edges = make([]Edge, len(l.graph.Edges))
+	if err := l.initializeDrawOrder(); err != nil {
+		return err
+	}
 
 	for i := range l.graph.Nodes {
 		nodeID := uint32(i)

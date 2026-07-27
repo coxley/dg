@@ -3,6 +3,7 @@ package layout
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -221,6 +222,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 		label  string
 		origin Point
 		size   Size
+		order  []Hit
 	}
 
 	rapid.Check(t, func(t *rapid.T) {
@@ -230,9 +232,15 @@ func TestHistoryTransactionProperties(t *testing.T) {
 		require.NoError(t, err)
 		nodeID, err := geo.NewNodeAt("initial", NewPoint(1, 1))
 		require.NoError(t, err)
+		_, err = geo.NewNodeAt("other", NewPoint(20, 1))
+		require.NoError(t, err)
 		history.Clear()
 
-		states := []state{{label: "initial", origin: NewPoint(1, 1)}}
+		states := []state{{
+			label:  "initial",
+			origin: NewPoint(1, 1),
+			order:  slices.Collect(geo.DrawOrder()),
+		}}
 		transactionCount := rapid.IntRange(1, 30).Draw(t, "transaction count")
 		for transactionID := range transactionCount {
 			before := states[len(states)-1]
@@ -240,7 +248,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			operationCount := rapid.IntRange(1, 10).
 				Draw(t, fmt.Sprintf("operation count %d", transactionID))
 			for operationID := range operationCount {
-				switch rapid.IntRange(0, 2).
+				switch rapid.IntRange(0, 3).
 					Draw(t, fmt.Sprintf("operation %d %d", transactionID, operationID)) {
 				case 0:
 					label := rapid.StringMatching(`[a-z\n]{0,8}`).
@@ -268,6 +276,16 @@ func TestHistoryTransactionProperties(t *testing.T) {
 								Draw(t, fmt.Sprintf("height %d %d", transactionID, operationID)),
 						}))
 					}
+				case 3:
+					hit := Hit{ID: nodeID, Kind: HitNode}
+					if rapid.Bool().Draw(
+						t,
+						fmt.Sprintf("front %d %d", transactionID, operationID),
+					) {
+						require.NoError(t, geo.BringToFront(hit))
+					} else {
+						require.NoError(t, geo.SendToBack(hit))
+					}
 				}
 			}
 			size, _ := geo.ExplicitNodeSize(nodeID)
@@ -275,6 +293,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 				label:  geo.Label(nodeID),
 				origin: geo.Nodes[nodeID].Rect.Min,
 				size:   size,
+				order:  slices.Collect(geo.DrawOrder()),
 			}
 
 			if rapid.Bool().Draw(t, fmt.Sprintf("cancel %d", transactionID)) {
@@ -283,6 +302,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 				require.Equal(t, before.origin, geo.Nodes[nodeID].Rect.Min)
 				size, _ := geo.ExplicitNodeSize(nodeID)
 				require.Equal(t, before.size, size)
+				require.Equal(t, before.order, slices.Collect(geo.DrawOrder()))
 				continue
 			}
 			if rapid.Bool().Draw(t, fmt.Sprintf("interrupt %d", transactionID)) {
@@ -291,7 +311,10 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			} else {
 				require.NoError(t, transaction.Commit())
 			}
-			if after != before {
+			if after.label != before.label ||
+				after.origin != before.origin ||
+				after.size != before.size ||
+				!slices.Equal(after.order, before.order) {
 				states = append(states, after)
 			}
 		}
@@ -304,6 +327,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			require.Equal(t, states[i].origin, geo.Nodes[nodeID].Rect.Min)
 			size, _ := geo.ExplicitNodeSize(nodeID)
 			require.Equal(t, states[i].size, size)
+			require.Equal(t, states[i].order, slices.Collect(geo.DrawOrder()))
 		}
 		changed, err := history.Undo()
 		require.NoError(t, err)
@@ -317,6 +341,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			require.Equal(t, states[i].origin, geo.Nodes[nodeID].Rect.Min)
 			size, _ := geo.ExplicitNodeSize(nodeID)
 			require.Equal(t, states[i].size, size)
+			require.Equal(t, states[i].order, slices.Collect(geo.DrawOrder()))
 		}
 		changed, err = history.Redo()
 		require.NoError(t, err)

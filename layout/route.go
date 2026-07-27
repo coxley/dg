@@ -43,6 +43,16 @@ type Costs struct {
 	// half new steps. Crossing / Bend expresses the number of additional bends
 	// preferred over one crossing. Zero makes crossings cost-neutral.
 	Crossing uint32
+
+	// EndpointStep is charged in addition to Step or SharedStep for each cell
+	// traversed inside either endpoint node.
+	//
+	// The default value of 40 makes one endpoint cell cost four open steps.
+	// Increasing EndpointStep favors longer routes around source and destination
+	// nodes. Zero lets endpoint-node traversal compete on ordinary path cost.
+	// The cost does not forbid traversal, so overlapping endpoints remain
+	// routable.
+	EndpointStep uint32
 }
 
 // Router configures orthogonal edge routing.
@@ -57,13 +67,40 @@ type Router struct {
 func DefaultRouter() Router {
 	return Router{
 		Costs: Costs{
-			Step:       10,
-			SharedStep: 2,
-			Bend:       5,
-			Crossing:   15,
+			Step:         10,
+			SharedStep:   2,
+			Bend:         5,
+			Crossing:     15,
+			EndpointStep: 40,
 		},
 		ReroutePasses: 1,
 	}
+}
+
+// PreviewRoute returns an obstacle-aware route from sourcePort to point.
+// The route targets a usable port at point when one exists; otherwise point
+// acts as a temporary port whose approach side is selected by route cost.
+// PreviewRoute reuses dst when it has sufficient capacity.
+func (l *Layout) PreviewRoute(
+	dst []Point,
+	sourcePort uint32,
+	point Point,
+) ([]Point, error) {
+	return l.previewRoute(dst, sourcePort, point, math.MaxUint32)
+}
+
+// PreviewRouteWithoutEdge returns a preview that omits edgeID from occupancy
+// and reuses dst when it has sufficient capacity.
+func (l *Layout) PreviewRouteWithoutEdge(
+	dst []Point,
+	sourcePort uint32,
+	point Point,
+	edgeID uint32,
+) ([]Point, error) {
+	if !l.graph.EdgeExists(edgeID) {
+		return nil, fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
+	}
+	return l.previewRoute(dst, sourcePort, point, edgeID)
 }
 
 type direction uint8
@@ -78,6 +115,12 @@ const (
 type routeState struct {
 	point Point
 	dir   direction
+}
+
+type routeEdge struct {
+	id       uint32
+	ports    ir.Edge
+	hasPorts bool
 }
 
 type routeItem struct {
@@ -195,6 +238,7 @@ type routeScratch struct {
 	search    routeSearch
 	paths     [][]Point
 	candidate []Point
+	expanded  []Point
 }
 
 func (s *routeScratch) reset(edgeCount int) {
@@ -369,6 +413,132 @@ func newRouteSegment(a, b Point) routeSegment {
 	return routeSegment{a: a, b: b}
 }
 
+func (l *Layout) previewRoute(
+	dst []Point,
+	sourcePort uint32,
+	point Point,
+	excludedEdge uint32,
+) ([]Point, error) {
+	if !l.graph.PortExists(sourcePort) {
+		return nil, fmt.Errorf("%w: %d", ir.ErrPortNotFound, sourcePort)
+	}
+	if !l.PortUsable(sourcePort) {
+		return nil, fmt.Errorf("%w: %d", ErrPortUnavailable, sourcePort)
+	}
+
+	scratch := &l.scratch
+	occupancy := &scratch.occupancy
+	occupancy.reset()
+	for edgeID, edge := range l.Edges {
+		if uint32(edgeID) == excludedEdge || edge.Empty() {
+			continue
+		}
+		var err error
+		scratch.expanded, err = appendExpandedPath(
+			scratch.expanded[:0],
+			edge.Points,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("expand edge %d: %w", edgeID, err)
+		}
+		occupancy.add(uint32(edgeID), scratch.expanded)
+	}
+
+	var destinations [4]Port
+	var destinationPorts [4]uint32
+	destinationCount := 0
+	for portID, port := range l.Ports {
+		if uint32(portID) != sourcePort &&
+			l.graph.PortExists(uint32(portID)) &&
+			l.PortUsable(uint32(portID)) &&
+			port.Anchor == point {
+			destinations[0] = port
+			destinationPorts[0] = uint32(portID)
+			destinationCount = 1
+			break
+		}
+	}
+	if destinationCount == 0 {
+		for _, dir := range [...]direction{north, east, south, west} {
+			exit, ok := move(point, dir)
+			if !ok {
+				continue
+			}
+			destinations[destinationCount] = Port{
+				Anchor: point,
+				Exit:   exit,
+			}
+			destinationPorts[destinationCount] = NoPortID
+			destinationCount++
+		}
+	}
+
+	best := routeScore{cost: math.MaxUint64, crossings: math.MaxUint32}
+	found := false
+	for i, destination := range destinations[:destinationCount] {
+		route := routeEdge{
+			id: math.MaxUint32,
+			ports: ir.Edge{
+				PortA: sourcePort,
+				PortB: destinationPorts[i],
+			},
+			hasPorts: true,
+		}
+		candidate, err := l.router.findRouteFor(
+			l,
+			route,
+			l.Ports[sourcePort],
+			destination,
+			occupancy,
+			&scratch.search,
+			scratch.candidate[:0],
+		)
+		if errors.Is(err, ErrNoRoute) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("route preview: %w", err)
+		}
+		scratch.candidate = candidate
+		cost, crossings, ok := l.router.scorePathFor(
+			l,
+			route,
+			candidate,
+			occupancy,
+		)
+		if !ok {
+			return nil, errors.New("score preview route")
+		}
+		score := routeScore{cost: cost, crossings: crossings}
+		if found && compareRouteScore(best, score) <= 0 {
+			continue
+		}
+		dst = compact(dst[:0], candidate)
+		best = score
+		found = true
+	}
+	if !found {
+		return nil, ErrNoRoute
+	}
+	return dst, nil
+}
+
+func appendExpandedPath(dst, path []Point) ([]Point, error) {
+	if len(path) == 0 {
+		return dst, nil
+	}
+	dst = append(dst, path[0])
+	for i := 1; i < len(path); i++ {
+		err := walkSegment(path[i-1], path[i], func(point Point) {
+			dst = append(dst, point)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("segment %d: %w", i-1, err)
+		}
+	}
+	return dst, nil
+}
+
 func (r Router) route(l *Layout) error {
 	g := &l.graph
 	scratch := &l.scratch
@@ -426,7 +596,7 @@ func (r Router) rerouteCrossings(
 		}
 		occupancy.remove(edgeID, paths[i])
 
-		oldCost, oldCrossings, ok := r.scorePath(edgeID, paths[i], occupancy, g)
+		oldCost, oldCrossings, ok := r.scorePath(l, edgeID, paths[i], occupancy)
 		if !ok {
 			return false, fmt.Errorf("score edge %d", i)
 		}
@@ -448,7 +618,12 @@ func (r Router) rerouteCrossings(
 			return false, fmt.Errorf("reroute edge %d: %w", i, err)
 		}
 		scratch.candidate = candidate
-		candidateCost, candidateCrossings, ok := r.scorePath(edgeID, candidate, occupancy, g)
+		candidateCost, candidateCrossings, ok := r.scorePath(
+			l,
+			edgeID,
+			candidate,
+			occupancy,
+		)
 		if !ok {
 			return false, fmt.Errorf("score rerouted edge %d", i)
 		}
@@ -473,6 +648,25 @@ func (r Router) findRoute(
 	search *routeSearch,
 	path []Point,
 ) ([]Point, error) {
+	return r.findRouteFor(
+		l,
+		l.routeEdge(edgeID),
+		a,
+		b,
+		occupancy,
+		search,
+		path,
+	)
+}
+
+func (r Router) findRouteFor(
+	l *Layout,
+	route routeEdge,
+	a, b Port,
+	occupancy *routeOccupancy,
+	search *routeSearch,
+	path []Point,
+) ([]Point, error) {
 	startDir, ok := directionBetween(a.Anchor, a.Exit)
 	if !ok {
 		return nil, errors.New("invalid start port geometry")
@@ -486,7 +680,8 @@ func (r Router) findRoute(
 	if err != nil {
 		return nil, fmt.Errorf("route bounds: %w", err)
 	}
-	if l.blocked(a.Exit) || l.blocked(b.Exit) {
+	if l.blockedForRoute(route, a.Exit) ||
+		l.blockedForRoute(route, b.Exit) {
 		return nil, ErrNoRoute
 	}
 
@@ -526,15 +721,17 @@ func (r Router) findRoute(
 
 		for _, dir := range [...]direction{north, east, south, west} {
 			nextPoint, ok := move(item.state.point, dir)
-			if !ok || !bounds.Contains(nextPoint) || l.blocked(nextPoint) {
+			if !ok ||
+				!bounds.Contains(nextPoint) ||
+				l.blockedForRoute(route, nextPoint) {
 				continue
 			}
-			step, crossings, ok := r.stepCost(
-				edgeID,
+			step, crossings, ok := r.stepCostFor(
+				l,
+				route,
 				item.state.point,
 				nextPoint,
 				occupancy,
-				&l.graph,
 			)
 			if !ok {
 				continue
@@ -590,25 +787,43 @@ func (r Router) heuristic(a, b Point, sharing bool) uint64 {
 }
 
 func (r Router) stepCost(
+	l *Layout,
 	edgeID uint32,
 	a, b Point,
 	occupancy *routeOccupancy,
-	g *ir.Graph,
 ) (uint64, uint32, bool) {
+	return r.stepCostFor(l, l.routeEdge(edgeID), a, b, occupancy)
+}
+
+func (r Router) stepCostFor(
+	l *Layout,
+	route routeEdge,
+	a, b Point,
+	occupancy *routeOccupancy,
+) (uint64, uint32, bool) {
+	g := &l.graph
 	if occupancy == nil {
-		return uint64(r.Costs.Step), 0, true
+		return addCost(
+			uint64(r.Costs.Step),
+			uint64(r.endpointStepCostFor(l, route, b)),
+		), 0, true
 	}
 
-	// Sharing applies to entire routes. More sophisticated routing may need to
-	// restrict shared segments to the common port's vicinity.
+	// Common-endpoint routes share only after the common port becomes nearer
+	// than either distinct port. Earlier joins resemble a connection between
+	// the distinct endpoints.
 	segmentOwners := occupancy.segments[newRouteSegment(a, b)]
 	shared := false
 	for index := segmentOwners; index != 0; index = occupancy.segmentUses[index-1].next {
 		owner := occupancy.segmentUses[index-1].edge
-		if owner == edgeID {
+		if owner == route.id {
 			continue
 		}
-		if !g.Edges[edgeID].SharesPort(g.Edges[owner]) {
+		if !route.hasPorts ||
+			!route.ports.SharesPort(g.Edges[owner]) {
+			return 0, 0, false
+		}
+		if !l.edgesShareAt(route.ports, g.Edges[owner], b) {
 			return 0, 0, false
 		}
 		shared = true
@@ -627,10 +842,16 @@ func (r Router) stepCost(
 	var crossings uint32
 	for index := occupancy.cells[b]; index != 0; index = occupancy.cellUses[index-1].next {
 		use := occupancy.cellUses[index-1]
-		if use.edge == edgeID ||
-			occupancy.segmentContains(segmentOwners, use.edge) ||
-			g.Edges[edgeID].SharesPort(g.Edges[use.edge]) {
+		if use.edge == route.id ||
+			occupancy.segmentContains(segmentOwners, use.edge) {
 			continue
+		}
+		if route.hasPorts &&
+			route.ports.SharesPort(g.Edges[use.edge]) {
+			if l.edgesShareAt(route.ports, g.Edges[use.edge], b) {
+				continue
+			}
+			return 0, 0, false
 		}
 		along, across := East|West, North|South
 		if !horizontal {
@@ -646,14 +867,54 @@ func (r Router) stepCost(
 		return 0, 0, false
 	}
 	cost = addCost(cost, multiplyCost(uint64(crossings), uint64(r.Costs.Crossing)))
+	cost = addCost(cost, uint64(r.endpointStepCostFor(l, route, b)))
 	return cost, crossings, true
 }
 
+func (l *Layout) edgesShareAt(edgeA, edgeB ir.Edge, point Point) bool {
+	common, otherA, ok := sharedPorts(edgeA, edgeB)
+	if !ok {
+		return false
+	}
+	otherB := edgeB.PortA
+	if otherB == common {
+		otherB = edgeB.PortB
+	}
+	if uint64(common) >= uint64(len(l.Ports)) ||
+		uint64(otherA) >= uint64(len(l.Ports)) ||
+		uint64(otherB) >= uint64(len(l.Ports)) {
+		return false
+	}
+	commonDistance := manhattan(point, l.Ports[common].Anchor)
+	return commonDistance <= manhattan(point, l.Ports[otherA].Anchor) &&
+		commonDistance <= manhattan(point, l.Ports[otherB].Anchor)
+}
+
+func sharedPorts(a, b ir.Edge) (common, otherA uint32, ok bool) {
+	switch {
+	case b.HasPort(a.PortA):
+		return a.PortA, a.PortB, true
+	case b.HasPort(a.PortB):
+		return a.PortB, a.PortA, true
+	default:
+		return 0, 0, false
+	}
+}
+
 func (r Router) scorePath(
+	l *Layout,
 	edgeID uint32,
 	path []Point,
 	occupancy *routeOccupancy,
-	g *ir.Graph,
+) (uint64, uint32, bool) {
+	return r.scorePathFor(l, l.routeEdge(edgeID), path, occupancy)
+}
+
+func (r Router) scorePathFor(
+	l *Layout,
+	route routeEdge,
+	path []Point,
+	occupancy *routeOccupancy,
 ) (uint64, uint32, bool) {
 	if len(path) < 3 {
 		return 0, 0, false
@@ -670,7 +931,13 @@ func (r Router) scorePath(
 		if !ok {
 			return 0, 0, false
 		}
-		step, crossed, ok := r.stepCost(edgeID, path[i-1], path[i], occupancy, g)
+		step, crossed, ok := r.stepCostFor(
+			l,
+			route,
+			path[i-1],
+			path[i],
+			occupancy,
+		)
 		if !ok {
 			return 0, 0, false
 		}
@@ -690,6 +957,27 @@ func (r Router) scorePath(
 		cost = addCost(cost, uint64(r.Costs.Bend))
 	}
 	return cost, crossings, true
+}
+
+func (r Router) endpointStepCostFor(
+	l *Layout,
+	route routeEdge,
+	point Point,
+) uint32 {
+	if r.Costs.EndpointStep == 0 || !route.hasPorts {
+		return 0
+	}
+	for _, portID := range [...]uint32{route.ports.PortA, route.ports.PortB} {
+		if uint64(portID) >= uint64(len(l.graph.Ports)) {
+			continue
+		}
+		nodeID := l.graph.Ports[portID].Node
+		if uint64(nodeID) < uint64(len(l.Nodes)) &&
+			l.Nodes[nodeID].Rect.Contains(point) {
+			return r.Costs.EndpointStep
+		}
+	}
+	return 0
 }
 
 func (l *Layout) routeBounds(a, b Port) (Rect, error) {
@@ -714,6 +1002,41 @@ func (l *Layout) routeBounds(a, b Port) (Rect, error) {
 	return NewRect(origin, limit)
 }
 
+func (l *Layout) routeEdge(edgeID uint32) routeEdge {
+	if !l.graph.EdgeExists(edgeID) {
+		return routeEdge{id: edgeID}
+	}
+	return routeEdge{
+		id:       edgeID,
+		ports:    l.graph.Edges[edgeID],
+		hasPorts: true,
+	}
+}
+
+func (l *Layout) blockedForRoute(route routeEdge, p Point) bool {
+	if !route.hasPorts {
+		return l.blocked(p)
+	}
+	var endpointNodes [2]uint32
+	endpointCount := 0
+	for _, portID := range [...]uint32{route.ports.PortA, route.ports.PortB} {
+		if uint64(portID) >= uint64(len(l.graph.Ports)) {
+			continue
+		}
+		endpointNodes[endpointCount] = l.graph.Ports[portID].Node
+		endpointCount++
+	}
+	for nodeID, node := range l.Nodes {
+		// Endpoint nodes may overlap. Their edge can traverse the overlap and
+		// the raster layer later hides the covered part of the route.
+		if !slices.Contains(endpointNodes[:endpointCount], uint32(nodeID)) &&
+			node.Rect.Contains(p) {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Layout) blocked(p Point) bool {
 	for obstacle := range l.Obstacles() {
 		if obstacle.Contains(p) {
@@ -731,8 +1054,14 @@ func move(p Point, dir direction) (Point, bool) {
 		}
 		p.Y--
 	case east:
+		if p.X == math.MaxUint32 {
+			return Point{}, false
+		}
 		p.X++
 	case south:
+		if p.Y == math.MaxUint32 {
+			return Point{}, false
+		}
 		p.Y++
 	case west:
 		if p.X == 0 {

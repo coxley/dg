@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
@@ -17,6 +18,9 @@ const (
 	West
 )
 
+// NoPortID marks an endpoint that is not attached to a graph port.
+const NoPortID uint32 = math.MaxUint32
+
 // ContainsAll reports whether every connection in mask is present.
 func (c Connections) ContainsAll(mask Connections) bool {
 	return c&mask == mask
@@ -31,13 +35,28 @@ func (c Connections) ContainsAny(mask Connections) bool {
 type Grid struct {
 	Bounds Rect
 	Cells  []Connections
+	Owners []Hit
+}
+
+// RasterEdge describes transient edge geometry without adding it to a graph.
+// PortA and PortB control common-endpoint composition; NoPortID leaves an end
+// unattached.
+type RasterEdge struct {
+	Points       []Point
+	PortA, PortB uint32
+}
+
+// RasterCell contains the connections drawn at one point.
+type RasterCell struct {
+	Point       Point
+	Connections Connections
 }
 
 func NewGrid(bounds Rect) (Grid, error) {
-	return newGrid(nil, bounds)
+	return newGrid(nil, nil, bounds)
 }
 
-func newGrid(cells []Connections, bounds Rect) (Grid, error) {
+func newGrid(cells []Connections, owners []Hit, bounds Rect) (Grid, error) {
 	if bounds.Empty() {
 		return Grid{}, fmt.Errorf("invalid grid size %+v", bounds.Size)
 	}
@@ -46,10 +65,13 @@ func newGrid(cells []Connections, bounds Rect) (Grid, error) {
 		return Grid{}, fmt.Errorf("grid area %d exceeds supported size", area)
 	}
 	cells = slices.Grow(cells[:0], int(area))[:int(area)]
+	owners = slices.Grow(owners[:0], int(area))[:int(area)]
 	clear(cells)
+	clear(owners)
 	return Grid{
 		Bounds: bounds,
 		Cells:  cells,
+		Owners: owners,
 	}, nil
 }
 
@@ -59,6 +81,15 @@ func (g *Grid) At(p Point) (Connections, bool) {
 		return 0, false
 	}
 	return g.Cells[index], true
+}
+
+// OwnerAt returns the topmost object occupying p.
+func (g *Grid) OwnerAt(p Point) (Hit, bool) {
+	index, ok := g.Index(p)
+	if !ok || g.Owners[index] == (Hit{}) {
+		return Hit{}, false
+	}
+	return g.Owners[index], true
 }
 
 // AddRect adds the perimeter connections of rect.
@@ -79,15 +110,73 @@ func (g *Grid) AddRect(rect Rect) error {
 
 // AddPath adds every cell crossed by an orthogonal polyline.
 func (g *Grid) AddPath(points []Point) error {
-	if len(points) < 2 {
-		return errors.New("path needs at least two points")
+	return rasterizePath(points, func(point Point, connections Connections) error {
+		index, ok := g.Index(point)
+		if !ok {
+			return fmt.Errorf("point %+v outside grid", point)
+		}
+		g.Cells[index] |= connections
+		return nil
+	})
+}
+
+// RasterizeEdgeInto writes row-major cells for edge over base into dst. It
+// preserves committed connectivity at shared endpoints and replaces it at
+// crossings.
+func RasterizeEdgeInto(
+	dst []RasterCell,
+	base *Grid,
+	l *Layout,
+	edge RasterEdge,
+) ([]RasterCell, error) {
+	if base == nil {
+		return nil, errors.New("nil base grid")
 	}
-	for i := 1; i < len(points); i++ {
-		if err := g.addSegment(points[i-1], points[i]); err != nil {
-			return fmt.Errorf("segment %d: %w", i-1, err)
+	if l == nil {
+		return nil, errors.New("nil layout")
+	}
+	dst = dst[:0]
+	err := rasterizePath(edge.Points, func(point Point, connections Connections) error {
+		if len(dst) != 0 && dst[len(dst)-1].Point == point {
+			dst[len(dst)-1].Connections |= connections
+			return nil
+		}
+		dst = append(dst, RasterCell{
+			Point:       point,
+			Connections: connections,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(dst, func(a, b RasterCell) int {
+		if order := cmp.Compare(a.Point.Y, b.Point.Y); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.Point.X, b.Point.X)
+	})
+	compacted := dst[:0]
+	for _, cell := range dst {
+		if len(compacted) != 0 &&
+			compacted[len(compacted)-1].Point == cell.Point {
+			compacted[len(compacted)-1].Connections |= cell.Connections
+			continue
+		}
+		compacted = append(compacted, cell)
+	}
+	dst = compacted
+	for i := range dst {
+		baseConnections, ok := base.At(dst[i].Point)
+		if !ok {
+			continue
+		}
+		previous, _ := base.OwnerAt(dst[i].Point)
+		if l.rasterEdgePreservesCell(edge, dst[i].Point, previous) {
+			dst[i].Connections |= baseConnections
 		}
 	}
-	return nil
+	return dst, nil
 }
 
 // Rasterize converts layout geometry into directional cell occupancy.
@@ -98,7 +187,17 @@ func Rasterize(l *Layout) (Grid, error) {
 // RasterizeInto converts layout geometry into directional cell occupancy,
 // reusing cells when it has sufficient capacity.
 func RasterizeInto(cells []Connections, l *Layout) (Grid, error) {
-	return rasterizeInto(cells, l, math.MaxUint32)
+	return rasterizeInto(cells, nil, l, math.MaxUint32)
+}
+
+// RasterizeOwnedInto converts layout geometry into directional cell occupancy
+// and ownership while reusing both aligned slices.
+func RasterizeOwnedInto(
+	cells []Connections,
+	owners []Hit,
+	l *Layout,
+) (Grid, error) {
+	return rasterizeInto(cells, owners, l, math.MaxUint32)
 }
 
 // RasterizeWithoutEdgeInto converts layout geometry into directional cell
@@ -108,11 +207,22 @@ func RasterizeWithoutEdgeInto(
 	l *Layout,
 	edgeID uint32,
 ) (Grid, error) {
-	return rasterizeInto(cells, l, edgeID)
+	return rasterizeInto(cells, nil, l, edgeID)
+}
+
+// RasterizeWithoutEdgeOwnedInto rasterizes ownership while omitting edgeID.
+func RasterizeWithoutEdgeOwnedInto(
+	cells []Connections,
+	owners []Hit,
+	l *Layout,
+	edgeID uint32,
+) (Grid, error) {
+	return rasterizeInto(cells, owners, l, edgeID)
 }
 
 func rasterizeInto(
 	cells []Connections,
+	owners []Hit,
 	l *Layout,
 	excludedEdge uint32,
 ) (Grid, error) {
@@ -126,56 +236,121 @@ func rasterizeInto(
 	if !ok {
 		return Grid{}, errors.New("layout has no geometry")
 	}
-	grid, err := newGrid(cells, bounds)
+	grid, err := newGrid(cells, owners, bounds)
 	if err != nil {
 		return Grid{}, err
 	}
-	for i := range l.Nodes {
-		if l.Nodes[i].Empty() {
+	for hit := range l.DrawOrder() {
+		switch hit.Kind {
+		case HitNode:
+			if l.Nodes[hit.ID].Empty() {
+				continue
+			}
+			grid.claimRect(l.Nodes[hit.ID].Rect, hit)
+			if err := grid.AddRect(l.Nodes[hit.ID].Rect); err != nil {
+				return Grid{}, fmt.Errorf("rasterize node %d: %w", hit.ID, err)
+			}
+		case HitEdge:
+			if hit.ID == excludedEdge || l.Edges[hit.ID].Empty() {
+				continue
+			}
+			if err := grid.claimEdge(l, hit.ID); err != nil {
+				return Grid{}, fmt.Errorf("claim edge %d: %w", hit.ID, err)
+			}
+			if err := grid.AddPath(l.Edges[hit.ID].Points); err != nil {
+				return Grid{}, fmt.Errorf("rasterize edge %d: %w", hit.ID, err)
+			}
+		case HitPort:
 			continue
-		}
-		if err := grid.AddRect(l.Nodes[i].Rect); err != nil {
-			return Grid{}, fmt.Errorf("rasterize node %d: %w", i, err)
-		}
-	}
-	for i := range l.Edges {
-		if uint32(i) == excludedEdge || l.Edges[i].Empty() {
-			continue
-		}
-		if err := grid.AddPath(l.Edges[i].Points); err != nil {
-			return Grid{}, fmt.Errorf("rasterize edge %d: %w", i, err)
 		}
 	}
 	return grid, nil
 }
 
-func (g *Grid) addSegment(a, b Point) error {
+func (g *Grid) claimRect(rect Rect, owner Hit) {
+	limit := rect.Max()
+	for y := rect.Min.Y; y < limit.Y; y++ {
+		for x := rect.Min.X; x < limit.X; x++ {
+			index, _ := g.Index(Point{X: x, Y: y})
+			g.Cells[index] = 0
+			g.Owners[index] = owner
+		}
+	}
+}
+
+func (g *Grid) claimEdge(l *Layout, edgeID uint32) error {
+	points := l.Edges[edgeID].Points
+	owner := Hit{ID: edgeID, Kind: HitEdge}
+	edge := RasterEdge{
+		Points: points,
+		PortA:  NoPortID,
+		PortB:  NoPortID,
+	}
+	if l.graph.EdgeExists(edgeID) {
+		graphEdge := l.graph.Edges[edgeID]
+		edge.PortA = graphEdge.PortA
+		edge.PortB = graphEdge.PortB
+	}
+	claim := func(point Point) {
+		if l.edgeEndpointAt(edgeID, point) {
+			return
+		}
+		index, _ := g.Index(point)
+		previous := g.Owners[index]
+		if !l.rasterEdgePreservesCell(edge, point, previous) {
+			g.Cells[index] = 0
+		}
+		g.Owners[index] = owner
+	}
+	claim(points[0])
+	for i := 1; i < len(points); i++ {
+		if err := walkSegment(points[i-1], points[i], claim); err != nil {
+			return fmt.Errorf("segment %d: %w", i-1, err)
+		}
+	}
+	return nil
+}
+
+func (l *Layout) rasterEdgePreservesCell(
+	edge RasterEdge,
+	point Point,
+	previous Hit,
+) bool {
+	if len(edge.Points) != 0 {
+		if point == edge.Points[0] && edge.PortA != NoPortID {
+			return true
+		}
+		if point == edge.Points[len(edge.Points)-1] &&
+			edge.PortB != NoPortID {
+			return true
+		}
+	}
+	if previous.Kind != HitEdge || !l.graph.EdgeExists(previous.ID) {
+		return false
+	}
+	previousEdge := l.graph.Edges[previous.ID]
+	return previousEdge.HasPort(edge.PortA) || previousEdge.HasPort(edge.PortB)
+}
+
+func walkSegment(a, b Point, visit func(Point)) error {
 	switch {
 	case a.X == b.X:
 		for a != b {
-			next := a
 			if b.Y < a.Y {
-				next.Y--
+				a.Y--
 			} else {
-				next.Y++
+				a.Y++
 			}
-			if err := g.connect(a, next); err != nil {
-				return err
-			}
-			a = next
+			visit(a)
 		}
 	case a.Y == b.Y:
 		for a != b {
-			next := a
 			if b.X < a.X {
-				next.X--
+				a.X--
 			} else {
-				next.X++
+				a.X++
 			}
-			if err := g.connect(a, next); err != nil {
-				return err
-			}
-			a = next
+			visit(a)
 		}
 	default:
 		return fmt.Errorf("non-orthogonal points %+v and %+v", a, b)
@@ -183,33 +358,46 @@ func (g *Grid) addSegment(a, b Point) error {
 	return nil
 }
 
-func (g *Grid) connect(a, b Point) error {
-	aIndex, ok := g.Index(a)
-	if !ok {
-		return fmt.Errorf("point %+v outside grid", a)
+func rasterizePath(
+	points []Point,
+	visit func(Point, Connections) error,
+) error {
+	if len(points) < 2 {
+		return errors.New("path needs at least two points")
 	}
-	bIndex, ok := g.Index(b)
-	if !ok {
-		return fmt.Errorf("point %+v outside grid", b)
-	}
-
-	dir, ok := directionBetween(a, b)
-	if !ok {
-		return fmt.Errorf("points %+v and %+v are not adjacent", a, b)
-	}
-	switch dir {
-	case north:
-		g.Cells[aIndex] |= North
-		g.Cells[bIndex] |= South
-	case east:
-		g.Cells[aIndex] |= East
-		g.Cells[bIndex] |= West
-	case south:
-		g.Cells[aIndex] |= South
-		g.Cells[bIndex] |= North
-	case west:
-		g.Cells[aIndex] |= West
-		g.Cells[bIndex] |= East
+	for i := 1; i < len(points); i++ {
+		current := points[i-1]
+		finish := points[i]
+		if current.X != finish.X && current.Y != finish.Y {
+			return fmt.Errorf(
+				"segment %d: non-orthogonal points %+v and %+v",
+				i-1,
+				current,
+				finish,
+			)
+		}
+		for current != finish {
+			next := current
+			switch {
+			case finish.X < current.X:
+				next.X--
+			case finish.X > current.X:
+				next.X++
+			case finish.Y < current.Y:
+				next.Y--
+			default:
+				next.Y++
+			}
+			dir, _ := directionBetween(current, next)
+			from, to := directionConnections(dir)
+			if err := visit(current, from); err != nil {
+				return fmt.Errorf("segment %d: %w", i-1, err)
+			}
+			if err := visit(next, to); err != nil {
+				return fmt.Errorf("segment %d: %w", i-1, err)
+			}
+			current = next
+		}
 	}
 	return nil
 }

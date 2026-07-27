@@ -43,6 +43,8 @@ The first end-to-end milestone is complete. The engine can:
 - auto-size multiline labels or retain explicit node dimensions
 - wrap and visually clip labels inside explicit dimensions without losing text
 - resize nodes from the nearest corner with right-drag
+- order nodes and edges in persistent back-to-front layers
+- occlude lower geometry and labels using raster-cell ownership
 
 The example program renders:
 
@@ -90,6 +92,8 @@ Mutations made through `Layout` update node and port geometry immediately.
 `Layout.draftPorts` is reusable transactional scratch space. Port resolution
 finishes there before it commits results to `Layout.Ports`.
 `Layout.explicitSizes` stores optional fixed outer dimensions by node ID.
+`Layout.drawOrder` stores live node and edge hits from back to front. Creation
+appends objects to the front; deletion removes their entries.
 Auto-sized nodes derive their dimensions from their full labels.
 `LabelLine` stores `uint32` byte offsets and display width. `AppendLabelLines`
 preserves explicit newlines and adds Unicode-aware wrapping when given a width.
@@ -138,9 +142,15 @@ a redo tail. Cache writes use a 100 millisecond debounce and atomic replacement.
 Cache files use gzip compression. Readers also accept the earlier plain JSON
 format. Cache failures never block diagram editing or saving.
 
-`Layout.Hits(point)` yields all overlapping geometry in node, port, then edge
-order. It reports ports at their anchor cells. It checks compact edge segments,
-so its cost does not depend on rendered edge length.
+`Layout.Hits(point)` yields the topmost visible object. At a visible node
+endpoint it also yields the usable port and incident edges so endpoint dragging
+remains possible. It checks compact edge segments, so its cost does not depend
+on rendered edge length.
+
+`Layout.PreviewRoute` treats a grid point as a temporary port and chooses its
+approach side by route cost. `PreviewRouteWithoutEdge` omits a relocated edge
+from occupancy. Both methods reuse router scratch and leave graph and history
+state unchanged.
 
 `Layout.Selection()` owns index-aligned node and edge selection sets. It
 supports individual replacement and toggling, area intersection, iteration,
@@ -152,8 +162,10 @@ keeps edge deletion semantics correct.
 
 `document.Document` is the versioned persisted schema. It stores live semantic
 objects, node origins, optional fixed node sizes, padding, and router
-configuration. Export compacts runtime tombstones and remaps port references;
-import reconstructs independent runtime slices.
+configuration. Its layer list stores nodes and edges from back to front. Export
+compacts runtime tombstones and remaps port and layer references; import
+reconstructs independent runtime slices. Documents without layers derive
+node-then-edge creation order.
 
 Routes, geometry, free lists, and reusable scratch are derived state and are not
 persisted. `document.Marshal` writes indented JSON. `document.Unmarshal`
@@ -162,14 +174,13 @@ layout and accepts layout options such as `WithHistory`.
 
 ### `render`
 
-`layout.Rasterize` converts rectangles and routes into directional cell
-connectivity. `render.Unicode` maps that connectivity to box-drawing glyphs and
-places labels. Auto-sized labels preserve explicit newlines without wrapping.
-Fixed-size nodes wrap to their inner width and clip visually at their inner
-height without changing the stored label.
-
-The renderer merges connectivity. It does not retain object ownership or
-layering information.
+`layout.Rasterize` converts rectangles and routes into aligned directional
+connectivity and ownership slices. Later layers replace lower connectivity at
+unrelated crossings and across complete node rectangles. Common-endpoint edges
+still merge shared connectivity. `render.Unicode` maps visible connectivity to
+box-drawing glyphs and only places label graphemes whose cells remain owned by
+their node. Fixed-size nodes wrap to their inner width and clip visually at
+their inner height without changing the stored label.
 
 ### `internal/tui`
 
@@ -194,7 +205,7 @@ The TUI also supports:
 - port-only highlighting while creating or reconnecting an edge
 - node creation at the cursor
 - `l` line tool with direct port-to-port mouse dragging and a live orthogonal
-  preview
+  preview routed around node obstacles
 - direct endpoint reconnection by dragging an edge within three cells of its
   connected port
 - reconnection previews omit the original edge until the drag commits or
@@ -219,6 +230,8 @@ The TUI also supports:
 - Ctrl-A expansion through selected connected components, followed by
   whole-document selection
 - grouped movement and deletion as one history interaction
+- `[` and `]` move the focused object backward or forward one layer
+- Shift-`[` and Shift-`]` send the focused object to the back or front
 
 The model accepts pasted multiline labels and rejects carriage returns before
 they reach the layout.
@@ -256,8 +269,13 @@ paths.
 - an `Exit` equals its `Anchor` when unsigned coordinates cannot represent the
   outward neighbor.
 - the router is configuration passed to `layout.New`.
-- routing costs include step, shared step, bend, and crossing costs.
-- route sharing requires a common endpoint and applies to the entire route.
+- routing costs include step, shared step, bend, crossing, and endpoint-step
+  costs.
+- endpoint steps add 40 by default while ordinary steps cost 10. This prefers
+  exterior detours without making overlapping endpoints unroutable.
+- route sharing requires a common endpoint and begins only where that endpoint
+  is nearer than both distinct endpoints. This keeps shared trunks near their
+  logical destination instead of visually joining source nodes.
 - unrelated edges may cross but may not share a segment or touch an endpoint.
 - rerouting replaces an entire route. Comments mark where more local rerouting
   would need different logic.
@@ -280,6 +298,14 @@ paths.
 - Linux and Windows store cached history under
   `os.UserCacheDir()/dg/history`.
 - anonymous diagrams do not write history until their first save.
+- draw order contains each live node and edge exactly once.
+- new objects start at the front of draw order.
+- edge endpoint cells remain node-owned so ports and incident edges stay
+  selectable.
+- unrelated edge crossings show only the upper edge; common-endpoint routes
+  retain merged connectivity.
+- endpoint edges may route through overlapping endpoint rectangles. Raster
+  ownership hides the covered route cells.
 
 ## Current performance
 
@@ -296,6 +322,8 @@ BenchmarkLayoutDeleteAndConnectEdge
 BenchmarkLayoutHits/node         32.6 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/edge         30.5 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/miss         31.2 ns/op   0 B/op   0 allocs/op
+BenchmarkPreviewRoute             0.8 ms/op   0 B/op   0 allocs/op
+BenchmarkEncoderEncode           2.3 µs/op   0 B/op   0 allocs/op
 BenchmarkModelMoveAndView        3.68 µs/op   2304 B/op   1 allocs/op
 BenchmarkAppendLabelLines        2.89 µs/op      0 B/op   0 allocs/op
 ```
@@ -327,29 +355,7 @@ Change Tab navigation to cycle focused nodes in draw order. Arrow keys should
 move the focused node. Preserve a separate way to cycle overlapping hits when
 needed.
 
-### 2. Add layering and diagnose blocked movement
-
-Creation order should define back-to-front order. Add explicit operations to
-move objects backward, to the back, forward, or to the front without changing
-semantic IDs.
-
-A compact representation is a draw-order slice containing object kind and ID.
-Layering requires coordinated changes:
-
-- `Layout.Hits` must return objects in visual order
-- deletion must remove draw-order entries
-- persistence and history must preserve draw order
-- rasterization must retain ownership instead of only merged connectivity
-- crossings must decide which edge appears above the other
-- occluded ports and edges need predictable selection rules
-
-Dragging connected boxes too close together currently looks broken. The move
-path rebuilds the layout on every step and rolls back a move when routing finds
-no orthogonal route. Investigate whether these failures are valid obstacle
-constraints or a router bug before treating occlusion as the fix. Add a focused
-regression test for the smallest failing placement.
-
-### 3. Add inherited node and edge styles
+### 2. Add inherited node and edge styles
 
 Pressing `b` on a focused node should cycle its border style. Each new node
 inherits the most recently selected border style.
@@ -365,7 +371,7 @@ an arrowhead and the node border so the endpoint remains readable.
 Increase port contrast while the line tool is active. Test red and green
 against the current theme instead of relying on the existing blue highlight.
 
-### 4. Add clipboard export
+### 3. Add clipboard export
 
 Ctrl-C should copy the selected rendered cells to the system clipboard. This
 replaces the current Ctrl-C quit binding, so choose another quit shortcut.
@@ -378,10 +384,37 @@ Store the preferred comment prefix, such as `// ` or `# `, in a user
 preferences file under the platform cache directory. Keep preferences separate
 from per-document history.
 
-### 5. Complete text layout
+### 4. Complete text layout
 
 Add horizontal alignment, vertical alignment, and justification after the
 object and style model can persist those choices.
+
+### 5. Add reusable custom shapes
+
+Support custom shapes composed from multiple boxes and lines. Rasterize their
+components as one object so internal overlaps retain their intended
+connectivity instead of gaining the gap cells used when independent layered
+objects occlude each other.
+
+For example, a reusable database shape could render as:
+
+```text
+┌─────────────┐
+│  cassandra  ├┐
+└┬────────────┘│
+ └─────────────┘
+```
+
+Each shape definition needs to identify:
+
+- the component that owns the label
+- which components scale vertically for multiline labels, and in what
+  proportions
+- which components scale horizontally for wider labels, and in what
+  proportions
+
+Persist custom shape definitions under the platform cache directory so users
+can quickly reuse designs across documents.
 
 ## Known limits
 
@@ -389,8 +422,10 @@ object and style model can persist those choices.
 - node and edge styles do not exist
 - nodes always draw borders
 - edges have no arrowheads
-- rasterization cannot represent occlusion or ownership
-- moving a connected node rolls back when any edge cannot be routed
+- layer commands currently reorder one selected object rather than a selected
+  group
+- moving a connected node still rolls back when an edge cannot route around
+  unrelated obstacles
 - Tab cycles overlapping hits rather than focused nodes
 - line-tool ports need stronger contrast
 - Ctrl-C quits instead of copying

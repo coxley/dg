@@ -705,20 +705,16 @@ func TestLayoutHits(t *testing.T) {
 		want  []Hit
 	}{
 		{
-			name:  "overlapping node port and edge",
+			name:  "edge occludes node and port",
 			point: Point{X: 1, Y: 2},
 			want: []Hit{
-				{ID: 0, Kind: HitNode},
-				{ID: 0, Kind: HitPort},
 				{ID: 0, Kind: HitEdge},
 			},
 		},
 		{
-			name:  "bend and shared endpoint",
+			name:  "latest edge occludes earlier geometry",
 			point: Point{X: 2, Y: 2},
 			want: []Hit{
-				{ID: 0, Kind: HitNode},
-				{ID: 0, Kind: HitEdge},
 				{ID: 1, Kind: HitEdge},
 			},
 		},

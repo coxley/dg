@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"math/bits"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +61,39 @@ func TestModelMoveIsOneUndoInteraction(t *testing.T) {
 	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
 	require.Equal(t, after, model.geo.Nodes[nodeID].Rect.Min)
+}
+
+func TestModelReordersLayersWithUndo(t *testing.T) {
+	t.Parallel()
+
+	model, back, front := newTwoNodeModel(t)
+	backHit := layout.Hit{ID: back, Kind: layout.HitNode}
+	frontHit := layout.Hit{ID: front, Kind: layout.HitNode}
+	model.selectOnly(backHit)
+
+	updateModel(t, model, keyPress(']', "]"))
+	require.Equal(
+		t,
+		[]layout.Hit{frontHit, backHit},
+		slices.Collect(model.geo.DrawOrder()),
+	)
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(
+		t,
+		[]layout.Hit{backHit, frontHit},
+		slices.Collect(model.geo.DrawOrder()),
+	)
+
+	model.selectOnly(frontHit)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: '[',
+		Mod:  tea.ModShift,
+	}))
+	require.Equal(
+		t,
+		[]layout.Hit{frontHit, backHit},
+		slices.Collect(model.geo.DrawOrder()),
+	)
 }
 
 func TestModelBlurCommitsActiveMove(t *testing.T) {
@@ -351,6 +385,20 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 		"─",
 		string(appendViewportSpaces(nil, 1, uint64(middle.X), uint64(middle.Y), model)),
 	)
+	glyph, ok := previewGlyph(
+		model,
+		uint64(source.Anchor.X),
+		uint64(source.Anchor.Y),
+	)
+	require.True(t, ok)
+	require.Equal(t, '├', glyph)
+	glyph, ok = previewGlyph(
+		model,
+		uint64(destination.Anchor.X),
+		uint64(destination.Anchor.Y),
+	)
+	require.True(t, ok)
+	require.Equal(t, '┤', glyph)
 
 	updateModel(t, model, tea.MouseReleaseMsg{
 		X:      int(destination.Anchor.X),
@@ -359,6 +407,95 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 	})
 	require.Equal(t, modeNavigate, model.mode)
 	require.True(t, model.geo.EdgeExists(0))
+}
+
+func TestModelConnectionPreviewTargetsConnectedPort(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	third, err := model.geo.NewNodeAt("third", layout.NewPoint(2, 8))
+	require.NoError(t, err)
+	existingSource := portExiting(t, model, left, 1)
+	destination := portExiting(t, model, right, -1)
+	_, err = model.geo.ConnectPorts(existingSource, destination)
+	require.NoError(t, err)
+	require.NoError(t, model.geo.Build())
+	require.NoError(t, model.render())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 20})
+
+	source := portExiting(t, model, third, 1)
+	updateModel(t, model, keyPress('l', "l"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(model.geo.Ports[source].Anchor.X),
+		Y:      int(model.geo.Ports[source].Anchor.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(model.geo.Ports[destination].Anchor.X),
+		Y:      int(model.geo.Ports[destination].Anchor.Y),
+		Button: tea.MouseLeft,
+	})
+
+	require.NotEmpty(t, model.connectPreview)
+	require.Equal(t, model.geo.Ports[source].Anchor, model.connectPreview[0])
+	require.Equal(
+		t,
+		model.geo.Ports[destination].Anchor,
+		model.connectPreview[len(model.connectPreview)-1],
+	)
+	var (
+		join   layout.Point
+		merged layout.Connections
+	)
+	for _, cell := range model.connectRaster {
+		if bits.OnesCount8(uint8(cell.Connections)) == 3 {
+			join = cell.Point
+			merged = cell.Connections
+			break
+		}
+	}
+	require.NotZero(t, merged)
+	glyph, ok := previewGlyph(model, uint64(join.X), uint64(join.Y))
+	require.True(t, ok)
+	require.Equal(t, render.Glyph(merged), glyph)
+}
+
+func TestModelConnectionPreviewRoutesAroundNodes(t *testing.T) {
+	t.Parallel()
+
+	model, left, obstacle := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 60, Height: 20})
+	sourceID := portExiting(t, model, left, 1)
+	source := model.geo.Ports[sourceID]
+	cursor := layout.NewPoint(35, source.Anchor.Y)
+
+	updateModel(t, model, keyPress('l', "l"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(source.Anchor.X),
+		Y:      int(source.Anchor.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(cursor.X),
+		Y:      int(cursor.Y),
+		Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, source.Anchor, model.connectPreview[0])
+	require.Equal(t, cursor, model.connectPreview[len(model.connectPreview)-1])
+	for i := 1; i < len(model.connectPreview); i++ {
+		point := model.connectPreview[i-1]
+		for point != model.connectPreview[i] {
+			point = stepToward(point, model.connectPreview[i])
+			require.False(
+				t,
+				model.geo.Nodes[obstacle].Rect.Contains(point),
+				"preview crosses node at %+v: %+v",
+				point,
+				model.connectPreview,
+			)
+		}
+	}
 }
 
 func TestModelReconnectsNearestEdgeEndpoint(t *testing.T) {
@@ -423,7 +560,7 @@ func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {
 	})
 	require.Equal(t, modeNavigate, model.mode)
 	require.False(t, model.edgeDragPending)
-	require.Zero(t, model.connectPreviewLen)
+	require.Empty(t, model.connectPreview)
 
 	blank := near.Add(0, 3)
 	updateModel(t, model, tea.MouseClickMsg{
