@@ -2,9 +2,9 @@
 package render
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/coxley/dg/layout"
 	"github.com/rivo/uniseg"
@@ -12,41 +12,50 @@ import (
 
 // Unicode renders layout connectivity and labels with box-drawing characters.
 func Unicode(l *layout.Layout) (string, error) {
+	b, err := Encode(nil, l)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func Encode(dst []byte, l *layout.Layout) ([]byte, error) {
 	if l == nil {
-		return "", errors.New("nil layout")
+		return nil, errors.New("nil layout")
 	}
 	grid, err := layout.Rasterize(l)
 	if err != nil {
-		return "", fmt.Errorf("rasterize layout: %w", err)
+		return nil, fmt.Errorf("rasterize layout: %w", err)
 	}
 
 	labels := make([]string, len(grid.Cells))
 	continuations := make([]bool, len(grid.Cells))
 	for i := range l.Nodes {
 		if err := placeLabel(&grid, labels, continuations, l.Nodes[i].LabelPoint, l.Label(uint32(i))); err != nil {
-			return "", fmt.Errorf("place node %d label: %w", i, err)
+			return nil, fmt.Errorf("place node %d label: %w", i, err)
 		}
 	}
 
 	width := int(grid.Bounds.Size.Width)
 	height := int(grid.Bounds.Size.Height)
-	var out strings.Builder
-	out.Grow((width + 1) * height)
-	for y := 0; y < height; y++ {
+
+	buf := bytes.NewBuffer(dst)
+	buf.Grow((width + 1) * height)
+	for y := range height {
 		row := y * width
-		for x := 0; x < width; x++ {
+		for x := range width {
 			index := row + x
 			switch {
 			case labels[index] != "":
-				out.WriteString(labels[index])
+				buf.WriteString(labels[index])
 			case continuations[index]:
 			default:
-				out.WriteRune(glyph(grid.Cells[index]))
+				buf.WriteRune(glyph(grid.Cells[index]))
 			}
 		}
-		out.WriteByte('\n')
+		buf.WriteRune('\n')
 	}
-	return out.String(), nil
+	return buf.Bytes(), nil
 }
 
 func placeLabel(

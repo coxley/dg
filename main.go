@@ -10,18 +10,31 @@ import (
 )
 
 func main() {
-	var geo layout.Layout
-	geo.Padding = layout.Padding{Left: 1, Right: 1}
+	geo, err := layout.New()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	sink := geo.NewNodeAt("sinks", layout.NewPoint(6, 6))
+	sink, err := geo.NewNodeAt("sinks", layout.NewPoint(6, 6))
+	if err != nil {
+		log.Fatal(err)
+	}
+	foo, err := geo.NewNodeAt("foo", layout.NewPoint(4, 0))
+	if err != nil {
+		log.Fatal(err)
+	}
 	geo.ConnectNodes(
-		geo.NewNodeAt("foo", layout.NewPoint(4, 0)),
+		foo,
 		ir.Bottom,
 		ir.Top,
 		sink,
 	)
+	bar, err := geo.NewNodeAt("bar", layout.NewPoint(10, 0))
+	if err != nil {
+		log.Fatal(err)
+	}
 	geo.ConnectNodes(
-		geo.NewNodeAt("bar", layout.NewPoint(10, 0)),
+		bar,
 		ir.Bottom,
 		ir.Top,
 		sink,
@@ -29,7 +42,7 @@ func main() {
 	if err := geo.Build(); err != nil {
 		log.Fatal(err)
 	}
-	drawing, err := render.Unicode(&geo)
+	drawing, err := render.Unicode(geo)
 	if err != nil {
 		log.Fatal(err)
 	}
