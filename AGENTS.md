@@ -36,6 +36,7 @@ The first end-to-end milestone is complete. The engine can:
 - delete nodes and edges and reuse their IDs
 - move nodes and rebuild without steady-state allocations
 - query every node, port, and edge rasterized at a grid point
+- edit diagrams interactively through a Bubble Tea terminal UI
 
 The example program renders:
 
@@ -112,6 +113,25 @@ places labels.
 The renderer merges connectivity. It does not retain object ownership or
 layering information.
 
+### `internal/tui`
+
+The Bubble Tea model keeps terminal-only state:
+
+- cursor and viewport origins
+- the reusable hit-selection buffer
+- navigation, node movement, and label editing modes
+- cached rendered text and document bounds
+
+Bubble Tea messages mutate `Layout` synchronously. Node movement and label
+editing call `Build` and refresh the cached frame. The model accepts pasted
+single-line labels and rejects pasted newlines before they reach the layout.
+
+Run the example editor with:
+
+```sh
+go run ./cmd/dg
+```
+
 ## Settled design decisions
 
 - `Point` and `Size` use `uint32`.
@@ -155,45 +175,24 @@ BenchmarkLayoutDeleteAndConnectEdge
 BenchmarkLayoutHits/node         37.1 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/edge         35.7 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/miss         36.1 ns/op   0 B/op   0 allocs/op
+BenchmarkModelMoveAndView         3.1 µs/op   2577 B/op   9 allocs/op
 ```
 
 These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
 nodes, ports, and compact edge segments. Add a spatial index only if larger
 interactive diagrams show that this scan matters.
 
-The obstacle iterator removed a stored slice and preserved zero allocations. It
-made the small build benchmark about 6% to 7% slower.
+The TUI benchmark uses a one-node document and covers a Bubble Tea key update,
+node movement, layout build, rasterization, viewport composition, and view
+creation. Its allocations remain outside the layout hot path.
 
 ## Recommended next work
 
-Use the mutation APIs in a small TUI.
+The basic TUI is complete. It supports cursor navigation, overlapping-hit
+cycling, node movement, label editing, node and edge deletion, viewport
+tracking, and resize-aware rendering.
 
-Label editing is complete. `SetNodeLabel` updates the semantic label, node
-rectangle, and ports transactionally. An invalid label leaves all three
-unchanged. `Build` reroutes connected edges after the edit.
-
-Deletion is complete. `DeleteEdge` leaves a reusable edge tombstone.
-`DeleteNode` also removes the node's ports and incident edges. Creation reuses
-deleted IDs without allocating after the free lists warm up.
-
-### 1. Build a basic TUI
-
-Use the existing APIs to test the full interactive loop:
-
-- move a cursor across the cell grid
-- inspect `Layout.Hits`
-- select and cycle through overlapping hits
-- move the selected node with `PlaceNode`
-- edit its label with `SetNodeLabel`
-- call `Build` and render after each mutation
-
-Programmatic movement already works. The initial TUI only needs to connect input,
-selection, movement, and rendering.
-
-Profile the complete loop before adding incremental routing or a dense hit
-index. The current small layout rebuilds in about 19 microseconds after a move.
-
-### 2. Define a persisted document format
+### 1. Define a persisted document format
 
 Do not serialize router scratch or derived routes as authoritative state. Create
 a versioned document type that contains:

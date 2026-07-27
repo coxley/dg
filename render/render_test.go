@@ -43,6 +43,22 @@ func TestUnicodeWideLabel(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestEncodeFrameIncludesBounds(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	newNodeAt(t, geo, "node", layout.NewPoint(4, 7))
+	require.NoError(t, geo.Build())
+
+	frame, err := EncodeFrame(nil, geo)
+	require.NoError(t, err)
+	require.Equal(t, layout.Rect{
+		Min:  layout.NewPoint(4, 7),
+		Size: layout.Size{Width: 8, Height: 3},
+	}, frame.Bounds)
+	require.Equal(t, "┌──────┐\n│ node │\n└──────┘\n", string(frame.Text))
+}
+
 func TestUnicodeSharedEndpoint(t *testing.T) {
 	t.Parallel()
 

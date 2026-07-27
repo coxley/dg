@@ -10,6 +10,12 @@ import (
 	"github.com/rivo/uniseg"
 )
 
+// Frame contains encoded terminal text and its document-space bounds.
+type Frame struct {
+	Bounds layout.Rect
+	Text   []byte
+}
+
 // Unicode renders layout connectivity and labels with box-drawing characters.
 func Unicode(l *layout.Layout) (string, error) {
 	b, err := Encode(nil, l)
@@ -20,12 +26,18 @@ func Unicode(l *layout.Layout) (string, error) {
 }
 
 func Encode(dst []byte, l *layout.Layout) ([]byte, error) {
+	frame, err := EncodeFrame(dst, l)
+	return frame.Text, err
+}
+
+// EncodeFrame appends a rendered layout to dst and includes its document bounds.
+func EncodeFrame(dst []byte, l *layout.Layout) (Frame, error) {
 	if l == nil {
-		return nil, errors.New("nil layout")
+		return Frame{}, errors.New("nil layout")
 	}
 	grid, err := layout.Rasterize(l)
 	if err != nil {
-		return nil, fmt.Errorf("rasterize layout: %w", err)
+		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
 	}
 
 	labels := make([]string, len(grid.Cells))
@@ -35,7 +47,7 @@ func Encode(dst []byte, l *layout.Layout) ([]byte, error) {
 			continue
 		}
 		if err := placeLabel(&grid, labels, continuations, l.Nodes[i].LabelPoint, l.Label(uint32(i))); err != nil {
-			return nil, fmt.Errorf("place node %d label: %w", i, err)
+			return Frame{}, fmt.Errorf("place node %d label: %w", i, err)
 		}
 	}
 
@@ -58,7 +70,7 @@ func Encode(dst []byte, l *layout.Layout) ([]byte, error) {
 		}
 		buf.WriteRune('\n')
 	}
-	return buf.Bytes(), nil
+	return Frame{Bounds: grid.Bounds, Text: buf.Bytes()}, nil
 }
 
 func placeLabel(
