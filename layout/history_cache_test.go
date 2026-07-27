@@ -148,6 +148,8 @@ func TestHistoryRestoreKeepsSavedRenderAndRecoversRedoTail(t *testing.T) {
 	require.NoError(t, geo.Build())
 	require.NoError(t, history.Store("diagram.json"))
 
+	explicit := Size{Width: 10, Height: 5}
+	require.NoError(t, geo.SetNodeSize(nodeID, explicit))
 	require.NoError(t, geo.SetNodeLabel(nodeID, "unsaved"))
 	require.NoError(t, geo.PlaceNode(nodeID, NewPoint(20, 30)))
 	require.NoError(t, history.Flush())
@@ -167,6 +169,10 @@ func TestHistoryRestoreKeepsSavedRenderAndRecoversRedoTail(t *testing.T) {
 	require.Equal(t, NewPoint(4, 5), restored.Nodes[restoredID].Rect.Min)
 
 	changed, err := restoredHistory.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, explicit, mustExplicitNodeSize(t, restored, restoredID))
+	changed, err = restoredHistory.Redo()
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "unsaved", restored.Label(restoredID))

@@ -8,7 +8,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var benchmarkHitCount int
+var (
+	benchmarkHitCount   int
+	benchmarkLabelLines []LabelLine
+)
+
+func BenchmarkAppendLabelLines(b *testing.B) {
+	const label = "the quick brown fox\njumps over the lazy dog"
+
+	lines := AppendLabelLines(nil, label, 12)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		lines = AppendLabelLines(lines[:0], label, 12)
+	}
+	benchmarkLabelLines = lines
+}
 
 func BenchmarkLayoutBuild(b *testing.B) {
 	geo, _ := newBenchmarkLayout(b)

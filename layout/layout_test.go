@@ -3,6 +3,7 @@ package layout
 import (
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -34,9 +35,9 @@ func TestMeasureLabel(t *testing.T) {
 			want: Size{},
 		},
 		{
-			name:    "newline",
-			text:    "first\nsecond",
-			wantErr: ErrMultilineLabel,
+			name: "newline",
+			text: "first\nsecond",
+			want: Size{Width: 6, Height: 2},
 		},
 	}
 
@@ -45,6 +46,81 @@ func TestMeasureLabel(t *testing.T) {
 		require.ErrorIs(t, err, test.wantErr, test.name)
 		require.Equal(t, test.want, got, test.name)
 	}
+}
+
+func TestAppendLabelLines(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		text      string
+		wrapWidth uint32
+		want      []string
+	}{
+		{
+			name: "explicit lines only",
+			text: "one two\nthree",
+			want: []string{"one two", "three"},
+		},
+		{
+			name:      "word and hard wrapping",
+			text:      "one two three",
+			wrapWidth: 4,
+			want:      []string{"one ", "two ", "thre", "e"},
+		},
+		{
+			name: "blank and trailing lines",
+			text: "one\n\n",
+			want: []string{"one", "", ""},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			lines := AppendLabelLines(nil, test.text, test.wrapWidth)
+			got := make([]string, len(lines))
+			for i, line := range lines {
+				got[i] = test.text[line.Start:line.End]
+			}
+			require.Equal(t, test.want, got)
+		})
+	}
+}
+
+func TestLabelLineProperties(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		text := rapid.StringMatching(`[a-z \n]{0,64}`).Draw(t, "text")
+		width := rapid.Uint32Range(1, 12).Draw(t, "wrap width")
+
+		size, err := MeasureLabel(text)
+		require.NoError(t, err)
+		if text == "" {
+			require.True(t, size.Empty())
+		} else {
+			require.Equal(t, uint32(strings.Count(text, "\n")+1), size.Height)
+		}
+
+		lines := AppendLabelLines(nil, text, width)
+		require.NotEmpty(t, lines)
+		previousEnd := uint32(0)
+		for _, line := range lines {
+			require.GreaterOrEqual(t, line.Start, previousEnd)
+			require.LessOrEqual(t, line.Start-previousEnd, uint32(1))
+			if line.Start > previousEnd {
+				require.Equal(t, "\n", text[previousEnd:line.Start])
+			}
+			require.GreaterOrEqual(t, line.End, line.Start)
+			require.LessOrEqual(t, line.End, uint32(len(text)))
+			require.LessOrEqual(t, line.Width, width)
+			require.Equal(t, uint32(len(text[line.Start:line.End])), line.Width)
+			previousEnd = line.End
+		}
+		require.Equal(t, uint32(len(text)), previousEnd)
+	})
 }
 
 func TestNewRect(t *testing.T) {
@@ -464,6 +540,61 @@ func TestSetNodeLabelUpdatesGeometry(t *testing.T) {
 	require.NotEqual(t, oldRightPort, l.Ports[rightPortID])
 }
 
+func TestNodeExplicitSizeAndAutoSize(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	nodeID, err := geo.NewNodeAt("one two\nthree", NewPoint(3, 4))
+	require.NoError(t, err)
+	require.Equal(t, Size{Width: 11, Height: 4}, geo.Nodes[nodeID].Rect.Size)
+
+	explicit := Size{Width: 8, Height: 4}
+	require.NoError(t, geo.SetNodeSize(nodeID, explicit))
+	require.Equal(t, explicit, geo.Nodes[nodeID].Rect.Size)
+	require.Equal(t, Rect{
+		Min:  NewPoint(5, 5),
+		Size: Size{Width: 4, Height: 2},
+	}, geo.LabelBounds(nodeID))
+	require.Equal(t, explicit, mustExplicitNodeSize(t, geo, nodeID))
+
+	require.NoError(t, geo.SetNodeLabel(nodeID, "a much longer label"))
+	require.Equal(t, explicit, geo.Nodes[nodeID].Rect.Size)
+	require.Equal(t, "a much longer label", geo.Label(nodeID))
+
+	require.NoError(t, geo.AutoSizeNode(nodeID))
+	_, ok := geo.ExplicitNodeSize(nodeID)
+	require.False(t, ok)
+	require.Equal(t, Size{Width: 23, Height: 3}, geo.Nodes[nodeID].Rect.Size)
+}
+
+func TestSetNodeSizeIsTransactional(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	nodeID, err := geo.NewNodeAt("node", NewPoint(2, 3))
+	require.NoError(t, err)
+	before := geo.Nodes[nodeID]
+
+	require.ErrorContains(
+		t,
+		geo.SetNodeSize(nodeID, Size{Width: 3, Height: 2}),
+		"smaller than minimum",
+	)
+	require.Equal(t, before, geo.Nodes[nodeID])
+	_, ok := geo.ExplicitNodeSize(nodeID)
+	require.False(t, ok)
+}
+
+func mustExplicitNodeSize(t testing.TB, geo *Layout, nodeID uint32) Size {
+	t.Helper()
+
+	size, ok := geo.ExplicitNodeSize(nodeID)
+	require.True(t, ok)
+	return size
+}
+
 func TestSetNodeLabelIsTransactional(t *testing.T) {
 	t.Parallel()
 
@@ -474,7 +605,7 @@ func TestSetNodeLabelIsTransactional(t *testing.T) {
 	beforeNode := l.Nodes[nodeID]
 	beforePorts := slices.Clone(l.Ports)
 
-	require.ErrorIs(t, l.SetNodeLabel(nodeID, "first\nsecond"), ErrMultilineLabel)
+	require.ErrorContains(t, l.SetNodeLabel(nodeID, "first\x00second"), "control character")
 	require.Equal(t, "old", l.Label(nodeID))
 	require.Equal(t, beforeNode, l.Nodes[nodeID])
 	require.Equal(t, beforePorts, l.Ports)
@@ -665,8 +796,8 @@ func TestNewNodeReturnsGeometryError(t *testing.T) {
 
 	got, err := New()
 	require.NoError(t, err)
-	_, err = got.NewNode("first\nsecond")
-	require.ErrorIs(t, err, ErrMultilineLabel)
+	_, err = got.NewNode("first\x00second")
+	require.ErrorContains(t, err, "control character")
 	require.Empty(t, got.Nodes)
 	require.Empty(t, got.graph.Nodes)
 }

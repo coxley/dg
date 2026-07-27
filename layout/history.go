@@ -25,6 +25,7 @@ const (
 	historyCreateEdge
 	historyDeleteEdge
 	historyReconnectEdge
+	historySetNodeSize
 )
 
 type historyPort struct {
@@ -41,6 +42,7 @@ type historyNode struct {
 	ID     uint32
 	Label  string
 	Origin Point
+	Size   Size
 	Ports  []historyPort
 	Edges  []historyEdge
 }
@@ -51,6 +53,8 @@ type historyChange struct {
 
 	beforePoint Point
 	afterPoint  Point
+	beforeSize  Size
+	afterSize   Size
 	beforeLabel string
 	afterLabel  string
 	beforeEdge  ir.Edge
@@ -269,7 +273,9 @@ func (h *History) record(change historyChange) {
 }
 
 func (h *History) coalesce(change historyChange) bool {
-	if change.kind != historySetLabel && change.kind != historyPlaceNode {
+	if change.kind != historySetLabel &&
+		change.kind != historyPlaceNode &&
+		change.kind != historySetNodeSize {
 		return false
 	}
 	for i := len(h.active.changes) - 1; i >= 0; i-- {
@@ -281,20 +287,28 @@ func (h *History) coalesce(change historyChange) bool {
 		if previous.id != change.id || previous.kind != change.kind {
 			continue
 		}
-		if change.kind == historySetLabel {
-			previous.afterLabel = change.afterLabel
-			if previous.beforeLabel == previous.afterLabel {
-				h.active.changes = slices.Delete(h.active.changes, i, i+1)
-			}
-		} else {
-			previous.afterPoint = change.afterPoint
-			if previous.beforePoint == previous.afterPoint {
-				h.active.changes = slices.Delete(h.active.changes, i, i+1)
-			}
+		if coalesceChange(previous, change) {
+			h.active.changes = slices.Delete(h.active.changes, i, i+1)
 		}
 		return true
 	}
 	return false
+}
+
+func coalesceChange(previous *historyChange, change historyChange) bool {
+	switch change.kind {
+	case historySetLabel:
+		previous.afterLabel = change.afterLabel
+		return previous.beforeLabel == previous.afterLabel
+	case historyPlaceNode:
+		previous.afterPoint = change.afterPoint
+		return previous.beforePoint == previous.afterPoint
+	case historySetNodeSize:
+		previous.afterSize = change.afterSize
+		return previous.beforeSize == previous.afterSize
+	default:
+		return false
+	}
 }
 
 func (h *History) commitActive() {
@@ -404,6 +418,12 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 			return h.layout.PlaceNode(change.id, change.afterPoint)
 		}
 		return h.layout.PlaceNode(change.id, change.beforePoint)
+	case historySetNodeSize:
+		size := change.beforeSize
+		if forward {
+			size = change.afterSize
+		}
+		return h.layout.setNodeSize(change.id, size)
 	case historyCreateEdge:
 		if forward {
 			return h.layout.restoreHistoryEdge(change.id, change.afterEdge)
@@ -428,6 +448,7 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 type layoutHistoryState struct {
 	graph   ir.Graph
 	origins []Point
+	sizes   []Size
 	padding Padding
 	router  Router
 }
@@ -436,6 +457,7 @@ func (l *Layout) historyState() layoutHistoryState {
 	return layoutHistoryState{
 		graph:   l.graph.Clone(),
 		origins: slices.Clone(l.origins),
+		sizes:   slices.Clone(l.explicitSizes),
 		padding: l.padding,
 		router:  l.router,
 	}
@@ -448,13 +470,22 @@ func (l *Layout) restoreHistoryState(state layoutHistoryState) error {
 	if err := l.initializeGeometry(); err != nil {
 		return err
 	}
+	l.explicitSizes = slices.Clone(state.sizes)
 	for nodeID := range l.graph.Nodes {
 		if !l.graph.NodeExists(uint32(nodeID)) {
 			continue
 		}
-		if err := l.PlaceNode(uint32(nodeID), state.origins[nodeID]); err != nil {
+		node, err := l.prepareNode(
+			uint32(nodeID),
+			l.graph.Nodes[nodeID].Label,
+			state.origins[nodeID],
+		)
+		if err != nil {
 			return err
 		}
+		l.origins[nodeID] = state.origins[nodeID]
+		l.Nodes[nodeID] = node
+		l.commitNodePorts(uint32(nodeID))
 	}
 	return l.Build()
 }
@@ -465,6 +496,7 @@ func (l *Layout) historyNode(nodeID uint32) historyNode {
 		ID:     nodeID,
 		Label:  source.Label,
 		Origin: l.origins[nodeID],
+		Size:   l.explicitSizes[nodeID],
 		Ports:  make([]historyPort, 0, len(source.Ports)),
 	}
 	for _, portID := range source.Ports {
@@ -502,10 +534,12 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	l.graph = l.graph.Clone()
 
 	l.origins = growTo(l.origins, len(l.graph.Nodes))
+	l.explicitSizes = growTo(l.explicitSizes, len(l.graph.Nodes))
 	l.Nodes = growTo(l.Nodes, len(l.graph.Nodes))
 	l.Ports = growTo(l.Ports, len(l.graph.Ports))
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	l.explicitSizes[node.ID] = node.Size
 	resolved, err := l.prepareNode(node.ID, node.Label, node.Origin)
 	if err != nil {
 		return err

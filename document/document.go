@@ -31,7 +31,14 @@ type Document struct {
 type Node struct {
 	Label  string   `json:"label"`
 	Origin Point    `json:"origin"`
+	Size   Size     `json:"size,omitzero"`
 	Ports  []uint32 `json:"ports"`
+}
+
+// Size stores fixed outer node dimensions. The zero value enables auto sizing.
+type Size struct {
+	Width  uint32 `json:"width"`
+	Height uint32 `json:"height"`
 }
 
 // Point identifies a document cell.
@@ -128,6 +135,9 @@ func FromLayout(geo *layout.Layout) Document {
 				Y: geo.Nodes[nodeID].Rect.Min.Y,
 			},
 			Ports: make([]uint32, 0, len(source.Ports)),
+		}
+		if size, ok := geo.ExplicitNodeSize(uint32(nodeID)); ok {
+			node.Size = Size{Width: size.Width, Height: size.Height}
 		}
 		for _, portID := range source.Ports {
 			port := graph.Ports[portID]
@@ -226,6 +236,14 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		return nil, fmt.Errorf("create layout: %w", err)
 	}
 	for nodeID, node := range d.Nodes {
+		if node.Size.Width != 0 || node.Size.Height != 0 {
+			if err := geo.SetNodeSize(uint32(nodeID), layout.Size{
+				Width:  node.Size.Width,
+				Height: node.Size.Height,
+			}); err != nil {
+				return nil, fmt.Errorf("size node %d: %w", nodeID, err)
+			}
+		}
 		if err := geo.PlaceNode(uint32(nodeID), layout.NewPoint(node.Origin.X, node.Origin.Y)); err != nil {
 			return nil, fmt.Errorf("place node %d: %w", nodeID, err)
 		}

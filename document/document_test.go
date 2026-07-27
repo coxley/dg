@@ -2,6 +2,7 @@ package document
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -108,6 +109,25 @@ func TestUnmarshalVersionOne(t *testing.T) {
 	require.Equal(t, layout.DefaultRouter(), geo.Router())
 }
 
+func TestRoundTripMultilineLabelAndExplicitSize(t *testing.T) {
+	t.Parallel()
+
+	doc := validDocument()
+	doc.Nodes[0].Label = "one\ntwo three"
+	doc.Nodes[0].Size = Size{Width: 9, Height: 4}
+
+	geo, err := doc.Layout()
+	require.NoError(t, err)
+	require.Equal(t, doc, FromLayout(geo))
+
+	data, err := Marshal(geo)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"size"`)
+	decoded, err := Unmarshal(data)
+	require.NoError(t, err)
+	require.Equal(t, doc, decoded)
+}
+
 func TestUnmarshalRejectsInvalidJSONShape(t *testing.T) {
 	t.Parallel()
 
@@ -195,13 +215,6 @@ func TestDocumentValidation(t *testing.T) {
 			},
 			want: "duplicates ports",
 		},
-		{
-			name: "multiline label",
-			mutate: func(doc *Document) {
-				doc.Nodes[0].Label = "first\nsecond"
-			},
-			want: "multiline label",
-		},
 	}
 
 	for _, test := range tests {
@@ -266,8 +279,17 @@ func validDocument() Document {
 func generatedDocument(minNodes int) *rapid.Generator[Document] {
 	return rapid.Custom(func(t *rapid.T) Document {
 		nodeCount := rapid.IntRange(minNodes, 6).Draw(t, "node count")
+		label := rapid.Custom(func(t *rapid.T) string {
+			lineCount := rapid.IntRange(1, 3).Draw(t, "line count")
+			lines := rapid.SliceOfN(
+				rapid.StringMatching(`[a-z]{0,8}`),
+				lineCount,
+				lineCount,
+			).Draw(t, "lines")
+			return strings.Join(lines, "\n")
+		})
 		labels := rapid.SliceOfN(
-			rapid.StringMatching(`[a-z]{0,16}`),
+			label,
 			nodeCount,
 			nodeCount,
 		).Draw(t, "labels")
@@ -297,6 +319,8 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			portCount,
 		).Draw(t, "port offsets")
 
+		horizontalPadding := rapid.Uint8Range(0, 4).Draw(t, "horizontal padding")
+		verticalPadding := rapid.Uint8Range(0, 4).Draw(t, "vertical padding")
 		doc := Document{
 			Version: CurrentVersion,
 			Nodes:   make([]Node, 0, nodeCount),
@@ -304,8 +328,8 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			Edges:   make([]Edge, 0),
 			Options: Options{
 				Padding: Padding{
-					Horizontal: rapid.Uint8Range(0, 4).Draw(t, "horizontal padding"),
-					Vertical:   rapid.Uint8Range(0, 4).Draw(t, "vertical padding"),
+					Horizontal: horizontalPadding,
+					Vertical:   verticalPadding,
 				},
 				Router: Router{
 					Costs: Costs{
@@ -327,6 +351,18 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 					Y: origins[nodeID*2+1],
 				},
 				Ports: make([]uint32, 0, portCounts[nodeID]),
+			}
+			if rapid.Bool().Draw(t, "explicit size") {
+				node.Size = Size{
+					Width: rapid.Uint32Range(
+						2*uint32(horizontalPadding)+2,
+						2*uint32(horizontalPadding)+24,
+					).Draw(t, "node width"),
+					Height: rapid.Uint32Range(
+						2*uint32(verticalPadding)+2,
+						2*uint32(verticalPadding)+12,
+					).Draw(t, "node height"),
+				}
 			}
 			for range portCounts[nodeID] {
 				node.Ports = append(node.Ports, uint32(nextPort))

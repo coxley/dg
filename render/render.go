@@ -22,6 +22,7 @@ type Encoder struct {
 	grid          layout.Grid
 	labels        []string
 	continuations []bool
+	lines         []layout.LabelLine
 }
 
 // Unicode renders layout connectivity and labels with box-drawing characters.
@@ -49,7 +50,8 @@ func EncodeFrame(dst []byte, l *layout.Layout) (Frame, error) {
 	}
 	labels := make([]string, len(grid.Cells))
 	continuations := make([]bool, len(grid.Cells))
-	return encodeFrame(dst, l, grid, labels, continuations)
+	frame, _, err := encodeFrame(dst, l, grid, labels, continuations, nil)
+	return frame, err
 }
 
 // EncodeFrame appends a rendered layout to dst and includes its document
@@ -95,7 +97,16 @@ func (e *Encoder) encodeFrame(
 	)[:len(grid.Cells)]
 	clear(e.labels)
 	clear(e.continuations)
-	return encodeFrame(dst, l, e.grid, e.labels, e.continuations)
+	frame, lines, err := encodeFrame(
+		dst,
+		l,
+		e.grid,
+		e.labels,
+		e.continuations,
+		e.lines,
+	)
+	e.lines = lines
+	return frame, err
 }
 
 func encodeFrame(
@@ -104,19 +115,39 @@ func encodeFrame(
 	grid layout.Grid,
 	labels []string,
 	continuations []bool,
-) (Frame, error) {
+	lines []layout.LabelLine,
+) (Frame, []layout.LabelLine, error) {
 	for i := range l.Nodes {
 		if l.Nodes[i].Empty() {
 			continue
 		}
-		if err := placeLabel(
-			&grid,
-			labels,
-			continuations,
-			l.Nodes[i].LabelPoint,
-			l.Label(uint32(i)),
-		); err != nil {
-			return Frame{}, fmt.Errorf("place node %d label: %w", i, err)
+		nodeID := uint32(i)
+		bounds := l.LabelBounds(nodeID)
+		wrapWidth := uint32(0)
+		if _, explicit := l.ExplicitNodeSize(nodeID); explicit {
+			wrapWidth = bounds.Size.Width
+		}
+		lines = layout.AppendLabelLines(
+			lines[:0],
+			l.Label(nodeID),
+			wrapWidth,
+		)
+		for lineID, line := range lines[:min(len(lines), int(bounds.Size.Height))] {
+			if err := placeLabelLine(
+				&grid,
+				labels,
+				continuations,
+				bounds.Min.Add(0, uint32(lineID)),
+				l.Label(nodeID)[line.Start:line.End],
+				bounds.Size.Width,
+			); err != nil {
+				return Frame{}, lines, fmt.Errorf(
+					"place node %d label line %d: %w",
+					i,
+					lineID,
+					err,
+				)
+			}
 		}
 	}
 
@@ -139,17 +170,19 @@ func encodeFrame(
 		}
 		buf.WriteRune('\n')
 	}
-	return Frame{Bounds: grid.Bounds, Text: buf.Bytes()}, nil
+	return Frame{Bounds: grid.Bounds, Text: buf.Bytes()}, lines, nil
 }
 
-func placeLabel(
+func placeLabelLine(
 	grid *layout.Grid,
 	labels []string,
 	continuations []bool,
 	origin layout.Point,
 	text string,
+	maxWidth uint32,
 ) error {
 	x := origin.X
+	used := uint32(0)
 	graphemes := uniseg.NewGraphemes(text)
 	for graphemes.Next() {
 		value := graphemes.Str()
@@ -159,6 +192,9 @@ func placeLabel(
 				return errors.New("label starts with zero-width grapheme")
 			}
 			continue
+		}
+		if uint64(used)+uint64(width) > uint64(maxWidth) {
+			break
 		}
 		point := layout.Point{X: x, Y: origin.Y}
 		index, ok := grid.Index(point)
@@ -175,6 +211,7 @@ func placeLabel(
 			continuations[continuation] = true
 		}
 		x += uint32(width)
+		used += uint32(width)
 	}
 	return nil
 }

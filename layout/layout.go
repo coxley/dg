@@ -30,6 +30,11 @@ type Size struct {
 	Width, Height uint32
 }
 
+// Empty reports whether the size has no usable area.
+func (s Size) Empty() bool {
+	return s.Width == 0 || s.Height == 0
+}
+
 // Padding describes empty cells between a node's border and its label.
 type Padding struct {
 	Top, Right, Bottom, Left uint8
@@ -136,16 +141,17 @@ type Layout struct {
 	Ports []Port
 	Edges []Edge
 
-	graph       ir.Graph
-	origins     []Point
-	padding     Padding
-	router      Router
-	scratch     routeScratch
-	draftPorts  []Port
-	portUsable  []bool
-	draftUsable []bool
-	history     *History
-	selection   Selection
+	graph         ir.Graph
+	origins       []Point
+	explicitSizes []Size
+	padding       Padding
+	router        Router
+	scratch       routeScratch
+	draftPorts    []Port
+	portUsable    []bool
+	draftUsable   []bool
+	history       *History
+	selection     Selection
 }
 
 // Option configures a Layout.
@@ -235,10 +241,12 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 	}
 
 	l.origins = growTo(l.origins, len(l.graph.Nodes))
+	l.explicitSizes = growTo(l.explicitSizes, len(l.graph.Nodes))
 	l.Nodes = growTo(l.Nodes, len(l.graph.Nodes))
 	l.Ports = growTo(l.Ports, len(l.graph.Ports))
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.origins[nodeID] = point
+	l.explicitSizes[nodeID] = Size{}
 	l.Nodes[nodeID] = node
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.commitNodePorts(nodeID)
@@ -275,6 +283,61 @@ func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
 			id:          nodeID,
 			beforeLabel: previous,
 			afterLabel:  label,
+		})
+	}
+	return nil
+}
+
+// SetNodeSize gives a node fixed outer dimensions. Labels wrap to its inner
+// width and clip at its inner height.
+func (l *Layout) SetNodeSize(nodeID uint32, size Size) error {
+	if size.Empty() {
+		return fmt.Errorf("invalid explicit node size %+v", size)
+	}
+	return l.setNodeSize(nodeID, size)
+}
+
+// AutoSizeNode restores content-derived dimensions and disables wrapping.
+func (l *Layout) AutoSizeNode(nodeID uint32) error {
+	return l.setNodeSize(nodeID, Size{})
+}
+
+// ExplicitNodeSize returns a node's fixed outer dimensions.
+func (l *Layout) ExplicitNodeSize(nodeID uint32) (Size, bool) {
+	if !l.graph.NodeExists(nodeID) ||
+		uint64(nodeID) >= uint64(len(l.explicitSizes)) {
+		return Size{}, false
+	}
+	size := l.explicitSizes[nodeID]
+	return size, !size.Empty()
+}
+
+func (l *Layout) setNodeSize(nodeID uint32, size Size) error {
+	if !l.graph.NodeExists(nodeID) {
+		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
+	}
+	previous := l.explicitSizes[nodeID]
+	if previous == size {
+		return nil
+	}
+	l.explicitSizes[nodeID] = size
+	node, err := l.prepareNode(
+		nodeID,
+		l.graph.Nodes[nodeID].Label,
+		l.origins[nodeID],
+	)
+	if err != nil {
+		l.explicitSizes[nodeID] = previous
+		return err
+	}
+	l.Nodes[nodeID] = node
+	l.commitNodePorts(nodeID)
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind:       historySetNodeSize,
+			id:         nodeID,
+			beforeSize: previous,
+			afterSize:  size,
 		})
 	}
 	return nil
@@ -443,6 +506,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		return err
 	}
 	l.origins[nodeID] = Point{}
+	l.explicitSizes[nodeID] = Size{}
 	l.Nodes[nodeID] = Node{}
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	if l.history != nil {
@@ -524,6 +588,24 @@ func (l *Layout) NodePorts(nodeID uint32) iter.Seq[uint32] {
 // Label returns a node's source label.
 func (l *Layout) Label(nodeID uint32) string {
 	return l.graph.Nodes[nodeID].Label
+}
+
+// LabelBounds returns the cells available for a node's rendered label.
+func (l *Layout) LabelBounds(nodeID uint32) Rect {
+	node := l.Nodes[nodeID]
+	return Rect{
+		Min: node.LabelPoint,
+		Size: Size{
+			Width: node.Rect.Size.Width -
+				uint32(l.padding.Left) -
+				uint32(l.padding.Right) -
+				2,
+			Height: node.Rect.Size.Height -
+				uint32(l.padding.Top) -
+				uint32(l.padding.Bottom) -
+				2,
+		},
+	}
 }
 
 // Graph returns an independent copy of the semantic graph.
@@ -621,6 +703,7 @@ func (l *Layout) initializeGeometry() error {
 	}
 
 	l.origins = make([]Point, len(l.graph.Nodes))
+	l.explicitSizes = make([]Size, len(l.graph.Nodes))
 	l.Nodes = make([]Node, len(l.graph.Nodes))
 	l.Ports = make([]Port, len(l.graph.Ports))
 	l.portUsable = make([]bool, len(l.graph.Ports))
@@ -649,7 +732,7 @@ func (l *Layout) nodeGeometry(nodeID uint32, label string, point Point) (Node, e
 	if err != nil {
 		return Node{}, fmt.Errorf("measure node %d label: %w", nodeID, err)
 	}
-	rect, err := NodeRect(point, size, l.padding)
+	rect, err := l.nodeRect(nodeID, point, size)
 	if err != nil {
 		return Node{}, fmt.Errorf("size node %d: %w", nodeID, err)
 	}
@@ -660,6 +743,34 @@ func (l *Layout) nodeGeometry(nodeID uint32, label string, point Point) (Node, e
 			Y: rect.Min.Y + 1 + uint32(l.padding.Top),
 		},
 	}, nil
+}
+
+func (l *Layout) nodeRect(nodeID uint32, origin Point, label Size) (Rect, error) {
+	if uint64(nodeID) >= uint64(len(l.explicitSizes)) ||
+		l.explicitSizes[nodeID].Empty() {
+		return NodeRect(origin, label, l.padding)
+	}
+	size := l.explicitSizes[nodeID]
+	minWidth := uint32(l.padding.Left) + uint32(l.padding.Right) + 2
+	minHeight := uint32(l.padding.Top) + uint32(l.padding.Bottom) + 2
+	if size.Width < minWidth || size.Height < minHeight {
+		return Rect{}, fmt.Errorf(
+			"explicit node size %dx%d smaller than minimum %dx%d",
+			size.Width,
+			size.Height,
+			minWidth,
+			minHeight,
+		)
+	}
+	if origin.X > math.MaxUint32-size.Width ||
+		origin.Y > math.MaxUint32-size.Height {
+		return Rect{}, fmt.Errorf(
+			"node size %dx%d exceeds supported size",
+			size.Width,
+			size.Height,
+		)
+	}
+	return NewRect(origin, origin.Add(size.Width, size.Height))
 }
 
 func (l *Layout) prepareNode(nodeID uint32, label string, point Point) (Node, error) {

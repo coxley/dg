@@ -24,7 +24,7 @@ Prefer data-oriented design:
 
 The first end-to-end milestone is complete. The engine can:
 
-- create and place nodes with single-line Unicode labels
+- create and place nodes with multiline Unicode labels
 - connect side-constrained ports
 - route orthogonal edges around node obstacles
 - share routes between edges with a common endpoint
@@ -86,6 +86,8 @@ Mutations made through `Layout` update node and port geometry immediately.
 
 `Layout.draftPorts` is reusable transactional scratch space. Port resolution
 finishes there before it commits results to `Layout.Ports`.
+`Layout.explicitSizes` stores optional fixed outer dimensions by node ID.
+Auto-sized nodes derive their dimensions from their full labels.
 
 The public construction API is:
 
@@ -99,6 +101,8 @@ source, err := geo.NewNodeAt("source", layout.NewPoint(2, 3))
 sink, err := geo.NewNode("sink")
 edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
 err = geo.SetNodeLabel(source, "renamed")
+err = geo.SetNodeSize(source, layout.Size{Width: 20, Height: 8})
+err = geo.AutoSizeNode(source)
 err = geo.PlaceNode(sink, layout.NewPoint(20, 3))
 err = geo.DeleteEdge(edge)
 err = geo.Build()
@@ -142,9 +146,9 @@ keeps edge deletion semantics correct.
 ### `document`
 
 `document.Document` is the versioned persisted schema. It stores live semantic
-objects, node origins, padding, and router configuration. Export compacts
-runtime tombstones and remaps port references; import reconstructs independent
-runtime slices.
+objects, node origins, optional fixed node sizes, padding, and router
+configuration. Export compacts runtime tombstones and remaps port references;
+import reconstructs independent runtime slices.
 
 Routes, geometry, free lists, and reusable scratch are derived state and are not
 persisted. `document.Marshal` writes indented JSON. `document.Unmarshal`
@@ -155,7 +159,9 @@ layout and accepts layout options such as `WithHistory`.
 
 `layout.Rasterize` converts rectangles and routes into directional cell
 connectivity. `render.Unicode` maps that connectivity to box-drawing glyphs and
-places labels.
+places labels. Auto-sized labels preserve explicit newlines without wrapping.
+Fixed-size nodes wrap to their inner width and clip visually at their inner
+height without changing the stored label.
 
 The renderer merges connectivity. It does not retain object ownership or
 layering information.
@@ -171,11 +177,11 @@ The Bubble Tea model keeps terminal-only state:
 
 Bubble Tea messages mutate `Layout` synchronously. Every node movement and label
 keystroke calls `Build` and refreshes the cached frame. Editing has a
-grapheme-aware caret. Enter and Escape both commit the current label as one
-undoable interaction. Label and save-path editing use whitespace and slash as
-word boundaries. They support Ctrl-A and Ctrl-E for the line bounds, Alt-B to
-move to the previous word, Ctrl-W to delete the previous word, and Ctrl-U to
-delete to the line start.
+grapheme-aware multiline caret. Enter inserts a newline; Ctrl-Enter and Escape
+commit the current label as one undoable interaction. Label and save-path
+editing use whitespace and slash as word boundaries. They support Ctrl-A and
+Ctrl-E for the line bounds, Alt-B to move to the previous word, Ctrl-W to delete
+the previous word, and Ctrl-U to delete to the line start.
 
 The TUI also supports:
 
@@ -192,9 +198,11 @@ The TUI also supports:
 - edge endpoint reassignment without changing the edge ID
 - mouse hit selection and overlapping-hit cycling
 - mouse node dragging
+- right-drag resizing from the nearest corner as one history interaction
 - click-dragging a node commits an active label edit
 - mouse-wheel viewport panning
 - terminal cursor visibility only while editing text
+- double-click restoration of a fixed-size node to content-derived dimensions
 - Ctrl-S saving with an inline path prompt for new diagrams
 - filesystem path completion in the save prompt
 - `u` or Ctrl-Z undo; Ctrl-R, Ctrl-Y, or Ctrl-Shift-Z redo
@@ -207,7 +215,7 @@ The TUI also supports:
   whole-document selection
 - grouped movement and deletion as one history interaction
 
-The model accepts pasted single-line labels and rejects pasted newlines before
+The model accepts pasted multiline labels and rejects carriage returns before
 they reach the layout.
 
 Run the example editor with:
@@ -233,8 +241,12 @@ paths.
   corners and every earlier connectable port. Availability is offset-agnostic,
   so future custom ports use the same rule.
 - default padding is one horizontal cell and zero vertical cells.
-- labels support one line for the initial milestone.
-- label measurement uses terminal display width, including wide graphemes.
+- labels preserve explicit newlines and use terminal display width, including
+  wide graphemes.
+- nodes auto-size to the widest explicit line and total line count by default.
+- fixed outer dimensions remain authoritative across label edits. Their labels
+  wrap to the available width and clip to the available height.
+- fixed-size labels retain their full source text when clipped.
 - ports contain an `Anchor` on the node boundary and an `Exit` outside it.
 - an `Exit` equals its `Anchor` when unsigned coordinates cannot represent the
   outward neighbor.
@@ -280,6 +292,7 @@ BenchmarkLayoutHits/node         32.6 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/edge         30.5 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/miss         31.2 ns/op   0 B/op   0 allocs/op
 BenchmarkModelMoveAndView         3.2 µs/op   2304 B/op   1 allocs/op
+BenchmarkAppendLabelLines         2.9 µs/op      0 B/op   0 allocs/op
 ```
 
 These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
@@ -297,19 +310,11 @@ The basic TUI is complete. It supports keyboard and mouse interaction, ANSI
 selection, node and edge creation and reconnection, live label editing,
 deletion, viewport tracking, and resize-aware rendering.
 
-### 1. Multiline labels
+### 1. Complete text layout
 
-Separate text layout from node rectangle calculation before adding multiline
-text. The model will need:
-
-- wrapping width and height constraints
-- horizontal alignment
-- vertical alignment
-- justified lines
-- explicit newlines
-
-Keep the current single-line path simple. A text-layout result should provide
-measured dimensions and positioned line runs that the renderer can place.
+Fixed-size nodes wrap and clip, right-dragging resizes them from the nearest
+corner, and double-clicking restores auto sizing. The next text-layout options
+are horizontal alignment, vertical alignment, and justification.
 
 ## Later design work
 

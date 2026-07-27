@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"math"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,19 +11,29 @@ import (
 const reconnectDragRadius = 3
 
 func (m *Model) updateMouseClick(mouse tea.Mouse) {
-	if mouse.Button != tea.MouseLeft {
-		return
-	}
 	point, ok := m.documentPoint(mouse.X, mouse.Y)
 	if !ok {
 		return
 	}
 	m.edgeDragPending = false
+	if mouse.Button == tea.MouseRight {
+		m.hasLastClick = false
+		m.cursor = point
+		m.refreshHits()
+		m.beginResize(point)
+		return
+	}
+	if mouse.Button != tea.MouseLeft {
+		return
+	}
 	repeated := m.hasLastClick && point == m.lastClick
 	m.lastClick, m.hasLastClick = point, true
 	m.cursor = point
 	m.refreshHits()
 	m.prioritizeSelectedEdge()
+	if repeated && m.mode == modeNavigate && m.autoSizeDoubleClickedNode() {
+		return
+	}
 	if repeated {
 		m.cycleHit(1)
 	}
@@ -78,6 +89,73 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.dragOffset = layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y)
 	m.beginTransaction()
 	m.dragging = true
+}
+
+func (m *Model) beginResize(point layout.Point) {
+	if m.mode != modeNavigate {
+		return
+	}
+	for _, hit := range m.hits {
+		if hit.Kind != layout.HitNode {
+			continue
+		}
+		rect := m.geo.Nodes[hit.ID].Rect
+		limit := rect.Max()
+		right, bottom := limit.X-1, limit.Y-1
+		var corner resizeCorner
+		if point.X-rect.Min.X > right-point.X {
+			corner |= resizeEast
+		}
+		if point.Y-rect.Min.Y > bottom-point.Y {
+			corner |= resizeSouth
+		}
+		fixed := layout.NewPoint(right, bottom)
+		if corner&resizeEast != 0 {
+			fixed.X = rect.Min.X
+		}
+		if corner&resizeSouth != 0 {
+			fixed.Y = rect.Min.Y
+		}
+
+		m.selectOnly(hit)
+		m.target = hit
+		m.resizeCorner = corner
+		m.resizeFixed = fixed
+		m.beginTransaction()
+		m.resizing = true
+		m.dragging = false
+		m.status = ""
+		return
+	}
+}
+
+func (m *Model) autoSizeDoubleClickedNode() bool {
+	for _, hit := range m.hits {
+		if hit.Kind != layout.HitNode {
+			continue
+		}
+		if _, explicit := m.geo.ExplicitNodeSize(hit.ID); !explicit {
+			return false
+		}
+		m.beginTransaction()
+		if err := m.geo.AutoSizeNode(hit.ID); err != nil {
+			m.status = errors.Join(err, m.cancelTransaction()).Error()
+			return true
+		}
+		if err := m.rebuild(); err != nil {
+			m.status = errors.Join(err, m.cancelTransaction()).Error()
+			return true
+		}
+		if err := m.commitTransaction(); err != nil {
+			m.status = err.Error()
+			return true
+		}
+		m.selectOnly(hit)
+		m.refreshHits()
+		m.status = ""
+		return true
+	}
+	return false
 }
 
 func (m *Model) prioritizeSelectedEdge() {
@@ -169,6 +247,12 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 		}
 		return
 	}
+	if m.resizing && mouse.Button == tea.MouseRight {
+		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+			m.resizeNode(point)
+		}
+		return
+	}
 	if m.mode == modeEditLabel && m.editMouseDown && mouse.Button == tea.MouseLeft {
 		point, ok := m.documentPoint(mouse.X, mouse.Y)
 		if !ok || point.X < m.dragOffset.X || point.Y < m.dragOffset.Y {
@@ -201,6 +285,9 @@ func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 	case m.edgeDragPending:
 		m.edgeDragPending = false
 		m.status = ""
+	case m.resizing && mouse.Button == tea.MouseRight:
+		m.resizing = false
+		m.finishMove()
 	case m.selecting:
 		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
 			m.updateAreaSelection(point)
@@ -210,6 +297,86 @@ func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 		m.finishMove()
 	}
 	m.editMouseDown = false
+}
+
+func (m *Model) resizeNode(point layout.Point) {
+	nodeID := m.target.ID
+	if !m.geo.NodeExists(nodeID) {
+		m.resizing = false
+		m.status = "selected node no longer exists"
+		return
+	}
+	padding := m.geo.Padding()
+	originX, width := resizeAxis(
+		point.X,
+		m.resizeFixed.X,
+		m.resizeCorner&resizeEast != 0,
+		uint32(padding.Left)+uint32(padding.Right)+2,
+	)
+	originY, height := resizeAxis(
+		point.Y,
+		m.resizeFixed.Y,
+		m.resizeCorner&resizeSouth != 0,
+		uint32(padding.Top)+uint32(padding.Bottom)+2,
+	)
+	origin := layout.NewPoint(originX, originY)
+	size := layout.Size{
+		Width:  width,
+		Height: height,
+	}
+	if err := m.geo.PlaceNode(nodeID, origin); err != nil {
+		m.abortResize(err)
+		return
+	}
+	if err := m.geo.SetNodeSize(nodeID, size); err != nil {
+		m.abortResize(err)
+		return
+	}
+	if err := m.rebuild(); err != nil {
+		m.abortResize(err)
+		return
+	}
+	m.cursor = resizeCornerPoint(m.geo.Nodes[nodeID].Rect, m.resizeCorner)
+	m.refreshHits()
+	m.selectTarget()
+	m.ensureCursorVisible()
+	m.status = ""
+}
+
+func resizeAxis(
+	point, fixed uint32,
+	positive bool,
+	minSize uint32,
+) (uint32, uint32) {
+	if positive {
+		boundary := min(point, uint32(math.MaxUint32-1))
+		boundary = max(boundary, fixed+minSize-1)
+		return fixed, boundary - fixed + 1
+	}
+	origin := min(point, fixed-(minSize-1))
+	return origin, fixed - origin + 1
+}
+
+func resizeCornerPoint(rect layout.Rect, corner resizeCorner) layout.Point {
+	point := rect.Min
+	limit := rect.Max()
+	if corner&resizeEast != 0 {
+		point.X = limit.X - 1
+	}
+	if corner&resizeSouth != 0 {
+		point.Y = limit.Y - 1
+	}
+	return point
+}
+
+func (m *Model) abortResize(resizeErr error) {
+	m.resizing = false
+	m.status = errors.Join(
+		resizeErr,
+		m.cancelTransaction(),
+		m.render(),
+	).Error()
+	m.refreshHits()
 }
 
 func (m *Model) updateConnectionRelease(mouse tea.Mouse) {

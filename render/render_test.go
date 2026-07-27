@@ -74,6 +74,46 @@ func TestUnicodeWideLabel(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestUnicodeMultilineAutoSize(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	newNodeAt(t, geo, "one\nthree", layout.Point{})
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"┌───────┐\n"+
+			"│ one   │\n"+
+			"│ three │\n"+
+			"└───────┘\n",
+		got,
+	)
+}
+
+func TestUnicodeWrapsAndClipsExplicitNodeWithoutChangingLabel(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	nodeID := newNodeAt(t, geo, "one two three", layout.Point{})
+	require.NoError(t, geo.SetNodeSize(nodeID, layout.Size{Width: 8, Height: 4}))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"┌──────┐\n"+
+			"│ one  │\n"+
+			"│ two  │\n"+
+			"└──────┘\n",
+		got,
+	)
+	require.Equal(t, "one two three", geo.Label(nodeID))
+}
+
 func TestEncodeFrameIncludesBounds(t *testing.T) {
 	t.Parallel()
 

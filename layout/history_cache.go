@@ -410,6 +410,7 @@ type historyCacheNode struct {
 	Label  string   `json:"label,omitempty"`
 	Ports  []uint32 `json:"ports,omitempty"`
 	Origin Point    `json:"origin"`
+	Size   Size     `json:"size,omitzero"`
 }
 
 type historyCachePort struct {
@@ -434,6 +435,8 @@ type historyCacheChange struct {
 	ID          uint32            `json:"id"`
 	BeforePoint Point             `json:"before_point"`
 	AfterPoint  Point             `json:"after_point"`
+	BeforeSize  Size              `json:"before_size,omitzero"`
+	AfterSize   Size              `json:"after_size,omitzero"`
 	BeforeLabel string            `json:"before_label,omitempty"`
 	AfterLabel  string            `json:"after_label,omitempty"`
 	BeforeEdge  historyCacheEdge  `json:"before_edge"`
@@ -445,6 +448,7 @@ type historyCacheHNode struct {
 	ID     uint32              `json:"id"`
 	Label  string              `json:"label,omitempty"`
 	Origin Point               `json:"origin"`
+	Size   Size                `json:"size,omitzero"`
 	Ports  []historyCacheHPort `json:"ports,omitempty"`
 	Edges  []historyCacheHEdge `json:"edges,omitempty"`
 }
@@ -554,6 +558,7 @@ func cacheLayout(state layoutHistoryState) historyCacheLayout {
 			Label:  node.Label,
 			Ports:  slices.Clone(node.Ports),
 			Origin: state.origins[i],
+			Size:   state.sizes[i],
 		}
 	}
 	for i, port := range state.graph.Ports {
@@ -583,6 +588,7 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 			Edges: make([]ir.Edge, len(c.Edges)),
 		},
 		origins: make([]Point, len(c.Nodes)),
+		sizes:   make([]Size, len(c.Nodes)),
 		padding: c.Padding,
 		router:  c.Router,
 	}
@@ -593,6 +599,7 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 				Ports: slices.Clone(node.Ports),
 			}
 			state.origins[i] = node.Origin
+			state.sizes[i] = node.Size
 		}
 	}
 	for i, port := range c.Ports {
@@ -632,6 +639,8 @@ func cacheChange(change historyChange) historyCacheChange {
 		ID:          change.id,
 		BeforePoint: change.beforePoint,
 		AfterPoint:  change.afterPoint,
+		BeforeSize:  change.beforeSize,
+		AfterSize:   change.afterSize,
 		BeforeLabel: change.beforeLabel,
 		AfterLabel:  change.afterLabel,
 		BeforeEdge:  cacheEdge(change.beforeEdge),
@@ -653,6 +662,7 @@ func cacheHistoryNode(node historyNode) historyCacheHNode {
 		ID:     node.ID,
 		Label:  node.Label,
 		Origin: node.Origin,
+		Size:   node.Size,
 		Ports:  make([]historyCacheHPort, len(node.Ports)),
 		Edges:  make([]historyCacheHEdge, len(node.Edges)),
 	}
@@ -690,7 +700,7 @@ func (c historyCacheFile) historyEntries() ([]historyEntry, bool) {
 }
 
 func (c historyCacheChange) historyChange() (historyChange, bool) {
-	if c.Kind < historyCreateNode || c.Kind > historyReconnectEdge {
+	if c.Kind < historyCreateNode || c.Kind > historySetNodeSize {
 		return historyChange{}, false
 	}
 	node, ok := c.Node.historyNode()
@@ -702,6 +712,8 @@ func (c historyCacheChange) historyChange() (historyChange, bool) {
 		id:          c.ID,
 		beforePoint: c.BeforePoint,
 		afterPoint:  c.AfterPoint,
+		beforeSize:  c.BeforeSize,
+		afterSize:   c.AfterSize,
 		beforeLabel: c.BeforeLabel,
 		afterLabel:  c.AfterLabel,
 		beforeEdge:  ir.Edge{PortA: c.BeforeEdge.PortA, PortB: c.BeforeEdge.PortB},
@@ -715,6 +727,7 @@ func (c historyCacheHNode) historyNode() (historyNode, bool) {
 		ID:     c.ID,
 		Label:  c.Label,
 		Origin: c.Origin,
+		Size:   c.Size,
 		Ports:  make([]historyPort, len(c.Ports)),
 		Edges:  make([]historyEdge, len(c.Edges)),
 	}
@@ -767,6 +780,7 @@ type semanticHistoryState struct {
 type semanticHistoryNode struct {
 	Label  string   `json:"label"`
 	Origin Point    `json:"origin"`
+	Size   Size     `json:"size,omitzero"`
 	Ports  []uint32 `json:"ports"`
 }
 
@@ -797,6 +811,7 @@ func semanticHistoryDigest(state layoutHistoryState) (string, error) {
 		node := semanticHistoryNode{
 			Label:  source.Label,
 			Origin: state.origins[nodeID],
+			Size:   state.sizes[nodeID],
 			Ports:  make([]uint32, 0, len(source.Ports)),
 		}
 		for _, portID := range source.Ports {

@@ -44,7 +44,7 @@ func (m *Model) View() tea.View {
 	view.WindowTitle = "dg"
 	switch m.mode {
 	case modeEditLabel:
-		if x, y, ok := m.cursorPosition(); ok {
+		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
 			cursor.X = x
@@ -110,9 +110,9 @@ func (m *Model) appendStatusText(dst []byte) []byte {
 func (m *Model) helpLine() string {
 	switch m.mode {
 	case modeMove:
-		return "arrows move selection • enter/m/esc finish • mouse drag • ctrl+c quit"
+		return "arrows move selection • enter/m/esc finish • left-drag move • right-drag resize • ctrl+c quit"
 	case modeEditLabel:
-		return "type • ctrl-a/e ends • alt-b back word • ctrl-w/u delete • enter/esc save"
+		return "type • enter newline • ctrl-enter/esc save • arrows move • ctrl-a/e ends • alt-b back word • ctrl-w/u delete"
 	case modeConnect:
 		if m.reconnecting {
 			return "drag to replacement port • enter move endpoint • esc cancel"
@@ -127,7 +127,7 @@ func (m *Model) helpLine() string {
 		}
 		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "arrows move • drag empty select • ctrl-click toggle • ctrl-a expand/all • n new • m move • e edit • l line/drag edge ends • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
+		return "arrows move • left-drag move • right-drag resize • drag empty select • ctrl-click toggle • ctrl-a expand/all • n new • e edit • l line/drag edge ends • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
 	}
 }
 

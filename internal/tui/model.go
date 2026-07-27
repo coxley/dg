@@ -14,12 +14,19 @@ import (
 
 type mode uint8
 
+type resizeCorner uint8
+
 const (
 	modeNavigate mode = iota
 	modeMove
 	modeEditLabel
 	modeConnect
 	modeSavePath
+)
+
+const (
+	resizeEast resizeCorner = 1 << iota
+	resizeSouth
 )
 
 const (
@@ -71,12 +78,17 @@ type Model struct {
 	edgeDragHit       layout.Hit
 	edgeDragStart     layout.Point
 
-	mode       mode
-	editBuffer []byte
-	editDraft  []byte
-	editCaret  int
+	mode             mode
+	editBuffer       []byte
+	editDraft        []byte
+	editLines        []layout.LabelLine
+	editCaret        int
+	editCaretVisible bool
 
 	dragging      bool
+	resizing      bool
+	resizeCorner  resizeCorner
+	resizeFixed   layout.Point
 	dragOffset    layout.Point
 	editMouseDown bool
 	lastClick     layout.Point
@@ -633,6 +645,7 @@ func (m *Model) interruptInteraction() {
 	}
 	m.clearConnection()
 	m.dragging = false
+	m.resizing = false
 	m.editMouseDown = false
 	m.selecting = false
 }

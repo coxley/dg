@@ -182,12 +182,45 @@ func TestHistoryReplaysEdgeLifecycle(t *testing.T) {
 	require.False(t, geo.EdgeExists(edgeID))
 }
 
+func TestHistoryReplaysExplicitAndAutoNodeSize(t *testing.T) {
+	t.Parallel()
+
+	history, err := NewHistory()
+	require.NoError(t, err)
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	nodeID, err := geo.NewNode("one two three")
+	require.NoError(t, err)
+	history.Clear()
+
+	explicit := Size{Width: 8, Height: 4}
+	require.NoError(t, geo.SetNodeSize(nodeID, explicit))
+	require.NoError(t, geo.AutoSizeNode(nodeID))
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, explicit, mustExplicitNodeSize(t, geo, nodeID))
+
+	changed, err = history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	_, ok := geo.ExplicitNodeSize(nodeID)
+	require.False(t, ok)
+
+	changed, err = history.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, explicit, mustExplicitNodeSize(t, geo, nodeID))
+}
+
 func TestHistoryTransactionProperties(t *testing.T) {
 	t.Parallel()
 
 	type state struct {
 		label  string
 		origin Point
+		size   Size
 	}
 
 	rapid.Check(t, func(t *rapid.T) {
@@ -207,11 +240,13 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			operationCount := rapid.IntRange(1, 10).
 				Draw(t, fmt.Sprintf("operation count %d", transactionID))
 			for operationID := range operationCount {
-				if rapid.Bool().Draw(t, fmt.Sprintf("label operation %d %d", transactionID, operationID)) {
-					label := rapid.StringMatching(`[a-z]{0,8}`).
+				switch rapid.IntRange(0, 2).
+					Draw(t, fmt.Sprintf("operation %d %d", transactionID, operationID)) {
+				case 0:
+					label := rapid.StringMatching(`[a-z\n]{0,8}`).
 						Draw(t, fmt.Sprintf("label %d %d", transactionID, operationID))
 					require.NoError(t, geo.SetNodeLabel(nodeID, label))
-				} else {
+				case 1:
 					point := NewPoint(
 						rapid.Uint32Range(0, 30).
 							Draw(t, fmt.Sprintf("x %d %d", transactionID, operationID)),
@@ -219,17 +254,35 @@ func TestHistoryTransactionProperties(t *testing.T) {
 							Draw(t, fmt.Sprintf("y %d %d", transactionID, operationID)),
 					)
 					require.NoError(t, geo.PlaceNode(nodeID, point))
+				case 2:
+					if rapid.Bool().Draw(
+						t,
+						fmt.Sprintf("auto size %d %d", transactionID, operationID),
+					) {
+						require.NoError(t, geo.AutoSizeNode(nodeID))
+					} else {
+						require.NoError(t, geo.SetNodeSize(nodeID, Size{
+							Width: rapid.Uint32Range(4, 20).
+								Draw(t, fmt.Sprintf("width %d %d", transactionID, operationID)),
+							Height: rapid.Uint32Range(2, 10).
+								Draw(t, fmt.Sprintf("height %d %d", transactionID, operationID)),
+						}))
+					}
 				}
 			}
+			size, _ := geo.ExplicitNodeSize(nodeID)
 			after := state{
 				label:  geo.Label(nodeID),
 				origin: geo.Nodes[nodeID].Rect.Min,
+				size:   size,
 			}
 
 			if rapid.Bool().Draw(t, fmt.Sprintf("cancel %d", transactionID)) {
 				require.NoError(t, transaction.Cancel())
 				require.Equal(t, before.label, geo.Label(nodeID))
 				require.Equal(t, before.origin, geo.Nodes[nodeID].Rect.Min)
+				size, _ := geo.ExplicitNodeSize(nodeID)
+				require.Equal(t, before.size, size)
 				continue
 			}
 			if rapid.Bool().Draw(t, fmt.Sprintf("interrupt %d", transactionID)) {
@@ -249,6 +302,8 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			require.True(t, changed)
 			require.Equal(t, states[i].label, geo.Label(nodeID))
 			require.Equal(t, states[i].origin, geo.Nodes[nodeID].Rect.Min)
+			size, _ := geo.ExplicitNodeSize(nodeID)
+			require.Equal(t, states[i].size, size)
 		}
 		changed, err := history.Undo()
 		require.NoError(t, err)
@@ -260,6 +315,8 @@ func TestHistoryTransactionProperties(t *testing.T) {
 			require.True(t, changed)
 			require.Equal(t, states[i].label, geo.Label(nodeID))
 			require.Equal(t, states[i].origin, geo.Nodes[nodeID].Rect.Min)
+			size, _ := geo.ExplicitNodeSize(nodeID)
+			require.Equal(t, states[i].size, size)
 		}
 		changed, err = history.Redo()
 		require.NoError(t, err)

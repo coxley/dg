@@ -16,11 +16,11 @@ func (m *Model) updateLabel(key tea.KeyPressMsg) {
 	if event.Mod == tea.ModCtrl {
 		switch event.Code {
 		case 'a':
-			m.editCaret = 0
+			m.editCaret = int(m.caretLine().Start)
 			m.moveCursorToCaret()
 			return
 		case 'e':
-			m.editCaret = len(m.editBuffer)
+			m.editCaret = int(m.caretLine().End)
 			m.moveCursorToCaret()
 			return
 		case 'w':
@@ -30,9 +30,13 @@ func (m *Model) updateLabel(key tea.KeyPressMsg) {
 			}
 			return
 		case 'u':
-			if m.editCaret != 0 {
-				m.replaceLabelRange(0, m.editCaret, nil)
+			start := int(m.caretLine().Start)
+			if m.editCaret != start {
+				m.replaceLabelRange(start, m.editCaret, nil)
 			}
+			return
+		case tea.KeyEnter:
+			m.commitLabelEdit()
 			return
 		}
 	}
@@ -49,18 +53,24 @@ func (m *Model) updateLabel(key tea.KeyPressMsg) {
 	case tea.KeyEscape:
 		m.commitLabelEdit()
 	case tea.KeyEnter:
-		m.commitLabelEdit()
+		m.insertLabelText("\n")
 	case tea.KeyLeft:
 		m.editCaret = previousGraphemeStart(m.editBuffer, m.editCaret)
 		m.moveCursorToCaret()
 	case tea.KeyRight:
 		m.editCaret = nextGraphemeEnd(m.editBuffer, m.editCaret)
 		m.moveCursorToCaret()
+	case tea.KeyUp:
+		m.moveCaretVertically(-1)
+	case tea.KeyDown:
+		m.moveCaretVertically(1)
 	case tea.KeyHome:
-		m.editCaret = 0
+		line := m.caretLine()
+		m.editCaret = int(line.Start)
 		m.moveCursorToCaret()
 	case tea.KeyEnd:
-		m.editCaret = len(m.editBuffer)
+		line := m.caretLine()
+		m.editCaret = int(line.End)
 		m.moveCursorToCaret()
 	case tea.KeyBackspace:
 		start := previousGraphemeStart(m.editBuffer, m.editCaret)
@@ -81,8 +91,8 @@ func (m *Model) insertLabelText(text string) {
 	if text == "" {
 		return
 	}
-	if strings.ContainsAny(text, "\r\n") {
-		m.status = "labels currently support one line"
+	if strings.ContainsRune(text, '\r') {
+		m.status = "labels do not support carriage returns"
 		return
 	}
 	m.replaceLabelRange(m.editCaret, m.editCaret, []byte(text))
@@ -110,6 +120,7 @@ func (m *Model) replaceLabelRange(start, end int, replacement []byte) {
 
 	m.editBuffer, m.editDraft = m.editDraft, m.editBuffer[:0]
 	m.editCaret = caret
+	m.refreshEditLines()
 	m.moveCursorToCaret()
 	m.refreshHits()
 	m.selectTarget()
@@ -124,6 +135,7 @@ func (m *Model) startLabelEdit(hit layout.Hit) {
 	m.editDraft = m.editDraft[:0]
 	m.editCaret = len(m.editBuffer)
 	m.mode = modeEditLabel
+	m.refreshEditLines()
 	m.moveCursorToCaret()
 	m.refreshHits()
 	m.selectTarget()
@@ -148,7 +160,9 @@ func (m *Model) finishLabelEdit() {
 	m.mode = modeNavigate
 	m.editBuffer = m.editBuffer[:0]
 	m.editDraft = m.editDraft[:0]
+	m.editLines = m.editLines[:0]
 	m.editCaret = 0
+	m.editCaretVisible = false
 }
 
 func (m *Model) moveCaretToPoint(point layout.Point) {
@@ -156,11 +170,19 @@ func (m *Model) moveCaretToPoint(point layout.Point) {
 		return
 	}
 	labelPoint := m.geo.Nodes[m.target.ID].LabelPoint
-	if point.Y != labelPoint.Y || point.X <= labelPoint.X {
-		m.editCaret = 0
-	} else {
-		m.editCaret = graphemeOffsetAtWidth(
-			m.editBuffer,
+	m.refreshEditLines()
+	lineID := 0
+	if point.Y >= labelPoint.Y {
+		lineID = min(
+			int(point.Y-labelPoint.Y),
+			max(len(m.editLines)-1, 0),
+		)
+	}
+	line := m.editLines[lineID]
+	m.editCaret = int(line.Start)
+	if point.X > labelPoint.X {
+		m.editCaret += graphemeOffsetAtWidth(
+			m.editBuffer[line.Start:line.End],
 			int(point.X-labelPoint.X),
 		)
 	}
@@ -171,9 +193,62 @@ func (m *Model) moveCursorToCaret() {
 	if !m.geo.NodeExists(m.target.ID) {
 		return
 	}
-	labelPoint := m.geo.Nodes[m.target.ID].LabelPoint
-	m.cursor = labelPoint.Add(uint32(displayWidth(m.editBuffer[:m.editCaret])), 0)
+	m.refreshEditLines()
+	lineID, line := m.caretLineAt(m.editCaret)
+	column := displayWidth(m.editBuffer[line.Start:min(uint32(m.editCaret), line.End)])
+	labelBounds := m.geo.LabelBounds(m.target.ID)
+	m.cursor = labelBounds.Min.Add(uint32(column), uint32(lineID))
+	m.editCaretVisible = uint32(lineID) < labelBounds.Size.Height &&
+		uint32(column) <= labelBounds.Size.Width
 	m.ensureCursorVisible()
+}
+
+func (m *Model) refreshEditLines() {
+	if !m.geo.NodeExists(m.target.ID) {
+		m.editLines = m.editLines[:0]
+		return
+	}
+	wrapWidth := uint32(0)
+	if _, explicit := m.geo.ExplicitNodeSize(m.target.ID); explicit {
+		wrapWidth = m.geo.LabelBounds(m.target.ID).Size.Width
+	}
+	m.editLines = layout.AppendLabelLines(
+		m.editLines[:0],
+		string(m.editBuffer),
+		wrapWidth,
+	)
+}
+
+func (m *Model) caretLine() layout.LabelLine {
+	_, line := m.caretLineAt(m.editCaret)
+	return line
+}
+
+func (m *Model) caretLineAt(caret int) (int, layout.LabelLine) {
+	for i, line := range m.editLines {
+		last := i == len(m.editLines)-1
+		atHardEnd := !last && uint32(caret) == line.End &&
+			m.editLines[i+1].Start > uint32(caret)
+		if uint32(caret) < line.End || atHardEnd || last {
+			return i, line
+		}
+	}
+	return 0, layout.LabelLine{}
+}
+
+func (m *Model) moveCaretVertically(delta int) {
+	lineID, line := m.caretLineAt(m.editCaret)
+	targetID := min(max(lineID+delta, 0), len(m.editLines)-1)
+	if targetID == lineID {
+		return
+	}
+	column := displayWidth(m.editBuffer[line.Start:min(uint32(m.editCaret), line.End)])
+	target := m.editLines[targetID]
+	m.editCaret = int(target.Start) + graphemeOffsetAtWidth(
+		m.editBuffer[target.Start:target.End],
+		column,
+	)
+	m.moveCursorToCaret()
 }
 
 func previousGraphemeStart(text []byte, offset int) int {

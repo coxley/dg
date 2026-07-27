@@ -87,14 +87,15 @@ func TestModelEditsLabel(t *testing.T) {
 	require.Equal(t, "nod", model.geo.Label(nodeID))
 	updateModel(t, model, keyPress('X', "X"))
 	require.Equal(t, "nodX", model.geo.Label(nodeID))
-	beforePaste := string(model.editBuffer)
-	updateModel(t, model, tea.PasteMsg{Content: "two\nlines"})
-	require.Equal(t, beforePaste, string(model.editBuffer))
-	require.Equal(t, "labels currently support one line", model.status)
-
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	require.Equal(t, modeEditLabel, model.mode)
+	require.Equal(t, "nodX\n", model.geo.Label(nodeID))
+	updateModel(t, model, tea.PasteMsg{Content: "two\nlines"})
+	require.Equal(t, "nodX\ntwo\nlines", string(model.editBuffer))
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
 	require.Equal(t, modeNavigate, model.mode)
-	require.Equal(t, "nodX", model.geo.Label(nodeID))
+	require.Equal(t, "nodX\ntwo\nlines", model.geo.Label(nodeID))
 	require.Empty(t, model.editBuffer)
 }
 
@@ -225,6 +226,33 @@ func TestModelEditMovesToLineBounds(t *testing.T) {
 	)
 }
 
+func TestModelEditShortcutsUseCurrentMultilineRow(t *testing.T) {
+	t.Parallel()
+
+	const label = "one\ntwo three"
+	model, nodeID := newTestModel(t)
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, label))
+	require.NoError(t, model.rebuild())
+	model.cursor = model.geo.Nodes[nodeID].LabelPoint
+	model.refreshHits()
+	updateModel(t, model, keyPress('e', "e"))
+	model.editCaret = len("one\ntwo ")
+	model.moveCursorToCaret()
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
+	require.Equal(t, "one\nthree", model.geo.Label(nodeID))
+	require.Equal(t, len("one\n"), model.editCaret)
+	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint.Add(0, 1), model.cursor)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'e', Mod: tea.ModCtrl}))
+	require.Equal(t, len("one\nthree"), model.editCaret)
+	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint.Add(5, 1), model.cursor)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	require.Equal(t, len("one\n"), model.editCaret)
+	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint.Add(0, 1), model.cursor)
+}
+
 func TestModelCreatesNodesWithEnterAndEscape(t *testing.T) {
 	t.Parallel()
 
@@ -237,7 +265,7 @@ func TestModelCreatesNodesWithEnterAndEscape(t *testing.T) {
 
 	updateModel(t, model, keyPress('A', "A"))
 	require.Equal(t, "A", model.geo.Label(created))
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
 	require.Equal(t, modeNavigate, model.mode)
 	require.True(t, model.geo.NodeExists(created))
 
@@ -819,6 +847,111 @@ func TestModelMouseCyclesHitsAndScrolls(t *testing.T) {
 	require.Equal(t, uint32(3), model.viewport.Y)
 	updateModel(t, model, tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	require.Zero(t, model.viewport.Y)
+}
+
+func TestModelDoubleClickRestoresAutoNodeSize(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	explicit := layout.Size{Width: 12, Height: 5}
+	require.NoError(t, model.geo.SetNodeSize(nodeID, explicit))
+	require.NoError(t, model.rebuild())
+	model.history.Clear()
+
+	point := model.geo.Nodes[nodeID].LabelPoint
+	mouse := tea.Mouse{
+		X:      int(point.X - model.viewport.X),
+		Y:      int(point.Y - model.viewport.Y),
+		Button: tea.MouseLeft,
+	}
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	updateModel(t, model, tea.MouseReleaseMsg(mouse))
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+
+	_, ok := model.geo.ExplicitNodeSize(nodeID)
+	require.False(t, ok)
+	require.Equal(t, layout.Size{Width: 8, Height: 3}, model.geo.Nodes[nodeID].Rect.Size)
+
+	updateModel(t, model, keyPress('u', "u"))
+	size, ok := model.geo.ExplicitNodeSize(nodeID)
+	require.True(t, ok)
+	require.Equal(t, explicit, size)
+}
+
+func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	before := model.geo.Nodes[nodeID].Rect.Size
+	handle := resizeCornerPoint(model.geo.Nodes[nodeID].Rect, resizeEast|resizeSouth)
+	mouse := tea.Mouse{
+		X:      int(handle.X - model.viewport.X),
+		Y:      int(handle.Y - model.viewport.Y),
+		Button: tea.MouseRight,
+	}
+
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.resizing)
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      mouse.X + 4,
+		Y:      mouse.Y + 2,
+		Button: tea.MouseRight,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      mouse.X + 4,
+		Y:      mouse.Y + 2,
+		Button: tea.MouseRight,
+	})
+
+	require.False(t, model.resizing)
+	require.Equal(t, before.Width+4, model.geo.Nodes[nodeID].Rect.Size.Width)
+	require.Equal(t, before.Height+2, model.geo.Nodes[nodeID].Rect.Size.Height)
+	_, explicit := model.geo.ExplicitNodeSize(nodeID)
+	require.True(t, explicit)
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Size)
+	_, explicit = model.geo.ExplicitNodeSize(nodeID)
+	require.False(t, explicit)
+}
+
+func TestModelMouseResizeUsesNearestCorner(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	before := model.geo.Nodes[nodeID].Rect
+	mouse := tea.Mouse{
+		X:      int(before.Min.X - model.viewport.X),
+		Y:      int(before.Min.Y - model.viewport.Y),
+		Button: tea.MouseRight,
+	}
+
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.Equal(t, resizeCorner(0), model.resizeCorner)
+	require.Equal(
+		t,
+		layout.NewPoint(before.Max().X-1, before.Max().Y-1),
+		model.resizeFixed,
+	)
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseRight,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseRight,
+	})
+
+	require.Equal(t, layout.Point{}, model.geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, before.Max(), model.geo.Nodes[nodeID].Rect.Max())
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect)
 }
 
 func TestAppendViewportRowClipsWideGrapheme(t *testing.T) {
