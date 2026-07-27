@@ -241,6 +241,80 @@ func TestSetNodeLabelIsTransactional(t *testing.T) {
 	require.Equal(t, beforePorts, l.Ports)
 }
 
+func TestDeleteEdgeReusesID(t *testing.T) {
+	t.Parallel()
+
+	l, err := New()
+	require.NoError(t, err)
+	left, err := l.NewNodeAt("left", Point{})
+	require.NoError(t, err)
+	right, err := l.NewNodeAt("right", Point{X: 16})
+	require.NoError(t, err)
+	edgeID := l.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, l.Build())
+	require.NotEmpty(t, l.Edges[edgeID].Points)
+
+	require.NoError(t, l.DeleteEdge(edgeID))
+	require.False(t, l.EdgeExists(edgeID))
+	require.True(t, l.Edges[edgeID].Empty())
+	require.NoError(t, l.Build())
+
+	reusedID := l.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.Equal(t, edgeID, reusedID)
+	require.NoError(t, l.Build())
+	require.NotEmpty(t, l.Edges[reusedID].Points)
+}
+
+func TestDeleteNodeCascadesAndReusesIDs(t *testing.T) {
+	t.Parallel()
+
+	l, err := New()
+	require.NoError(t, err)
+	left, err := l.NewNodeAt("left", Point{})
+	require.NoError(t, err)
+	middle, err := l.NewNodeAt("middle", Point{X: 12})
+	require.NoError(t, err)
+	right, err := l.NewNodeAt("right", Point{X: 26})
+	require.NoError(t, err)
+	edgeA := l.ConnectNodes(left, ir.RightSide, ir.LeftSide, middle)
+	edgeB := l.ConnectNodes(middle, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, l.Build())
+	middlePorts := slices.Clone(l.graph.Nodes[middle].Ports)
+	nodeCount := len(l.Nodes)
+	portCount := len(l.Ports)
+
+	require.NoError(t, l.DeleteNode(middle))
+	require.False(t, l.NodeExists(middle))
+	require.True(t, l.Nodes[middle].Empty())
+	require.False(t, l.EdgeExists(edgeA))
+	require.False(t, l.EdgeExists(edgeB))
+	require.True(t, l.Edges[edgeA].Empty())
+	require.True(t, l.Edges[edgeB].Empty())
+	for _, portID := range middlePorts {
+		require.Equal(t, Port{}, l.Ports[portID])
+	}
+	for hit := range l.Hits(Point{}) {
+		if hit.Kind == HitPort {
+			require.NotContains(t, middlePorts, hit.ID)
+		}
+	}
+	require.ErrorIs(t, l.PlaceNode(middle, Point{}), ir.ErrNodeNotFound)
+	require.ErrorIs(t, l.SetNodeLabel(middle, "deleted"), ir.ErrNodeNotFound)
+	require.NoError(t, l.Build())
+	_, err = Rasterize(l)
+	require.NoError(t, err)
+
+	replacement, err := l.NewNodeAt("replacement", Point{X: 12})
+	require.NoError(t, err)
+	require.Equal(t, middle, replacement)
+	require.Len(t, l.Nodes, nodeCount)
+	require.Len(t, l.Ports, portCount)
+	require.ElementsMatch(t, middlePorts, l.graph.Nodes[replacement].Ports)
+	for _, portID := range middlePorts {
+		require.NotEqual(t, Port{}, l.Ports[portID])
+	}
+}
+
 func TestLayoutHits(t *testing.T) {
 	t.Parallel()
 
@@ -328,6 +402,23 @@ func TestWithGraphReturnsValidationError(t *testing.T) {
 		Nodes: []ir.Node{{Ports: []uint32{0}}},
 	}))
 	require.Error(t, err)
+}
+
+func TestWithGraphRestoresFreeLists(t *testing.T) {
+	t.Parallel()
+
+	var graph ir.Graph
+	deleted := graph.NewNode("deleted")
+	graph.NewNode("live")
+	require.NoError(t, graph.DeleteNode(deleted))
+
+	l, err := New(WithGraph(graph))
+	require.NoError(t, err)
+	require.False(t, l.NodeExists(deleted))
+
+	replacement, err := l.NewNode("replacement")
+	require.NoError(t, err)
+	require.Equal(t, deleted, replacement)
 }
 
 func TestNewNodeReturnsGeometryError(t *testing.T) {

@@ -376,6 +376,9 @@ func (r Router) route(l *Layout) error {
 	occupancy := &scratch.occupancy
 
 	for i, edge := range g.Edges {
+		if !g.EdgeExists(uint32(i)) {
+			continue
+		}
 		path, err := r.findRoute(
 			l,
 			uint32(i),
@@ -418,6 +421,9 @@ func (r Router) rerouteCrossings(
 	changed := false
 	for i, edge := range g.Edges {
 		edgeID := uint32(i)
+		if !g.EdgeExists(edgeID) {
+			continue
+		}
 		occupancy.remove(edgeID, paths[i])
 
 		oldCost, oldCrossings, ok := r.scorePath(edgeID, paths[i], occupancy, g)

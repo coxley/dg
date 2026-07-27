@@ -33,6 +33,7 @@ The first end-to-end milestone is complete. The engine can:
 - rasterize geometry into directional cell connectivity
 - render Unicode box-drawing output
 - edit labels transactionally
+- delete nodes and edges and reuse their IDs
 - move nodes and rebuild without steady-state allocations
 - query every node, port, and edge rasterized at a grid point
 
@@ -63,6 +64,10 @@ The example program renders:
 Edges are undirected. Duplicate port pairs return the existing edge ID.
 New nodes currently receive fixed candidate ports on every side.
 
+Deletion leaves tombstones in the public slices. Per-type free lists reuse those
+indices before growing storage. Node deletion also removes its ports and
+incident edges.
+
 ### `layout`
 
 `layout.Layout` owns a cloned graph and index-aligned geometry:
@@ -90,6 +95,7 @@ sink, err := geo.NewNode("sink")
 edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
 err = geo.SetNodeLabel(source, "renamed")
 err = geo.PlaceNode(sink, layout.NewPoint(20, 3))
+err = geo.DeleteEdge(edge)
 err = geo.Build()
 ```
 
@@ -127,18 +133,28 @@ layering information.
 - `Layout` owns reusable router scratch. `Router` remains copyable configuration.
 - obstacle access uses `Layout.Obstacles()` instead of a stored obstacle slice.
 - rasterization decides glyph connectivity after layout.
+- node tombstones retain an empty port buffer; zero-value edges represent
+  deleted entries.
+- deleted ports use an invalid owner because a zero-value port is valid.
+- IDs remain stable while live and may be reused after deletion.
+- free lists fill tombstones before slices grow.
+- deletion does not compact slices.
 
 ## Current performance
 
 Results from an Apple M4 Max on July 27, 2026:
 
 ```text
-BenchmarkLayoutBuild             18.4 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutMoveAndBuild      20.2 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutEditLabelAndBuild 16.6 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/node         33.8 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/edge         33.1 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/miss         33.7 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutBuild             18.5 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutMoveAndBuild      20.0 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutEditLabelAndBuild 16.4 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutDeleteAndCreateNode
+                                  130 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutDeleteAndConnectEdge
+                                  7.2 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/node         37.1 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/edge         35.7 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/miss         36.1 ns/op   0 B/op   0 allocs/op
 ```
 
 These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
@@ -150,29 +166,17 @@ made the small build benchmark about 6% to 7% slower.
 
 ## Recommended next work
 
-Settle deletion semantics, then use the mutation APIs in a small TUI.
+Use the mutation APIs in a small TUI.
 
 Label editing is complete. `SetNodeLabel` updates the semantic label, node
 rectangle, and ports transactionally. An invalid label leaves all three
 unchanged. `Build` reroutes connected edges after the edit.
 
-### 1. Decide deletion and identity rules
+Deletion is complete. `DeleteEdge` leaves a reusable edge tombstone.
+`DeleteNode` also removes the node's ports and incident edges. Creation reuses
+deleted IDs without allocating after the free lists warm up.
 
-Deleting nodes or edges conflicts with raw slice indices as durable IDs. Decide
-the contract before implementing removal:
-
-- compact slices and return an ID remap
-- use swap removal and report the moved ID
-- retain holes with a free list
-- add indirect or generational handles
-
-Node deletion must also remove its ports, incident edges, route scratch, and any
-selection or draw-order references. Edge deletion is the smaller first step.
-
-Favor the least bookkeeping that still gives the TUI and persisted documents
-predictable identity.
-
-### 2. Build a basic TUI
+### 1. Build a basic TUI
 
 Use the existing APIs to test the full interactive loop:
 
@@ -189,7 +193,7 @@ selection, movement, and rendering.
 Profile the complete loop before adding incremental routing or a dense hit
 index. The current small layout rebuilds in about 19 microseconds after a move.
 
-### 3. Define a persisted document format
+### 2. Define a persisted document format
 
 Do not serialize router scratch or derived routes as authoritative state. Create
 a versioned document type that contains:
@@ -284,7 +288,7 @@ GOCACHE=/private/tmp/dg-codex-go-build \
   golangci-lint run --path-mode abs
 GOCACHE=/private/tmp/dg-codex-go-build \
   go test ./layout -run '^$' \
-  -bench 'BenchmarkLayout(Build|MoveAndBuild|Hits)$' -benchmem
+  -bench 'BenchmarkLayout' -benchmem
 ```
 
 Before this handoff, tests, race detection, vet, and lint passed.

@@ -60,6 +60,46 @@ func BenchmarkLayoutEditLabelAndBuild(b *testing.B) {
 	}
 }
 
+func BenchmarkLayoutDeleteAndConnectEdge(b *testing.B) {
+	geo, nodeID := newBenchmarkLayout(b)
+	edgeID := uint32(0)
+	require.NoError(b, geo.DeleteEdge(edgeID))
+	require.Equal(b, edgeID, geo.ConnectNodes(nodeID, ir.Bottom, ir.Top, 0))
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := geo.DeleteEdge(edgeID); err != nil {
+			b.Fatal(err)
+		}
+		if got := geo.ConnectNodes(nodeID, ir.Bottom, ir.Top, 0); got != edgeID {
+			b.Fatalf("ConnectNodes() ID = %d, want %d", got, edgeID)
+		}
+	}
+}
+
+func BenchmarkLayoutDeleteAndCreateNode(b *testing.B) {
+	geo, nodeID := newBenchmarkLayout(b)
+	point := geo.Nodes[nodeID].Rect.Min
+	require.NoError(b, geo.DeleteNode(nodeID))
+	reusedID, err := geo.NewNodeAt("foo", point)
+	require.NoError(b, err)
+	require.Equal(b, nodeID, reusedID)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := geo.DeleteNode(nodeID); err != nil {
+			b.Fatal(err)
+		}
+		reusedID, err := geo.NewNodeAt("foo", point)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if reusedID != nodeID {
+			b.Fatalf("NewNodeAt() ID = %d, want %d", reusedID, nodeID)
+		}
+	}
+}
+
 func BenchmarkLayoutHits(b *testing.B) {
 	geo, _ := newBenchmarkLayout(b)
 	require.NoError(b, geo.Build())

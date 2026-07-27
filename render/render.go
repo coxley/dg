@@ -31,6 +31,9 @@ func Encode(dst []byte, l *layout.Layout) ([]byte, error) {
 	labels := make([]string, len(grid.Cells))
 	continuations := make([]bool, len(grid.Cells))
 	for i := range l.Nodes {
+		if l.Nodes[i].Empty() {
+			continue
+		}
 		if err := placeLabel(&grid, labels, continuations, l.Nodes[i].LabelPoint, l.Label(uint32(i))); err != nil {
 			return nil, fmt.Errorf("place node %d label: %w", i, err)
 		}

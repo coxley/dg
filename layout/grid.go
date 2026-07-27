@@ -90,11 +90,17 @@ func Rasterize(l *Layout) (Grid, error) {
 		return Grid{}, err
 	}
 	for i := range l.Nodes {
+		if l.Nodes[i].Empty() {
+			continue
+		}
 		if err := grid.AddRect(l.Nodes[i].Rect); err != nil {
 			return Grid{}, fmt.Errorf("rasterize node %d: %w", i, err)
 		}
 	}
 	for i := range l.Edges {
+		if l.Edges[i].Empty() {
+			continue
+		}
 		if err := grid.AddPath(l.Edges[i].Points); err != nil {
 			return Grid{}, fmt.Errorf("rasterize edge %d: %w", i, err)
 		}
@@ -194,6 +200,9 @@ func geometryBounds(l *Layout) (Rect, bool, error) {
 		maxX, maxY = max(maxX, p.X), max(maxY, p.Y)
 	}
 	for i := range l.Nodes {
+		if l.Nodes[i].Empty() {
+			continue
+		}
 		addPoint(l.Nodes[i].Rect.Min)
 		max := l.Nodes[i].Rect.Max()
 		addPoint(Point{X: max.X - 1, Y: max.Y - 1})

@@ -76,6 +76,21 @@ func TestUnicodeSharedEndpoint(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestUnicodeOmitsDeletedNode(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	kept := newNodeAt(t, geo, "kept", layout.Point{})
+	deleted := newNodeAt(t, geo, "deleted", layout.Point{X: 12})
+	geo.ConnectNodes(kept, ir.RightSide, ir.LeftSide, deleted)
+	require.NoError(t, geo.DeleteNode(deleted))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(t, "┌──────┐\n│ kept │\n└──────┘\n", got)
+}
+
 func newLayout(t testing.TB) *layout.Layout {
 	t.Helper()
 
