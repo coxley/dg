@@ -139,9 +139,10 @@ The Bubble Tea model keeps terminal-only state:
 Bubble Tea messages mutate `Layout` synchronously. Every node movement and label
 keystroke calls `Build` and refreshes the cached frame. Editing has a
 grapheme-aware caret; Escape restores an existing label or deletes a newly
-created node. Label editing supports Ctrl-A and Ctrl-E for the line bounds,
-Alt-B to move to the previous word, Ctrl-W to delete the previous word, and
-Ctrl-U to delete to the line start.
+created node. Label and save-path editing use whitespace and slash as word
+boundaries. They support Ctrl-A and Ctrl-E for the line bounds, Alt-B to move
+to the previous word, Ctrl-W to delete the previous word, and Ctrl-U to delete
+to the line start.
 
 The TUI also supports:
 
@@ -155,6 +156,8 @@ The TUI also supports:
 - click-dragging a node commits an active label edit
 - mouse-wheel viewport panning
 - terminal cursor visibility only while editing a label
+- Ctrl-S saving with an inline path prompt for new diagrams
+- filesystem path completion in the save prompt
 
 The model accepts pasted single-line labels and rejects pasted newlines before
 they reach the layout.
@@ -163,7 +166,12 @@ Run the example editor with:
 
 ```sh
 go run ./cmd/dg
+go run ./cmd/dg path/to/diagram.json
 ```
+
+Ctrl-S saves directly when the editor opened a document from disk. New
+diagrams prompt for a path on the first save; Tab completes existing filesystem
+paths.
 
 ## Settled design decisions
 

@@ -36,7 +36,8 @@ func (m *Model) View() tea.View {
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "dg"
-	if m.mode == modeEditLabel {
+	switch m.mode {
+	case modeEditLabel:
 		if x, y, ok := m.cursorPosition(); ok {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
@@ -44,11 +45,25 @@ func (m *Model) View() tea.View {
 			cursor.Y = y
 			view.Cursor = cursor
 		}
+	case modeSavePath:
+		x := len("save path: ") + displayWidth(m.editBuffer[:m.editCaret])
+		if m.height >= 2 && x < m.width {
+			cursor := &m.viewCursor[m.nextCursor]
+			m.nextCursor ^= 1
+			cursor.X = x
+			cursor.Y = m.diagramHeight()
+			view.Cursor = cursor
+		}
+	default:
 	}
 	return view
 }
 
 func (m *Model) appendStatusText(dst []byte) []byte {
+	if m.mode == modeSavePath {
+		dst = append(dst, "save path: "...)
+		return append(dst, m.editBuffer...)
+	}
 	if m.status != "" {
 		return append(dst, m.status...)
 	}
@@ -91,8 +106,16 @@ func (m *Model) helpLine() string {
 			return "select replacement port • enter/c/click move endpoint • esc cancel"
 		}
 		return "select destination port • enter/c/click connect • esc cancel"
+	case modeSavePath:
+		if m.status != "" {
+			return m.status
+		}
+		if m.saveHint != "" {
+			return m.saveHint
+		}
+		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "arrows/hjkl move • tab cycle • n new • m move • e edit • c connect • d delete"
+		return "arrows/hjkl move • tab cycle • n new • m move • e edit • c connect • d delete • ctrl+s save"
 	}
 }
 

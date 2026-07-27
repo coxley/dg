@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
 )
@@ -115,12 +118,12 @@ func TestModelEditShortcuts(t *testing.T) {
 		wantCaret int
 	}{
 		{
-			name:      "ctrl-w preserves grapheme boundaries",
-			label:     "界面 test  ",
-			caret:     len("界面 test  "),
+			name:      "ctrl-w stops at path boundary",
+			label:     "界面/path/to/file.json",
+			caret:     len("界面/path/to/file.json"),
 			key:       tea.Key{Code: 'w', Mod: tea.ModCtrl},
-			wantLabel: "界面 ",
-			wantCaret: len("界面 "),
+			wantLabel: "界面/path/to/",
+			wantCaret: len("界面/path/to/"),
 		},
 		{
 			name:      "ctrl-u deletes to line start",
@@ -132,11 +135,11 @@ func TestModelEditShortcuts(t *testing.T) {
 		},
 		{
 			name:      "alt-b moves to previous word",
-			label:     "one  two three",
-			caret:     len("one  two three"),
+			label:     "one  two/three",
+			caret:     len("one  two/three"),
 			key:       tea.Key{Code: 'b', Mod: tea.ModAlt},
-			wantLabel: "one  two three",
-			wantCaret: len("one  two "),
+			wantLabel: "one  two/three",
+			wantCaret: len("one  two/"),
 		},
 	}
 
@@ -320,6 +323,103 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 	require.NotSame(t, view.Cursor, model.View().Cursor)
 }
 
+func TestModelViewShowsSavePathPrompt(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 6})
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	updateModel(t, model, tea.PasteMsg{Content: "diagram.json"})
+	view := model.View()
+
+	require.Contains(t, view.Content, "save path: diagram.json")
+	require.NotNil(t, view.Cursor)
+	require.Equal(t, len("save path: diagram.json"), view.Cursor.X)
+	require.Equal(t, model.diagramHeight(), view.Cursor.Y)
+}
+
+func TestModelSavePathShortcuts(t *testing.T) {
+	t.Parallel()
+
+	const path = "界面/one/two"
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	updateModel(t, model, tea.PasteMsg{Content: path})
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'b', Mod: tea.ModAlt}))
+	require.Equal(t, len("界面/one/"), model.editCaret)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
+	require.Equal(t, "界面/two", string(model.editBuffer))
+	require.Equal(t, len("界面/"), model.editCaret)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'e', Mod: tea.ModCtrl}))
+	require.Equal(t, len("界面/two"), model.editCaret)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	require.Zero(t, model.editCaret)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'e', Mod: tea.ModCtrl}))
+	require.Equal(t, len("界面/two"), model.editCaret)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
+	require.Empty(t, model.editBuffer)
+	require.Zero(t, model.editCaret)
+}
+
+func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	path := filepath.Join(t.TempDir(), "diagram.json")
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	require.Equal(t, modeSavePath, model.mode)
+	updateModel(t, model, tea.PasteMsg{Content: path})
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+
+	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, path, model.path)
+	require.Equal(t, "saved "+path, model.status)
+	requireSavedLabel(t, path, "node")
+
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, "updated"))
+	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+
+	require.Equal(t, modeNavigate, model.mode)
+	requireSavedLabel(t, path, "updated")
+}
+
+func TestModelCompletesSavePath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "diagram-one.json"), nil, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "diagram-two.json"), nil, 0o600))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o700))
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	updateModel(t, model, tea.PasteMsg{Content: filepath.Join(dir, "dia")})
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, filepath.Join(dir, "diagram-"), string(model.editBuffer))
+	require.Contains(t, model.saveHint, "diagram-one.json")
+	require.Contains(t, model.saveHint, "diagram-two.json")
+
+	updateModel(t, model, keyPress('o', "o"))
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, filepath.Join(dir, "diagram-one.json"), string(model.editBuffer))
+	require.Empty(t, model.saveHint)
+
+	model.editBuffer = append(model.editBuffer[:0], filepath.Join(dir, "nes")...)
+	model.editCaret = len(model.editBuffer)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(
+		t,
+		filepath.Join(dir, "nested")+string(filepath.Separator),
+		string(model.editBuffer),
+	)
+}
+
 func TestModelMouseSelectsAndDragsNode(t *testing.T) {
 	t.Parallel()
 
@@ -445,6 +545,18 @@ func newTestModel(t testing.TB) (*Model, uint32) {
 	model, err := New(geo)
 	require.NoError(t, err)
 	return model, nodeID
+}
+
+func requireSavedLabel(t testing.TB, path, want string) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	doc, err := document.Unmarshal(data)
+	require.NoError(t, err)
+	geo, err := doc.Layout()
+	require.NoError(t, err)
+	require.Equal(t, want, geo.Label(0))
 }
 
 func newTwoNodeModel(t testing.TB) (*Model, uint32, uint32) {

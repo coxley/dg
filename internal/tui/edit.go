@@ -220,14 +220,14 @@ func nextGraphemeEnd(text []byte, offset int) int {
 func previousWordStart(text []byte, offset int) int {
 	for offset > 0 {
 		start := previousGraphemeStart(text, offset)
-		if !graphemeIsSpace(text[start:offset]) {
+		if !graphemeIsWordBoundary(text[start:offset]) {
 			break
 		}
 		offset = start
 	}
 	for offset > 0 {
 		start := previousGraphemeStart(text, offset)
-		if graphemeIsSpace(text[start:offset]) {
+		if graphemeIsWordBoundary(text[start:offset]) {
 			break
 		}
 		offset = start
@@ -235,13 +235,14 @@ func previousWordStart(text []byte, offset int) int {
 	return offset
 }
 
-func graphemeIsSpace(cluster []byte) bool {
+// graphemeIsWordBoundary follows Readline's filename-word behavior.
+func graphemeIsWordBoundary(cluster []byte) bool {
 	if len(cluster) == 0 {
 		return false
 	}
 	for len(cluster) != 0 {
 		r, size := utf8.DecodeRune(cluster)
-		if !unicode.IsSpace(r) {
+		if !unicode.IsSpace(r) && r != '/' {
 			return false
 		}
 		cluster = cluster[size:]

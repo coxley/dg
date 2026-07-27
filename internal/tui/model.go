@@ -19,6 +19,7 @@ const (
 	modeMove
 	modeEditLabel
 	modeConnect
+	modeSavePath
 )
 
 const finishOperation = "finish the current operation first"
@@ -33,6 +34,8 @@ func (m mode) String() string {
 		return "edit label"
 	case modeConnect:
 		return "connect"
+	case modeSavePath:
+		return "save path"
 	default:
 		return "unknown"
 	}
@@ -84,14 +87,21 @@ type Model struct {
 	width  int
 	height int
 	status string
+	path   string
+
+	saveHint string
 }
 
 // New returns a TUI model for geo.
 func New(geo *layout.Layout) (*Model, error) {
+	return newModel(geo, "")
+}
+
+func newModel(geo *layout.Layout, path string) (*Model, error) {
 	if geo == nil {
 		return nil, errors.New("nil layout")
 	}
-	m := &Model{geo: geo}
+	m := &Model{geo: geo, path: path}
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -107,9 +117,9 @@ func New(geo *layout.Layout) (*Model, error) {
 	return m, nil
 }
 
-// Run starts an interactive terminal editor for geo.
-func Run(geo *layout.Layout) error {
-	model, err := New(geo)
+// Run starts an interactive terminal editor for geo and saves it to path.
+func Run(geo *layout.Layout, path string) error {
+	model, err := newModel(geo, path)
 	if err != nil {
 		return err
 	}
@@ -133,7 +143,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.hasLastClick = false
-		if m.mode == modeEditLabel {
+		if m.mode == modeSavePath {
+			m.updateSavePath(message)
+		} else if key.Code == 's' && key.Mod == tea.ModCtrl {
+			m.requestSave()
+		} else if m.mode == modeEditLabel {
 			m.updateLabel(message)
 		} else {
 			if key.Code == 'q' && key.Mod == 0 {
@@ -142,18 +156,30 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateCommand(key)
 		}
 	case tea.PasteMsg:
-		if m.mode == modeEditLabel {
+		switch m.mode {
+		case modeEditLabel:
 			m.insertLabelText(message.Content)
+		case modeSavePath:
+			m.insertSavePathText(message.Content)
+		default:
 		}
 	case tea.MouseClickMsg:
-		m.updateMouseClick(message.Mouse())
+		if m.mode != modeSavePath {
+			m.updateMouseClick(message.Mouse())
+		}
 	case tea.MouseReleaseMsg:
-		m.dragging = false
-		m.editMouseDown = false
+		if m.mode != modeSavePath {
+			m.dragging = false
+			m.editMouseDown = false
+		}
 	case tea.MouseMotionMsg:
-		m.updateMouseMotion(message.Mouse())
+		if m.mode != modeSavePath {
+			m.updateMouseMotion(message.Mouse())
+		}
 	case tea.MouseWheelMsg:
-		m.updateMouseWheel(message.Mouse())
+		if m.mode != modeSavePath {
+			m.updateMouseWheel(message.Mouse())
+		}
 	}
 	return m, nil
 }
