@@ -196,7 +196,7 @@ func Unmarshal(data []byte) (Document, error) {
 }
 
 // Layout validates d and returns an independent editable layout.
-func (d Document) Layout() (*layout.Layout, error) {
+func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 	if d.Version != CurrentVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnsupportedVersion, d.Version)
 	}
@@ -213,14 +213,15 @@ func (d Document) Layout() (*layout.Layout, error) {
 		},
 		ReroutePasses: d.Options.Router.ReroutePasses,
 	}
-	geo, err := layout.New(
+	baseOptions := []layout.Option{
 		layout.WithGraph(graph),
 		layout.WithPadding(
 			d.Options.Padding.Horizontal,
 			d.Options.Padding.Vertical,
 		),
 		layout.WithRouter(router),
-	)
+	}
+	geo, err := layout.New(slices.Concat(options, baseOptions)...)
 	if err != nil {
 		return nil, fmt.Errorf("create layout: %w", err)
 	}
@@ -228,6 +229,9 @@ func (d Document) Layout() (*layout.Layout, error) {
 		if err := geo.PlaceNode(uint32(nodeID), layout.NewPoint(node.Origin.X, node.Origin.Y)); err != nil {
 			return nil, fmt.Errorf("place node %d: %w", nodeID, err)
 		}
+	}
+	if history := geo.History(); history != nil {
+		history.Clear()
 	}
 	return geo, nil
 }

@@ -48,7 +48,8 @@ type rowSpan struct {
 
 // Model coordinates terminal interaction with a layout.
 type Model struct {
-	geo *layout.Layout
+	geo     *layout.Layout
+	history *layout.History
 
 	cursor         layout.Point
 	viewport       layout.Point
@@ -60,12 +61,10 @@ type Model struct {
 	connectOldPort uint32
 	reconnecting   bool
 
-	mode         mode
-	editBuffer   []byte
-	editDraft    []byte
-	editOriginal string
-	editCaret    int
-	editCreated  bool
+	mode       mode
+	editBuffer []byte
+	editDraft  []byte
+	editCaret  int
 
 	dragging      bool
 	dragOffset    layout.Point
@@ -90,6 +89,9 @@ type Model struct {
 	path   string
 
 	saveHint string
+
+	transaction     layout.Transaction
+	transactionOpen bool
 }
 
 // New returns a TUI model for geo.
@@ -101,7 +103,7 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 	if geo == nil {
 		return nil, errors.New("nil layout")
 	}
-	m := &Model{geo: geo, path: path}
+	m := &Model{geo: geo, history: geo.History(), path: path}
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -123,6 +125,7 @@ func Run(geo *layout.Layout, path string) error {
 	if err != nil {
 		return err
 	}
+	defer model.interruptInteraction()
 	_, err = tea.NewProgram(model).Run()
 	return err
 }
@@ -140,6 +143,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		key := message.Key()
 		if key.Code == 'c' && key.Mod == tea.ModCtrl {
+			m.interruptInteraction()
 			return m, tea.Quit
 		}
 		m.hasLastClick = false
@@ -151,6 +155,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateLabel(message)
 		} else {
 			if key.Code == 'q' && key.Mod == 0 {
+				m.interruptInteraction()
 				return m, tea.Quit
 			}
 			m.updateCommand(key)
@@ -169,7 +174,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseReleaseMsg:
 		if m.mode != modeSavePath {
-			m.dragging = false
+			if m.dragging {
+				m.finishMove()
+			}
 			m.editMouseDown = false
 		}
 	case tea.MouseMotionMsg:
@@ -180,11 +187,24 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode != modeSavePath {
 			m.updateMouseWheel(message.Mouse())
 		}
+	case tea.BlurMsg:
+		m.interruptInteraction()
 	}
 	return m, nil
 }
 
 func (m *Model) updateCommand(key tea.Key) {
+	if key.Code == 'u' && key.Mod == 0 ||
+		key.Code == 'z' && key.Mod == tea.ModCtrl {
+		m.undo()
+		return
+	}
+	if key.Code == 'r' && key.Mod == tea.ModCtrl ||
+		key.Code == 'y' && key.Mod == tea.ModCtrl ||
+		key.Code == 'z' && key.Mod == tea.ModCtrl|tea.ModShift {
+		m.redo()
+		return
+	}
 	if key.Code == tea.KeyTab && key.Mod == tea.ModShift {
 		m.cycleHit(-1)
 		return
@@ -261,12 +281,17 @@ func (m *Model) moveNode(dx, dy int) {
 }
 
 func (m *Model) placeNode(nodeID uint32, origin, cursor layout.Point) {
+	previous := m.geo.Nodes[nodeID].Rect.Min
 	if err := m.geo.PlaceNode(nodeID, origin); err != nil {
 		m.status = err.Error()
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = err.Error()
+		restoreErr := m.geo.PlaceNode(nodeID, previous)
+		if restoreErr == nil {
+			restoreErr = m.rebuild()
+		}
+		m.status = errors.Join(err, restoreErr).Error()
 		return
 	}
 	m.cursor = cursor
@@ -279,9 +304,7 @@ func (m *Model) placeNode(nodeID uint32, origin, cursor layout.Point) {
 
 func (m *Model) beginMove() {
 	if m.mode == modeMove {
-		m.mode = modeNavigate
-		m.dragging = false
-		m.status = ""
+		m.finishMove()
 		return
 	}
 	if m.mode != modeNavigate {
@@ -294,6 +317,7 @@ func (m *Model) beginMove() {
 		return
 	}
 	m.target = hit
+	m.beginTransaction()
 	m.mode = modeMove
 	m.status = ""
 }
@@ -308,7 +332,8 @@ func (m *Model) beginLabelEdit() {
 		m.status = "select a node to edit"
 		return
 	}
-	m.startLabelEdit(hit, false)
+	m.beginTransaction()
+	m.startLabelEdit(hit)
 }
 
 func (m *Model) newNode() {
@@ -316,18 +341,17 @@ func (m *Model) newNode() {
 		m.status = finishOperation
 		return
 	}
+	m.beginTransaction()
 	nodeID, err := m.geo.NewNodeAt("", m.cursor)
 	if err != nil {
-		m.status = err.Error()
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		_ = m.geo.DeleteNode(nodeID)
-		_ = m.rebuild()
-		m.status = err.Error()
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
 		return
 	}
-	m.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode}, true)
+	m.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 }
 
 func (m *Model) beginConnection() {
@@ -373,6 +397,7 @@ func (m *Model) completeConnection() {
 		m.status = "select a destination port"
 		return
 	}
+	m.beginTransaction()
 	edgeID := m.connectEdge
 	var err error
 	if m.reconnecting {
@@ -381,10 +406,19 @@ func (m *Model) completeConnection() {
 		edgeID, err = m.geo.ConnectPorts(m.connectSource, hit.ID)
 	}
 	if err != nil {
+		_ = m.cancelTransaction()
 		m.status = err.Error()
 		return
 	}
 	if err := m.rebuild(); err != nil {
+		m.status = errors.Join(
+			err,
+			m.cancelTransaction(),
+			m.render(),
+		).Error()
+		return
+	}
+	if err := m.commitTransaction(); err != nil {
 		m.status = err.Error()
 		return
 	}
@@ -406,6 +440,15 @@ func (m *Model) deleteActive() {
 		m.status = "nothing selected"
 		return
 	}
+	if m.mode == modeMove {
+		if err := m.commitTransaction(); err != nil {
+			m.status = err.Error()
+			return
+		}
+		m.mode = modeNavigate
+		m.dragging = false
+	}
+	m.beginTransaction()
 	var err error
 	switch hit.Kind {
 	case layout.HitNode:
@@ -413,14 +456,24 @@ func (m *Model) deleteActive() {
 	case layout.HitEdge:
 		err = m.geo.DeleteEdge(hit.ID)
 	case layout.HitPort:
+		_ = m.cancelTransaction()
 		m.status = "ports cannot be deleted independently"
 		return
 	}
 	if err != nil {
+		_ = m.cancelTransaction()
 		m.status = err.Error()
 		return
 	}
 	if err := m.rebuild(); err != nil {
+		m.status = errors.Join(
+			err,
+			m.cancelTransaction(),
+			m.render(),
+		).Error()
+		return
+	}
+	if err := m.commitTransaction(); err != nil {
 		m.status = err.Error()
 		return
 	}
@@ -432,9 +485,101 @@ func (m *Model) deleteActive() {
 }
 
 func (m *Model) cancelMode() {
+	if m.mode == modeMove {
+		m.finishMove()
+		return
+	}
 	m.mode = modeNavigate
 	m.clearConnection()
 	m.dragging = false
+	m.status = ""
+}
+
+func (m *Model) beginTransaction() {
+	if m.history == nil {
+		return
+	}
+	m.transaction = m.history.Begin()
+	m.transactionOpen = true
+}
+
+func (m *Model) commitTransaction() error {
+	if !m.transactionOpen {
+		return nil
+	}
+	m.transactionOpen = false
+	return m.transaction.Commit()
+}
+
+func (m *Model) cancelTransaction() error {
+	if !m.transactionOpen {
+		return nil
+	}
+	m.transactionOpen = false
+	return m.transaction.Cancel()
+}
+
+func (m *Model) finishMove() {
+	err := m.commitTransaction()
+	m.mode = modeNavigate
+	m.dragging = false
+	if err != nil {
+		m.status = err.Error()
+	} else {
+		m.status = ""
+	}
+}
+
+func (m *Model) interruptInteraction() {
+	if m.history != nil {
+		m.history.Interrupt()
+	}
+	m.transactionOpen = false
+	if m.mode == modeEditLabel {
+		m.finishLabelEdit()
+	} else {
+		m.mode = modeNavigate
+	}
+	m.clearConnection()
+	m.dragging = false
+	m.editMouseDown = false
+}
+
+func (m *Model) undo() {
+	if m.history == nil {
+		m.status = "undo history is unavailable"
+		return
+	}
+	changed, err := m.history.Undo()
+	m.afterHistoryChange(changed, err, "nothing to undo")
+}
+
+func (m *Model) redo() {
+	if m.history == nil {
+		m.status = "undo history is unavailable"
+		return
+	}
+	changed, err := m.history.Redo()
+	m.afterHistoryChange(changed, err, "nothing to redo")
+}
+
+func (m *Model) afterHistoryChange(changed bool, err error, unchanged string) {
+	m.mode = modeNavigate
+	m.dragging = false
+	m.transactionOpen = false
+	if err != nil {
+		m.status = err.Error()
+		return
+	}
+	if !changed {
+		m.status = unchanged
+		return
+	}
+	if err := m.render(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	m.refreshHits()
 	m.status = ""
 }
 
@@ -449,6 +594,10 @@ func (m *Model) rebuild() error {
 	if err := m.geo.Build(); err != nil {
 		return fmt.Errorf("build layout: %w", err)
 	}
+	return m.render()
+}
+
+func (m *Model) render() error {
 	if !hasGeometry(m.geo) {
 		m.frame = render.Frame{}
 		m.frameRows = m.frameRows[:0]

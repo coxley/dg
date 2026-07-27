@@ -46,6 +46,7 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	rect := m.geo.Nodes[hit.ID].Rect
 	m.target = hit
 	m.dragOffset = layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y)
+	m.beginTransaction()
 	m.dragging = true
 }
 
@@ -57,6 +58,7 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 		}
 		nodeID := m.target.ID
 		m.commitLabelEdit()
+		m.beginTransaction()
 		m.editMouseDown = false
 		m.dragging = true
 		origin := layout.NewPoint(point.X-m.dragOffset.X, point.Y-m.dragOffset.Y)

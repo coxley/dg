@@ -23,6 +23,12 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	history := geo.History()
+	defer func() {
+		if err := history.Flush(); err != nil {
+			log.Printf("flush undo history: %v", err)
+		}
+	}()
 	if err := tui.Run(geo, path); err != nil {
 		return fmt.Errorf("run editor: %w", err)
 	}
@@ -30,9 +36,13 @@ func run(args []string) error {
 }
 
 func initialLayout(args []string) (*layout.Layout, string, error) {
+	history, err := layout.NewHistory()
+	if err != nil {
+		return nil, "", err
+	}
 	switch len(args) {
 	case 0:
-		geo, err := exampleLayout()
+		geo, err := exampleLayoutWithHistory(history)
 		return geo, "", err
 	case 1:
 		data, err := os.ReadFile(args[0]) //nolint:gosec // The CLI argument intentionally selects an arbitrary diagram.
@@ -43,9 +53,12 @@ func initialLayout(args []string) (*layout.Layout, string, error) {
 		if err != nil {
 			return nil, "", fmt.Errorf("decode diagram %q: %w", args[0], err)
 		}
-		geo, err := doc.Layout()
+		geo, err := doc.Layout(layout.WithHistory(history))
 		if err != nil {
 			return nil, "", fmt.Errorf("load diagram %q: %w", args[0], err)
+		}
+		if _, err := history.Restore(args[0]); err != nil {
+			log.Printf("restore undo history: %v", err)
 		}
 		return geo, args[0], nil
 	default:
@@ -54,7 +67,15 @@ func initialLayout(args []string) (*layout.Layout, string, error) {
 }
 
 func exampleLayout() (*layout.Layout, error) {
-	geo, err := layout.New()
+	history, err := layout.NewHistory()
+	if err != nil {
+		return nil, err
+	}
+	return exampleLayoutWithHistory(history)
+}
+
+func exampleLayoutWithHistory(history *layout.History) (*layout.Layout, error) {
+	geo, err := layout.New(layout.WithHistory(history))
 	if err != nil {
 		return nil, err
 	}
@@ -72,5 +93,6 @@ func exampleLayout() (*layout.Layout, error) {
 		return nil, err
 	}
 	geo.ConnectNodes(bar, ir.Bottom, ir.Top, sink)
+	history.Clear()
 	return geo, nil
 }

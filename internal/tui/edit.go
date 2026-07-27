@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -46,7 +47,7 @@ func (m *Model) updateLabel(key tea.KeyPressMsg) {
 	}
 	switch event.Code {
 	case tea.KeyEscape:
-		m.cancelLabelEdit()
+		m.commitLabelEdit()
 	case tea.KeyEnter:
 		m.commitLabelEdit()
 	case tea.KeyLeft:
@@ -99,9 +100,11 @@ func (m *Model) replaceLabelRange(start, end int, replacement []byte) {
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		_ = m.geo.SetNodeLabel(m.target.ID, previous)
-		_ = m.rebuild()
-		m.status = err.Error()
+		restoreErr := m.geo.SetNodeLabel(m.target.ID, previous)
+		if restoreErr == nil {
+			restoreErr = m.rebuild()
+		}
+		m.status = errors.Join(err, restoreErr).Error()
 		return
 	}
 
@@ -113,14 +116,12 @@ func (m *Model) replaceLabelRange(start, end int, replacement []byte) {
 	m.status = ""
 }
 
-func (m *Model) startLabelEdit(hit layout.Hit, created bool) {
+func (m *Model) startLabelEdit(hit layout.Hit) {
 	label := m.geo.Label(hit.ID)
 	m.target = hit
 	m.editBuffer = append(m.editBuffer[:0], label...)
 	m.editDraft = m.editDraft[:0]
-	m.editOriginal = label
 	m.editCaret = len(m.editBuffer)
-	m.editCreated = created
 	m.mode = modeEditLabel
 	m.moveCursorToCaret()
 	m.refreshHits()
@@ -130,29 +131,10 @@ func (m *Model) startLabelEdit(hit layout.Hit, created bool) {
 
 func (m *Model) commitLabelEdit() {
 	target := m.target
+	err := m.commitTransaction()
 	m.finishLabelEdit()
 	m.refreshHits()
 	m.target = target
-	m.selectTarget()
-	m.status = ""
-}
-
-func (m *Model) cancelLabelEdit() {
-	target := m.target
-	var err error
-	if m.editCreated {
-		err = m.geo.DeleteNode(target.ID)
-	} else {
-		err = m.geo.SetNodeLabel(target.ID, m.editOriginal)
-	}
-	if err == nil {
-		err = m.rebuild()
-	}
-	m.finishLabelEdit()
-	if m.geo.NodeExists(target.ID) {
-		m.cursor = m.geo.Nodes[target.ID].LabelPoint
-	}
-	m.refreshHits()
 	m.selectTarget()
 	if err != nil {
 		m.status = err.Error()
@@ -165,9 +147,7 @@ func (m *Model) finishLabelEdit() {
 	m.mode = modeNavigate
 	m.editBuffer = m.editBuffer[:0]
 	m.editDraft = m.editDraft[:0]
-	m.editOriginal = ""
 	m.editCaret = 0
-	m.editCreated = false
 }
 
 func (m *Model) moveCaretToPoint(point layout.Point) {

@@ -100,7 +100,7 @@ func (m *Model) helpLine() string {
 	case modeMove:
 		return "arrows/hjkl move node • enter/m/esc finish • mouse drag • ctrl+c quit"
 	case modeEditLabel:
-		return "type • ctrl-a/e ends • alt-b back word • ctrl-w/u delete • enter save • esc cancel"
+		return "type • ctrl-a/e ends • alt-b back word • ctrl-w/u delete • enter/esc save"
 	case modeConnect:
 		if m.reconnecting {
 			return "select replacement port • enter/c/click move endpoint • esc cancel"
@@ -115,7 +115,7 @@ func (m *Model) helpLine() string {
 		}
 		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "arrows/hjkl move • tab cycle • n new • m move • e edit • c connect • d delete • ctrl+s save"
+		return "arrows/hjkl move • tab cycle • n new • m move • e edit • c connect • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
 	}
 }
 

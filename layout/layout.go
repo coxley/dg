@@ -144,6 +144,7 @@ type Layout struct {
 	draftPorts  []Port
 	portUsable  []bool
 	draftUsable []bool
+	history     *History
 }
 
 // Option configures a Layout.
@@ -161,6 +162,9 @@ func New(options ...Option) (*Layout, error) {
 	}
 	l.graph = cloneGraph(l.graph)
 	if err := l.initializeGeometry(); err != nil {
+		return nil, err
+	}
+	if err := l.history.attach(l); err != nil {
 		return nil, err
 	}
 	return l, nil
@@ -193,6 +197,18 @@ func WithGraph(graph ir.Graph) Option {
 	}
 }
 
+// WithHistory records successful mutations in history.
+func WithHistory(history *History) Option {
+	return func(l *Layout) {
+		l.history = history
+	}
+}
+
+// History returns the mutation history attached to the layout.
+func (l *Layout) History() *History {
+	return l.history
+}
+
 // NewNode adds a node at the origin and returns its index. It returns an error
 // when the label or resulting geometry is invalid.
 func (l *Layout) NewNode(label string) (uint32, error) {
@@ -223,6 +239,13 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 	l.origins[nodeID] = point
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind: historyCreateNode,
+			id:   nodeID,
+			node: l.historyNode(nodeID),
+		})
+	}
 	return nodeID, nil
 }
 
@@ -230,6 +253,10 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
 	if !l.graph.NodeExists(nodeID) {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
+	}
+	previous := l.graph.Nodes[nodeID].Label
+	if previous == label {
+		return nil
 	}
 	node, err := l.prepareNode(nodeID, label, l.origins[nodeID])
 	if err != nil {
@@ -239,6 +266,14 @@ func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
 	l.graph.Nodes[nodeID].Label = label
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind:        historySetLabel,
+			id:          nodeID,
+			beforeLabel: previous,
+			afterLabel:  label,
+		})
+	}
 	return nil
 }
 
@@ -246,6 +281,10 @@ func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
 func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 	if !l.graph.NodeExists(nodeID) {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
+	}
+	previous := l.origins[nodeID]
+	if previous == point {
+		return nil
 	}
 	node, err := l.prepareNode(nodeID, l.graph.Nodes[nodeID].Label, point)
 	if err != nil {
@@ -255,13 +294,34 @@ func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 	l.origins[nodeID] = point
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind:        historyPlaceNode,
+			id:          nodeID,
+			beforePoint: previous,
+			afterPoint:  point,
+		})
+	}
 	return nil
 }
 
 // ConnectNodes connects side-constrained center ports and returns the edge index.
 func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) uint32 {
+	existed := false
+	if l.history != nil {
+		portA, _ := l.graph.PickCenterPort(nodeA, sideA)
+		portB, _ := l.graph.PickCenterPort(nodeB, sideB)
+		_, existed = l.connectedEdge(portA, portB)
+	}
 	edgeID := l.graph.ConnectNodes(nodeA, sideA, sideB, nodeB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	if l.history != nil && !existed {
+		l.history.record(historyChange{
+			kind:      historyCreateEdge,
+			id:        edgeID,
+			afterEdge: l.graph.Edges[edgeID],
+		})
+	}
 	return edgeID
 }
 
@@ -283,8 +343,19 @@ func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
 	if portA == portB {
 		return 0, ir.ErrSamePort
 	}
+	existed := false
+	if l.history != nil {
+		_, existed = l.connectedEdge(portA, portB)
+	}
 	edgeID := l.graph.ConnectPorts(portA, portB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	if l.history != nil && !existed {
+		l.history.record(historyChange{
+			kind:      historyCreateEdge,
+			id:        edgeID,
+			afterEdge: l.graph.Edges[edgeID],
+		})
+	}
 	return edgeID, nil
 }
 
@@ -305,19 +376,39 @@ func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
 	if !l.PortUsable(newPort) {
 		return fmt.Errorf("%w: %d", ErrPortUnavailable, newPort)
 	}
+	previous := l.graph.Edges[edgeID]
 	if err := l.graph.ReconnectEdge(edgeID, oldPort, newPort); err != nil {
 		return err
 	}
 	l.Edges[edgeID] = Edge{}
+	if l.history != nil && previous != l.graph.Edges[edgeID] {
+		l.history.record(historyChange{
+			kind:       historyReconnectEdge,
+			id:         edgeID,
+			beforeEdge: previous,
+			afterEdge:  l.graph.Edges[edgeID],
+		})
+	}
 	return nil
 }
 
 // DeleteEdge removes an edge and makes its ID available for reuse.
 func (l *Layout) DeleteEdge(edgeID uint32) error {
+	if !l.graph.EdgeExists(edgeID) {
+		return fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
+	}
+	previous := l.graph.Edges[edgeID]
 	if err := l.graph.DeleteEdge(edgeID); err != nil {
 		return err
 	}
 	l.Edges[edgeID] = Edge{}
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind:       historyDeleteEdge,
+			id:         edgeID,
+			beforeEdge: previous,
+		})
+	}
 	return nil
 }
 
@@ -325,6 +416,10 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 func (l *Layout) DeleteNode(nodeID uint32) error {
 	if !l.graph.NodeExists(nodeID) {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
+	}
+	var previous historyNode
+	if l.history != nil {
+		previous = l.historyNode(nodeID)
 	}
 
 	for edgeID := range l.graph.Edges {
@@ -344,7 +439,24 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	}
 	l.origins[nodeID] = Point{}
 	l.Nodes[nodeID] = Node{}
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind: historyDeleteNode,
+			id:   nodeID,
+			node: previous,
+		})
+	}
 	return nil
+}
+
+func (l *Layout) connectedEdge(portA, portB uint32) (uint32, bool) {
+	for edgeID := range l.graph.Edges {
+		if l.graph.EdgeExists(uint32(edgeID)) &&
+			l.graph.Edges[edgeID].Connects(portA, portB) {
+			return uint32(edgeID), true
+		}
+	}
+	return 0, false
 }
 
 // NodeExists reports whether nodeID identifies a live node.

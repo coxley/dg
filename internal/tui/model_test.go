@@ -35,21 +35,42 @@ func TestModelNavigatesAndCyclesHits(t *testing.T) {
 	require.Zero(t, model.active)
 }
 
-func TestModelMovesNode(t *testing.T) {
+func TestModelMoveIsOneUndoInteraction(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
-	beforeOrigin := model.geo.Nodes[nodeID].Rect.Min
+	before := model.geo.Nodes[nodeID].Rect.Min
 	beforeCursor := model.cursor
-
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
 	require.Equal(t, modeMove, model.mode)
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
-
-	require.Equal(t, beforeOrigin.Add(1, 0), model.geo.Nodes[nodeID].Rect.Min)
-	require.Equal(t, beforeCursor.Add(1, 0), model.cursor)
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	updateModel(t, model, keyPress(tea.KeyDown, ""))
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	after := model.geo.Nodes[nodeID].Rect.Min
+	require.Equal(t, before.Add(2, 1), after)
+	require.Equal(t, beforeCursor.Add(2, 1), model.cursor)
 	require.True(t, model.geo.NodeExists(nodeID))
 	require.NotEmpty(t, model.frame.Text)
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
+	require.Equal(t, after, model.geo.Nodes[nodeID].Rect.Min)
+}
+
+func TestModelBlurCommitsActiveMove(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	before := model.geo.Nodes[nodeID].Rect.Min
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	updateModel(t, model, tea.BlurMsg{})
+	require.Equal(t, modeNavigate, model.mode)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
 }
 
 func TestModelEditsLabel(t *testing.T) {
@@ -74,7 +95,7 @@ func TestModelEditsLabel(t *testing.T) {
 	require.Empty(t, model.editBuffer)
 }
 
-func TestModelEditSupportsCaretAndRollback(t *testing.T) {
+func TestModelEscapeCommitsLabelEdit(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -85,6 +106,9 @@ func TestModelEditSupportsCaretAndRollback(t *testing.T) {
 
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, "nodXe", model.geo.Label(nodeID))
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
 	require.Equal(t, "node", model.geo.Label(nodeID))
 }
 
@@ -198,7 +222,7 @@ func TestModelEditMovesToLineBounds(t *testing.T) {
 	)
 }
 
-func TestModelCreatesAndCancelsNodes(t *testing.T) {
+func TestModelCreatesNodesWithEnterAndEscape(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
@@ -217,9 +241,12 @@ func TestModelCreatesAndCancelsNodes(t *testing.T) {
 	model.cursor = layout.NewPoint(30, 10)
 	model.refreshHits()
 	updateModel(t, model, keyPress('n', "n"))
-	cancelled := model.target.ID
+	escaped := model.target.ID
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
-	require.False(t, model.geo.NodeExists(cancelled))
+	require.True(t, model.geo.NodeExists(escaped))
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
+	require.False(t, model.geo.NodeExists(escaped))
 }
 
 func TestModelConnectsSelectedPorts(t *testing.T) {
@@ -538,10 +565,13 @@ func BenchmarkModelMoveAndView(b *testing.B) {
 func newTestModel(t testing.TB) (*Model, uint32) {
 	t.Helper()
 
-	geo, err := layout.New()
+	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	geo, err := layout.New(layout.WithHistory(history))
 	require.NoError(t, err)
 	nodeID, err := geo.NewNodeAt("node", layout.NewPoint(2, 2))
 	require.NoError(t, err)
+	history.Clear()
 	model, err := New(geo)
 	require.NoError(t, err)
 	return model, nodeID
@@ -562,12 +592,15 @@ func requireSavedLabel(t testing.TB, path, want string) {
 func newTwoNodeModel(t testing.TB) (*Model, uint32, uint32) {
 	t.Helper()
 
-	geo, err := layout.New()
+	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	geo, err := layout.New(layout.WithHistory(history))
 	require.NoError(t, err)
 	left, err := geo.NewNodeAt("left", layout.NewPoint(2, 2))
 	require.NoError(t, err)
 	right, err := geo.NewNodeAt("right", layout.NewPoint(20, 2))
 	require.NoError(t, err)
+	history.Clear()
 	model, err := New(geo)
 	require.NoError(t, err)
 	return model, left, right

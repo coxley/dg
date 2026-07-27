@@ -38,6 +38,8 @@ The first end-to-end milestone is complete. The engine can:
 - query every node, port, and edge rasterized at a grid point
 - edit diagrams interactively through a Bubble Tea terminal UI
 - serialize live graph data, placement, and options to versioned JSON
+- group edits into undoable interactions
+- restore persistent undo and redo history after reopening a saved document
 
 The example program renders:
 
@@ -102,6 +104,31 @@ err = geo.DeleteEdge(edge)
 err = geo.Build()
 ```
 
+`layout.History` is optional. Attach it through `WithHistory`:
+
+```go
+history, err := layout.NewHistory(
+	layout.WithHistoryLimit(256),
+)
+geo, err := layout.New(layout.WithHistory(history))
+```
+
+Transactions group live changes into one interaction. `Commit` keeps the final
+state. `Cancel` restores the initial state. `Interrupt` commits the latest
+applied state, which prevents focus loss or shutdown from leaving unrecorded
+changes.
+
+Undo, redo, and cancellation rebuild the layout. Replay failures restore the
+layout and history cursor to their prior state. Closed transaction tokens return
+`ErrTransactionClosed` and cannot affect a newer transaction.
+
+`History.Store(path)` marks a saved checkpoint and writes history to a cache.
+`History.Restore(path)` attaches matching cached history without changing the
+saved document's visible state. Unsaved changes after the checkpoint return as
+a redo tail. Cache writes use a 100 millisecond debounce and atomic replacement.
+Cache files use gzip compression. Readers also accept the earlier plain JSON
+format. Cache failures never block diagram editing or saving.
+
 `Layout.Hits(point)` yields all overlapping geometry in node, port, then edge
 order. It reports ports at their anchor cells. It checks compact edge segments,
 so its cost does not depend on rendered edge length.
@@ -114,9 +141,9 @@ runtime tombstones and remaps port references; import reconstructs independent
 runtime slices.
 
 Routes, geometry, free lists, and reusable scratch are derived state and are not
-persisted. `document.Marshal` writes indented JSON, `document.Unmarshal`
-strictly decodes and validates version 1, and `Document.Layout` creates an
-editable layout.
+persisted. `document.Marshal` writes indented JSON. `document.Unmarshal`
+strictly decodes and validates version 1. `Document.Layout` creates an editable
+layout and accepts layout options such as `WithHistory`.
 
 ### `render`
 
@@ -138,11 +165,11 @@ The Bubble Tea model keeps terminal-only state:
 
 Bubble Tea messages mutate `Layout` synchronously. Every node movement and label
 keystroke calls `Build` and refreshes the cached frame. Editing has a
-grapheme-aware caret; Escape restores an existing label or deletes a newly
-created node. Label and save-path editing use whitespace and slash as word
-boundaries. They support Ctrl-A and Ctrl-E for the line bounds, Alt-B to move
-to the previous word, Ctrl-W to delete the previous word, and Ctrl-U to delete
-to the line start.
+grapheme-aware caret. Enter and Escape both commit the current label as one
+undoable interaction. Label and save-path editing use whitespace and slash as
+word boundaries. They support Ctrl-A and Ctrl-E for the line bounds, Alt-B to
+move to the previous word, Ctrl-W to delete the previous word, and Ctrl-U to
+delete to the line start.
 
 The TUI also supports:
 
@@ -155,9 +182,13 @@ The TUI also supports:
 - mouse node dragging
 - click-dragging a node commits an active label edit
 - mouse-wheel viewport panning
-- terminal cursor visibility only while editing a label
+- terminal cursor visibility only while editing text
 - Ctrl-S saving with an inline path prompt for new diagrams
 - filesystem path completion in the save prompt
+- `u` or Ctrl-Z undo; Ctrl-R, Ctrl-Y, or Ctrl-Shift-Z redo
+- one history interaction per committed label edit, move, drag, connection, or
+  deletion
+- committed final placement when focus loss or shutdown interrupts a drag
 
 The model accepts pasted single-line labels and rejects pasted newlines before
 they reach the layout.
@@ -207,6 +238,14 @@ paths.
 - IDs remain stable while live and may be reused after deletion.
 - free lists fill tombstones before slices grow.
 - deletion does not compact slices.
+- history retains 256 interactions by default and accepts a custom limit.
+- cached history uses the SHA-256 digest of the normalized absolute document
+  path.
+- macOS stores cached history under
+  `os.UserCacheDir()/org.coxley.dg/history`.
+- Linux and Windows store cached history under
+  `os.UserCacheDir()/dg/history`.
+- anonymous diagrams do not write history until their first save.
 
 ## Current performance
 
@@ -223,7 +262,7 @@ BenchmarkLayoutDeleteAndConnectEdge
 BenchmarkLayoutHits/node         32.6 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/edge         30.5 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/miss         31.2 ns/op   0 B/op   0 allocs/op
-BenchmarkModelMoveAndView         4.2 µs/op   2304 B/op   1 allocs/op
+BenchmarkModelMoveAndView         3.2 µs/op   2304 B/op   1 allocs/op
 ```
 
 These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
@@ -299,7 +338,6 @@ representation.
 - hit testing scans all geometry
 - public geometry slices rely on callers not mutating them
 - several methods assume valid IDs and may panic on invalid indices
-- loaded graphs do not contain node placement
 - raster cells lose object ownership
 
 ## Verification
