@@ -40,6 +40,9 @@ The first end-to-end milestone is complete. The engine can:
 - serialize live graph data, placement, and options to versioned JSON
 - group edits into undoable interactions
 - restore persistent undo and redo history after reopening a saved document
+- auto-size multiline labels or retain explicit node dimensions
+- wrap and visually clip labels inside explicit dimensions without losing text
+- resize nodes from the nearest corner with right-drag
 
 The example program renders:
 
@@ -88,6 +91,8 @@ Mutations made through `Layout` update node and port geometry immediately.
 finishes there before it commits results to `Layout.Ports`.
 `Layout.explicitSizes` stores optional fixed outer dimensions by node ID.
 Auto-sized nodes derive their dimensions from their full labels.
+`LabelLine` stores `uint32` byte offsets and display width. `AppendLabelLines`
+preserves explicit newlines and adds Unicode-aware wrapping when given a width.
 
 The public construction API is:
 
@@ -197,7 +202,7 @@ The TUI also supports:
 - selected edges take mouse-hit priority over overlapping nodes and ports
 - edge endpoint reassignment without changing the edge ID
 - mouse hit selection and overlapping-hit cycling
-- mouse node dragging
+- left-drag node movement
 - right-drag resizing from the nearest corner as one history interaction
 - click-dragging a node commits an active label edit
 - mouse-wheel viewport panning
@@ -283,7 +288,7 @@ Results from an Apple M4 Max on July 27, 2026:
 ```text
 BenchmarkLayoutBuild             39.9 µs/op   0 B/op   0 allocs/op
 BenchmarkLayoutMoveAndBuild      43.7 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutEditLabelAndBuild 38.2 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutEditLabelAndBuild 23.6 µs/op   0 B/op   0 allocs/op
 BenchmarkLayoutDeleteAndCreateNode
                                   114 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutDeleteAndConnectEdge
@@ -291,8 +296,8 @@ BenchmarkLayoutDeleteAndConnectEdge
 BenchmarkLayoutHits/node         32.6 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/edge         30.5 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/miss         31.2 ns/op   0 B/op   0 allocs/op
-BenchmarkModelMoveAndView         3.2 µs/op   2304 B/op   1 allocs/op
-BenchmarkAppendLabelLines         2.9 µs/op      0 B/op   0 allocs/op
+BenchmarkModelMoveAndView        3.68 µs/op   2304 B/op   1 allocs/op
+BenchmarkAppendLabelLines        2.89 µs/op      0 B/op   0 allocs/op
 ```
 
 These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
@@ -306,61 +311,93 @@ to the frame string required by Bubble Tea.
 
 ## Recommended next work
 
-The basic TUI is complete. It supports keyboard and mouse interaction, ANSI
-selection, node and edge creation and reconnection, live label editing,
-deletion, viewport tracking, and resize-aware rendering.
+The next phase should make object creation, focus, styling, and export feel like
+one editor rather than separate engine demonstrations.
 
-### 1. Complete text layout
+### 1. Add rectangle creation and node focus
 
-Fixed-size nodes wrap and clip, right-dragging resizes them from the nearest
-corner, and double-clicking restores auto sizing. The next text-layout options
-are horizontal alignment, vertical alignment, and justification.
+Add an explicit rectangle tool on `r`:
 
-## Later design work
+- click-drag creates an explicitly sized node with an empty label
+- `e` edits the label after creation
+- the rectangle uses the same fixed-size wrapping and clipping rules
+- creation, sizing, and interruption form one history interaction
 
-### Borderless nodes
+Change Tab navigation to cycle focused nodes in draw order. Arrow keys should
+move the focused node. Preserve a separate way to cycle overlapping hits when
+needed.
 
-Keep a logical rectangle for obstacle avoidance and port placement even when no
-border is drawn. Define whether padding remains part of the obstacle and where
-an invisible boundary anchors ports.
+### 2. Add layering and diagnose blocked movement
 
-### Edge endpoint shapes
+Creation order should define back-to-front order. Add explicit operations to
+move objects backward, to the back, forward, or to the front without changing
+semantic IDs.
 
-Store visual endpoint styles independently for each end of an undirected edge.
-Define how arrowheads occupy cells, attach to port anchors, and combine with node
-borders before changing the router.
+A compact representation is a draw-order slice containing object kind and ID.
+Layering requires coordinated changes:
 
-### Layering
-
-Creation order should define the default back-to-front order. Reordering should
-not renumber semantic IDs.
-
-A compact direction is a draw-order slice containing object kind and object ID.
-Operations can move entries backward, to the back, forward, or to the front.
-
-Layering affects more than rendering:
-
-- `Layout.Hits` must expose or respect back-to-front order
+- `Layout.Hits` must return objects in visual order
 - deletion must remove draw-order entries
-- persistence must save draw order
+- persistence and history must preserve draw order
 - rasterization must retain ownership instead of only merged connectivity
-- unrelated crossings need a rule for which edge appears above the other
+- crossings must decide which edge appears above the other
+- occluded ports and edges need predictable selection rules
 
-Settle whether ports are independent drawable objects before defining this
-representation.
+Dragging connected boxes too close together currently looks broken. The move
+path rebuilds the layout on every step and rolls back a move when routing finds
+no orthogonal route. Investigate whether these failures are valid obstacle
+constraints or a router bug before treating occlusion as the fix. Add a focused
+regression test for the smallest failing placement.
+
+### 3. Add inherited node and edge styles
+
+Pressing `b` on a focused node should cycle its border style. Each new node
+inherits the most recently selected border style.
+
+Support a no-border style for text-only labels. Borderless nodes still need a
+logical rectangle for obstacle avoidance and ports along its invisible
+boundary.
+
+Lines need independent arrow styles at both ends. Each new line inherits the
+most recent origin and destination arrow styles. Leave about one cell between
+an arrowhead and the node border so the endpoint remains readable.
+
+Increase port contrast while the line tool is active. Test red and green
+against the current theme instead of relying on the existing blue highlight.
+
+### 4. Add clipboard export
+
+Ctrl-C should copy the selected rendered cells to the system clipboard. This
+replaces the current Ctrl-C quit binding, so choose another quit shortcut.
+
+Two successive Ctrl-C presses should open an export prompt. The prompt should
+default to line comments and also offer a Markdown code block. Line-comment
+export prefixes every copied row.
+
+Store the preferred comment prefix, such as `// ` or `# `, in a user
+preferences file under the platform cache directory. Keep preferences separate
+from per-document history.
+
+### 5. Complete text layout
+
+Add horizontal alignment, vertical alignment, and justification after the
+object and style model can persist those choices.
 
 ## Known limits
 
 - coordinates cannot be negative
-- labels cannot contain newlines
 - node and edge styles do not exist
 - nodes always draw borders
 - edges have no arrowheads
+- rasterization cannot represent occlusion or ownership
+- moving a connected node rolls back when any edge cannot be routed
+- Tab cycles overlapping hits rather than focused nodes
+- line-tool ports need stronger contrast
+- Ctrl-C quits instead of copying
 - every `Build` routes every edge
 - hit testing scans all geometry
 - public geometry slices rely on callers not mutating them
 - several methods assume valid IDs and may panic on invalid indices
-- raster cells lose object ownership
 
 ## Verification
 
