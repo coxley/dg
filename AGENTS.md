@@ -32,6 +32,7 @@ The first end-to-end milestone is complete. The engine can:
 - reroute crossing edges for one extra pass by default
 - rasterize geometry into directional cell connectivity
 - render Unicode box-drawing output
+- edit labels transactionally
 - move nodes and rebuild without steady-state allocations
 - query every node, port, and edge rasterized at a grid point
 
@@ -73,7 +74,7 @@ New nodes currently receive fixed candidate ports on every side.
 Mutations made through `Layout` update node and port geometry immediately.
 `Build` routes the edges.
 
-`Layout.geometryPorts` is reusable transactional scratch space. Port resolution
+`Layout.draftPorts` is reusable transactional scratch space. Port resolution
 finishes there before it commits results to `Layout.Ports`.
 
 The public construction API is:
@@ -87,6 +88,7 @@ geo, err := layout.New(
 source, err := geo.NewNodeAt("source", layout.NewPoint(2, 3))
 sink, err := geo.NewNode("sink")
 edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+err = geo.SetNodeLabel(source, "renamed")
 err = geo.PlaceNode(sink, layout.NewPoint(20, 3))
 err = geo.Build()
 ```
@@ -128,11 +130,12 @@ layering information.
 
 ## Current performance
 
-Results from an Apple M4 Max on July 26, 2026:
+Results from an Apple M4 Max on July 27, 2026:
 
 ```text
-BenchmarkLayoutBuild             17.3 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutMoveAndBuild      19.0 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutBuild             18.4 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutMoveAndBuild      20.2 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutEditLabelAndBuild 16.6 µs/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/node         33.8 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/edge         33.1 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutHits/miss         33.7 ns/op   0 B/op   0 allocs/op
@@ -145,26 +148,15 @@ interactive diagrams show that this scan matters.
 The obstacle iterator removed a stored slice and preserved zero allocations. It
 made the small build benchmark about 6% to 7% slower.
 
-## Recommended next session
+## Recommended next work
 
-Start with document mutation semantics, then use them in a small TUI.
+Settle deletion semantics, then use the mutation APIs in a small TUI.
 
-### 1. Add label editing
+Label editing is complete. `SetNodeLabel` updates the semantic label, node
+rectangle, and ports transactionally. An invalid label leaves all three
+unchanged. `Build` reroutes connected edges after the edit.
 
-Add a transactional method such as:
-
-```go
-func (l *Layout) SetNodeLabel(nodeID uint32, label string) error
-```
-
-It should measure the label, update the node rectangle, resolve its ports into
-scratch, and commit only after every step succeeds. Connected edges can reroute
-on the next `Build`.
-
-This provides the first real editing operation and establishes the pattern for
-later style changes.
-
-### 2. Decide deletion and identity rules
+### 1. Decide deletion and identity rules
 
 Deleting nodes or edges conflicts with raw slice indices as durable IDs. Decide
 the contract before implementing removal:
@@ -180,7 +172,7 @@ selection or draw-order references. Edge deletion is the smaller first step.
 Favor the least bookkeeping that still gives the TUI and persisted documents
 predictable identity.
 
-### 3. Build a basic TUI
+### 2. Build a basic TUI
 
 Use the existing APIs to test the full interactive loop:
 
@@ -197,7 +189,7 @@ selection, movement, and rendering.
 Profile the complete loop before adding incremental routing or a dense hit
 index. The current small layout rebuilds in about 19 microseconds after a move.
 
-### 4. Define a persisted document format
+### 3. Define a persisted document format
 
 Do not serialize router scratch or derived routes as authoritative state. Create
 a versioned document type that contains:
@@ -276,6 +268,10 @@ representation.
 - raster cells lose object ownership
 
 ## Verification
+
+Use `github.com/stretchr/testify/require` for test and benchmark assertions.
+Inside a `b.Loop` body, use direct benchmark failures to avoid boxing values in
+the measured path.
 
 Use a writable Go build cache in the sandbox:
 

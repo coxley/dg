@@ -185,6 +185,22 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 	return nodeID, nil
 }
 
+// SetNodeLabel changes a node's label if the resulting geometry is valid.
+func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
+	node, err := l.nodeGeometry(nodeID, label, l.origins[nodeID])
+	if err != nil {
+		return err
+	}
+	if err := l.resolveNodePorts(nodeID, node.Rect); err != nil {
+		return err
+	}
+
+	l.graph.Nodes[nodeID].Label = label
+	l.Nodes[nodeID] = node
+	l.commitNodePorts(nodeID)
+	return nil
+}
+
 // PlaceNode changes a node's origin if the resulting geometry is valid.
 func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 	node, err := l.nodeGeometry(nodeID, l.graph.Nodes[nodeID].Label, point)

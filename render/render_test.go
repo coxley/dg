@@ -5,6 +5,7 @@ import (
 
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnicode(t *testing.T) {
@@ -14,13 +15,9 @@ func TestUnicode(t *testing.T) {
 	source := newNodeAt(t, geo, "source", layout.Point{})
 	sink := newNodeAt(t, geo, "sink", layout.Point{X: 18, Y: 6})
 	geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
-	if err := geo.Build(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, geo.Build())
 	got, err := Unicode(geo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "" +
 		"┌────────┐                \n" +
 		"│ source ├───────┐        \n" +
@@ -31,9 +28,7 @@ func TestUnicode(t *testing.T) {
 		"                 │┌──────┐\n" +
 		"                 └┤ sink │\n" +
 		"                  └──────┘\n"
-	if got != want {
-		t.Errorf("Unicode() =\n%s\nwant:\n%s", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func TestUnicodeWideLabel(t *testing.T) {
@@ -41,17 +36,11 @@ func TestUnicodeWideLabel(t *testing.T) {
 
 	geo := newLayout(t)
 	newNodeAt(t, geo, "A界", layout.Point{})
-	if err := geo.Build(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, geo.Build())
 	got, err := Unicode(geo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "┌─────┐\n│ A界 │\n└─────┘\n"
-	if got != want {
-		t.Errorf("Unicode() =\n%s\nwant:\n%s", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func TestUnicodeSharedEndpoint(t *testing.T) {
@@ -71,13 +60,9 @@ func TestUnicodeSharedEndpoint(t *testing.T) {
 		ir.Top,
 		sink,
 	)
-	if err := geo.Build(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, geo.Build())
 	got, err := Unicode(geo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "" +
 		"┌─────┬─────┐\n" +
 		"│ foo │ bar │\n" +
@@ -88,18 +73,14 @@ func TestUnicodeSharedEndpoint(t *testing.T) {
 		"  ┌───┴───┐  \n" +
 		"  │ sinks │  \n" +
 		"  └───────┘  \n"
-	if got != want {
-		t.Errorf("Unicode() =\n%s\nwant:\n%s", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func newLayout(t testing.TB) *layout.Layout {
 	t.Helper()
 
 	geo, err := layout.New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return geo
 }
 
@@ -112,9 +93,7 @@ func newNodeAt(
 	t.Helper()
 
 	nodeID, err := geo.NewNodeAt(label, point)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return nodeID
 }
 
@@ -123,9 +102,7 @@ func BenchmarkUnicode(b *testing.B) {
 	source := newNodeAt(b, geo, "source", layout.Point{})
 	sink := newNodeAt(b, geo, "sink", layout.Point{X: 18, Y: 6})
 	geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
-	if err := geo.Build(); err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, geo.Build())
 
 	for b.Loop() {
 		_, err := Unicode(geo)
@@ -140,9 +117,7 @@ func BenchmarkEncode(b *testing.B) {
 	source := newNodeAt(b, geo, "source", layout.Point{})
 	sink := newNodeAt(b, geo, "sink", layout.Point{X: 18, Y: 6})
 	geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
-	if err := geo.Build(); err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, geo.Build())
 
 	var dst []byte
 	var err error

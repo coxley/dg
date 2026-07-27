@@ -1,12 +1,12 @@
 package layout
 
 import (
-	"errors"
 	"math"
 	"slices"
 	"testing"
 
 	"github.com/coxley/dg/ir"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMeasureLabel(t *testing.T) {
@@ -40,12 +40,8 @@ func TestMeasureLabel(t *testing.T) {
 			t.Parallel()
 
 			got, err := MeasureLabel(test.text)
-			if !errors.Is(err, test.wantErr) {
-				t.Fatalf("MeasureLabel(%q) error = %v, want %v", test.text, err, test.wantErr)
-			}
-			if got != test.want {
-				t.Errorf("MeasureLabel(%q) = %+v, want %+v", test.text, got, test.want)
-			}
+			require.ErrorIs(t, err, test.wantErr)
+			require.Equal(t, test.want, got)
 		})
 	}
 }
@@ -56,19 +52,13 @@ func TestNewRect(t *testing.T) {
 	origin := Point{X: 2, Y: 3}
 	limit := origin.Add(5, 7)
 	got, err := NewRect(origin, limit)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := Rect{
 		Min:  origin,
 		Size: Size{Width: 5, Height: 7},
 	}
-	if got != want {
-		t.Errorf("NewRect() = %+v, want %+v", got, want)
-	}
-	if got.Contains(limit) {
-		t.Errorf("NewRect() contains exclusive limit %+v", limit)
-	}
+	require.Equal(t, want, got)
+	require.False(t, got.Contains(limit))
 }
 
 func TestNodeRect(t *testing.T) {
@@ -79,22 +69,14 @@ func TestNodeRect(t *testing.T) {
 		Size{Width: 6, Height: 1},
 		Padding{Top: 1, Right: 2, Bottom: 3, Left: 4},
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := Rect{
 		Min:  Point{X: 2, Y: 3},
 		Size: Size{Width: 14, Height: 7},
 	}
-	if got != want {
-		t.Errorf("NodeRect() = %+v, want %+v", got, want)
-	}
-	if !got.Contains(Point{X: 15, Y: 9}) {
-		t.Error("NodeRect() does not contain its final cell")
-	}
-	if got.Contains(got.Max()) {
-		t.Error("NodeRect() contains its exclusive maximum")
-	}
+	require.Equal(t, want, got)
+	require.True(t, got.Contains(Point{X: 15, Y: 9}))
+	require.False(t, got.Contains(got.Max()))
 }
 
 func TestResolvePort(t *testing.T) {
@@ -141,12 +123,8 @@ func TestResolvePort(t *testing.T) {
 			t.Parallel()
 
 			got, err := ResolvePort(rect, test.side, test.offset)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != test.want {
-				t.Errorf("ResolvePort() = %+v, want %+v", got, test.want)
-			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, got)
 		})
 	}
 }
@@ -157,12 +135,8 @@ func TestResolvePortAtCoordinateBoundary(t *testing.T) {
 	rect := Rect{Size: Size{Width: 5, Height: 3}}
 	for _, side := range []ir.Side{ir.Top, ir.LeftSide} {
 		port, err := ResolvePort(rect, side, 0.5)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if port.Exit != port.Anchor {
-			t.Errorf("ResolvePort(%v) exit = %+v, want boundary point %+v", side, port.Exit, port.Anchor)
-		}
+		require.NoError(t, err)
+		require.Equal(t, port.Anchor, port.Exit)
 	}
 }
 
@@ -170,41 +144,19 @@ func TestBuildPreservesIRIndices(t *testing.T) {
 	t.Parallel()
 
 	got, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	left, err := got.NewNode("left")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	right, err := got.NewNodeAt("right", Point{X: 14, Y: 4})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	edgeID := got.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 
-	if len(got.Nodes) != len(got.graph.Nodes) ||
-		len(got.Ports) != len(got.graph.Ports) ||
-		len(got.Edges) != len(got.graph.Edges) {
-		t.Fatalf(
-			"geometry lengths = (%d, %d, %d), want (%d, %d, %d)",
-			len(got.Nodes),
-			len(got.Ports),
-			len(got.Edges),
-			len(got.graph.Nodes),
-			len(got.graph.Ports),
-			len(got.graph.Edges),
-		)
-	}
-	if got.Nodes[right].Rect.Min != (Point{X: 14, Y: 4}) {
-		t.Errorf("node origin = %+v, want {14 4}", got.Nodes[right].Rect.Min)
-	}
-	if err := got.Build(); err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Edges[edgeID].Points) < 2 {
-		t.Errorf("Build() edge %d has fewer than two points", edgeID)
-	}
+	require.Len(t, got.Nodes, len(got.graph.Nodes))
+	require.Len(t, got.Ports, len(got.graph.Ports))
+	require.Len(t, got.Edges, len(got.graph.Edges))
+	require.Equal(t, Point{X: 14, Y: 4}, got.Nodes[right].Rect.Min)
+	require.NoError(t, got.Build())
+	require.GreaterOrEqual(t, len(got.Edges[edgeID].Points), 2)
 }
 
 func TestNewOptions(t *testing.T) {
@@ -217,65 +169,76 @@ func TestNewOptions(t *testing.T) {
 		WithPadding(2, 3),
 		WithRouter(router),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	router.Costs.Crossing = 0
 
-	if got.padding != (Padding{Top: 3, Right: 2, Bottom: 3, Left: 2}) {
-		t.Errorf("New() padding = %+v", got.padding)
-	}
-	if got.router.Costs.Crossing != 42 || got.router.ReroutePasses != 3 {
-		t.Errorf("New() router = %+v", got.router)
-	}
+	require.Equal(t, Padding{Top: 3, Right: 2, Bottom: 3, Left: 2}, got.padding)
+	require.Equal(t, uint32(42), got.router.Costs.Crossing)
+	require.Equal(t, uint8(3), got.router.ReroutePasses)
 }
 
 func TestNewDefaults(t *testing.T) {
 	t.Parallel()
 
 	got, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.padding != (Padding{Right: 1, Left: 1}) {
-		t.Errorf("New() padding = %+v", got.padding)
-	}
-	if got.router != DefaultRouter() {
-		t.Errorf("New() router = %+v, want %+v", got.router, DefaultRouter())
-	}
+	require.NoError(t, err)
+	require.Equal(t, Padding{Right: 1, Left: 1}, got.padding)
+	require.Equal(t, DefaultRouter(), got.router)
 }
 
 func TestPlaceNodeUpdatesGeometry(t *testing.T) {
 	t.Parallel()
 
 	l, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	nodeID, err := l.NewNode("node")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	portID, ok := l.graph.PickCenterPort(nodeID, ir.RightSide)
-	if !ok {
-		t.Fatal("node has no right port")
-	}
+	require.True(t, ok)
 	oldPort := l.Ports[portID]
 
 	want := Point{X: 7, Y: 9}
-	if err := l.PlaceNode(nodeID, want); err != nil {
-		t.Fatal(err)
-	}
-	if got := l.Nodes[nodeID].Rect.Min; got != want {
-		t.Errorf("PlaceNode() node origin = %+v, want %+v", got, want)
-	}
+	require.NoError(t, l.PlaceNode(nodeID, want))
+	require.Equal(t, want, l.Nodes[nodeID].Rect.Min)
 	obstacles := slices.Collect(l.Obstacles())
-	if got := obstacles[nodeID]; got != l.Nodes[nodeID].Rect {
-		t.Errorf("PlaceNode() obstacle = %+v, want %+v", got, l.Nodes[nodeID].Rect)
-	}
-	if got := l.Ports[portID].Anchor; got != oldPort.Anchor.Add(want.X, want.Y) {
-		t.Errorf("PlaceNode() port anchor = %+v", got)
-	}
+	require.Equal(t, l.Nodes[nodeID].Rect, obstacles[nodeID])
+	require.Equal(t, oldPort.Anchor.Add(want.X, want.Y), l.Ports[portID].Anchor)
+}
+
+func TestSetNodeLabelUpdatesGeometry(t *testing.T) {
+	t.Parallel()
+
+	l, err := New()
+	require.NoError(t, err)
+	nodeID, err := l.NewNodeAt("old", Point{X: 4, Y: 3})
+	require.NoError(t, err)
+	rightPortID, ok := l.graph.PickCenterPort(nodeID, ir.RightSide)
+	require.True(t, ok)
+	oldRightPort := l.Ports[rightPortID]
+
+	require.NoError(t, l.SetNodeLabel(nodeID, "longer"))
+	require.Equal(t, "longer", l.Label(nodeID))
+	require.Equal(t, Rect{
+		Min:  Point{X: 4, Y: 3},
+		Size: Size{Width: 10, Height: 3},
+	}, l.Nodes[nodeID].Rect)
+	require.NotEqual(t, oldRightPort, l.Ports[rightPortID])
+}
+
+func TestSetNodeLabelIsTransactional(t *testing.T) {
+	t.Parallel()
+
+	l, err := New()
+	require.NoError(t, err)
+	nodeID, err := l.NewNode("old")
+	require.NoError(t, err)
+	beforeNode := l.Nodes[nodeID]
+	beforePorts := slices.Clone(l.Ports)
+
+	require.ErrorIs(t, l.SetNodeLabel(nodeID, "first\nsecond"), ErrMultilineLabel)
+	require.Equal(t, "old", l.Label(nodeID))
+	require.Equal(t, beforeNode, l.Nodes[nodeID])
+	require.Equal(t, beforePorts, l.Ports)
 }
 
 func TestLayoutHits(t *testing.T) {
@@ -326,9 +289,7 @@ func TestLayoutHits(t *testing.T) {
 			t.Parallel()
 
 			got := slices.Collect(l.Hits(test.point))
-			if !slices.Equal(got, test.want) {
-				t.Errorf("Hits(%+v) = %+v, want %+v", test.point, got, test.want)
-			}
+			require.Equal(t, test.want, got)
 		})
 	}
 }
@@ -345,41 +306,19 @@ func TestWithGraphCopiesAndInitializes(t *testing.T) {
 		WithGraph(graph),
 		WithPadding(2, 1),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	graph.Nodes[left].Label = "changed"
 	graph.Nodes[left].Ports[0] = math.MaxUint32
 
-	if got.Label(left) != "left" {
-		t.Errorf("WithGraph() label = %q, want left", got.Label(left))
-	}
-	if len(got.Nodes) != len(graph.Nodes) ||
-		len(got.Ports) != len(graph.Ports) ||
-		len(got.Edges) != len(graph.Edges) {
-		t.Fatalf(
-			"WithGraph() lengths = (%d, %d, %d), want (%d, %d, %d)",
-			len(got.Nodes),
-			len(got.Ports),
-			len(got.Edges),
-			len(graph.Nodes),
-			len(graph.Ports),
-			len(graph.Edges),
-		)
-	}
-	if got.Nodes[left].Rect.Size != (Size{Width: 10, Height: 5}) {
-		t.Errorf("WithGraph() node size = %+v, want {10 5}", got.Nodes[left].Rect.Size)
-	}
+	require.Equal(t, "left", got.Label(left))
+	require.Len(t, got.Nodes, len(graph.Nodes))
+	require.Len(t, got.Ports, len(graph.Ports))
+	require.Len(t, got.Edges, len(graph.Edges))
+	require.Equal(t, Size{Width: 10, Height: 5}, got.Nodes[left].Rect.Size)
 
-	if err := got.PlaceNode(right, Point{X: 16, Y: 4}); err != nil {
-		t.Fatal(err)
-	}
-	if err := got.Build(); err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Edges[edgeID].Points) < 2 {
-		t.Errorf("Build() edge %d has fewer than two points", edgeID)
-	}
+	require.NoError(t, got.PlaceNode(right, Point{X: 16, Y: 4}))
+	require.NoError(t, got.Build())
+	require.GreaterOrEqual(t, len(got.Edges[edgeID].Points), 2)
 }
 
 func TestWithGraphReturnsValidationError(t *testing.T) {
@@ -388,43 +327,29 @@ func TestWithGraphReturnsValidationError(t *testing.T) {
 	_, err := New(WithGraph(ir.Graph{
 		Nodes: []ir.Node{{Ports: []uint32{0}}},
 	}))
-	if err == nil {
-		t.Fatal("New() error = nil, want invalid graph error")
-	}
+	require.Error(t, err)
 }
 
 func TestNewNodeReturnsGeometryError(t *testing.T) {
 	t.Parallel()
 
 	got, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := got.NewNode("first\nsecond"); !errors.Is(err, ErrMultilineLabel) {
-		t.Errorf("NewNode() error = %v, want %v", err, ErrMultilineLabel)
-	}
-	if len(got.Nodes) != 0 || len(got.graph.Nodes) != 0 {
-		t.Error("NewNode() retained a node after returning an error")
-	}
+	require.NoError(t, err)
+	_, err = got.NewNode("first\nsecond")
+	require.ErrorIs(t, err, ErrMultilineLabel)
+	require.Empty(t, got.Nodes)
+	require.Empty(t, got.graph.Nodes)
 }
 
 func TestPlaceNodeReturnsGeometryError(t *testing.T) {
 	t.Parallel()
 
 	got, err := New()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	nodeID, err := got.NewNode("node")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	before := got.Nodes[nodeID]
 
-	if err := got.PlaceNode(nodeID, Point{X: math.MaxUint32}); err == nil {
-		t.Fatal("PlaceNode() error = nil, want coordinate overflow")
-	}
-	if got.Nodes[nodeID] != before {
-		t.Errorf("PlaceNode() geometry = %+v after error, want %+v", got.Nodes[nodeID], before)
-	}
+	require.Error(t, got.PlaceNode(nodeID, Point{X: math.MaxUint32}))
+	require.Equal(t, before, got.Nodes[nodeID])
 }

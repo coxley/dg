@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
@@ -15,36 +16,39 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sink, err := geo.NewNodeAt("sinks", layout.NewPoint(6, 6))
-	if err != nil {
-		log.Fatal(err)
-	}
-	foo, err := geo.NewNodeAt("foo", layout.NewPoint(4, 0))
-	if err != nil {
-		log.Fatal(err)
-	}
+	sink := must2(geo.NewNodeAt("sinks", layout.NewPoint(6, 6)))
+	foo := must2(geo.NewNodeAt("foo", layout.NewPoint(4, 0)))
 	geo.ConnectNodes(
 		foo,
 		ir.Bottom,
 		ir.Top,
 		sink,
 	)
-	bar, err := geo.NewNodeAt("bar", layout.NewPoint(10, 0))
-	if err != nil {
-		log.Fatal(err)
-	}
+	bar := must2(geo.NewNodeAt("bar", layout.NewPoint(15, 0)))
 	geo.ConnectNodes(
 		bar,
 		ir.Bottom,
 		ir.Top,
 		sink,
 	)
-	if err := geo.Build(); err != nil {
-		log.Fatal(err)
-	}
-	drawing, err := render.Unicode(geo)
+	must(geo.Build())
+	fmt.Print(must2(render.Unicode(geo)))
+
+	time.Sleep(time.Millisecond * 500)
+	must(geo.SetNodeLabel(foo, "fooooo"))
+	must(geo.Build())
+	fmt.Print(must2(render.Unicode(geo)))
+}
+
+func must(err error) {
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	fmt.Print(drawing)
+}
+
+func must2[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }

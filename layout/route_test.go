@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/coxley/dg/ir"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRouteQueueOrdersByPriorityThenInsertion(t *testing.T) {
@@ -28,9 +29,7 @@ func TestRouteQueueOrdersByPriorityThenInsertion(t *testing.T) {
 		{priority: 30, order: 0},
 	}
 	for i := range want {
-		if got := queue.pop(); got != want[i] {
-			t.Fatalf("pop %d = %+v, want %+v", i, got, want[i])
-		}
+		require.Equal(t, want[i], queue.pop(), "pop %d", i)
 	}
 }
 
@@ -60,21 +59,13 @@ func TestFindRouteAvoidsObstacle(t *testing.T) {
 		&search,
 		nil,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if points[0] != a.Anchor {
-		t.Errorf("findRoute() starts at %+v, want %+v", points[0], a.Anchor)
-	}
-	if got := points[len(points)-1]; got != b.Anchor {
-		t.Errorf("findRoute() ends at %+v, want %+v", got, b.Anchor)
-	}
+	require.NoError(t, err)
+	require.Equal(t, a.Anchor, points[0])
+	require.Equal(t, b.Anchor, points[len(points)-1])
 
 	for i := 1; i < len(points); i++ {
 		for _, point := range segmentPoints(points[i-1], points[i]) {
-			if obstacle.Contains(point) {
-				t.Fatalf("findRoute() crosses obstacle at %+v: %+v", point, points)
-			}
+			require.False(t, obstacle.Contains(point), "route crosses obstacle at %+v: %+v", point, points)
 		}
 	}
 }
@@ -98,19 +89,18 @@ func TestStepCostSharesOnlyCommonPortSegments(t *testing.T) {
 		&occupancy,
 		&graph,
 	)
-	if !ok || cost != uint64(router.Costs.SharedStep) || crossings != 0 {
-		t.Errorf("shared step = (%d, %d, %t)", cost, crossings, ok)
-	}
+	require.True(t, ok)
+	require.Equal(t, uint64(router.Costs.SharedStep), cost)
+	require.Zero(t, crossings)
 
-	if _, _, ok := router.stepCost(
+	_, _, ok = router.stepCost(
 		2,
 		Point{X: 1, Y: 1},
 		Point{X: 2, Y: 1},
 		&occupancy,
 		&graph,
-	); ok {
-		t.Error("unrelated edges shared a segment")
-	}
+	)
+	require.False(t, ok)
 }
 
 func TestStepCostChargesUnrelatedCrossing(t *testing.T) {
@@ -136,9 +126,9 @@ func TestStepCostChargesUnrelatedCrossing(t *testing.T) {
 		&graph,
 	)
 	want := uint64(router.Costs.Step + router.Costs.Crossing)
-	if !ok || cost != want || crossings != 1 {
-		t.Errorf("crossing step = (%d, %d, %t), want (%d, 1, true)", cost, crossings, ok, want)
-	}
+	require.True(t, ok)
+	require.Equal(t, want, cost)
+	require.Equal(t, uint32(1), crossings)
 }
 
 func TestStepCostRejectsUnrelatedTouch(t *testing.T) {
@@ -155,15 +145,14 @@ func TestStepCostRejectsUnrelatedTouch(t *testing.T) {
 	})
 	router := DefaultRouter()
 
-	if _, _, ok := router.stepCost(
+	_, _, ok := router.stepCost(
 		1,
 		Point{X: 1, Y: 2},
 		Point{X: 2, Y: 2},
 		&occupancy,
 		&graph,
-	); ok {
-		t.Error("unrelated edge touched an endpoint")
-	}
+	)
+	require.False(t, ok)
 }
 
 func TestRerouteCrossingsReconsidersEarlierEdges(t *testing.T) {
@@ -207,24 +196,16 @@ func TestRerouteCrossingsReconsidersEarlierEdges(t *testing.T) {
 		ReroutePasses: 1,
 	}
 	changed, err := router.rerouteCrossings(&geo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("rerouteCrossings() did not replace the earlier crossing edge")
-	}
+	require.NoError(t, err)
+	require.True(t, changed)
 	_, crossings, ok := router.scorePath(
 		0,
 		geo.scratch.paths[0],
 		&geo.scratch.occupancy,
 		&graph,
 	)
-	if !ok {
-		t.Fatal("rerouted path is invalid")
-	}
-	if crossings != 0 {
-		t.Errorf("rerouted path has %d crossing", crossings)
-	}
+	require.True(t, ok)
+	require.Zero(t, crossings)
 }
 
 func TestRasterizeMergesRouteWithNodeBorder(t *testing.T) {
@@ -243,17 +224,11 @@ func TestRasterizeMergesRouteWithNodeBorder(t *testing.T) {
 	}
 
 	grid, err := Rasterize(l)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got, ok := grid.At(Point{X: 4, Y: 1})
-	if !ok {
-		t.Fatal("Rasterize() omitted port cell")
-	}
+	require.True(t, ok)
 	want := North | East | South
-	if got != want {
-		t.Errorf("Rasterize() port connections = %04b, want %04b", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func segmentPoints(a, b Point) []Point {
