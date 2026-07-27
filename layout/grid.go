@@ -16,6 +16,16 @@ const (
 	West
 )
 
+// ContainsAll reports whether every connection in mask is present.
+func (c Connections) ContainsAll(mask Connections) bool {
+	return c&mask == mask
+}
+
+// ContainsAny reports whether at least one connection in mask is present.
+func (c Connections) ContainsAny(mask Connections) bool {
+	return c&mask != 0
+}
+
 // Grid stores cell connectivity in row-major order.
 type Grid struct {
 	Bounds Rect
@@ -23,7 +33,7 @@ type Grid struct {
 }
 
 func NewGrid(bounds Rect) (Grid, error) {
-	if bounds.Size.Width == 0 || bounds.Size.Height == 0 {
+	if bounds.Empty() {
 		return Grid{}, fmt.Errorf("invalid grid size %+v", bounds.Size)
 	}
 	area := uint64(bounds.Size.Width) * uint64(bounds.Size.Height)
@@ -37,7 +47,7 @@ func NewGrid(bounds Rect) (Grid, error) {
 }
 
 func (g *Grid) At(p Point) (Connections, bool) {
-	index, ok := g.index(p)
+	index, ok := g.Index(p)
 	if !ok {
 		return 0, false
 	}
@@ -143,11 +153,11 @@ func (g *Grid) addSegment(a, b Point) error {
 }
 
 func (g *Grid) connect(a, b Point) error {
-	aIndex, ok := g.index(a)
+	aIndex, ok := g.Index(a)
 	if !ok {
 		return fmt.Errorf("point %+v outside grid", a)
 	}
-	bIndex, ok := g.index(b)
+	bIndex, ok := g.Index(b)
 	if !ok {
 		return fmt.Errorf("point %+v outside grid", b)
 	}
@@ -173,7 +183,8 @@ func (g *Grid) connect(a, b Point) error {
 	return nil
 }
 
-func (g *Grid) index(p Point) (int, bool) {
+// Index returns the row-major cell index for p.
+func (g *Grid) Index(p Point) (int, bool) {
 	if !g.Bounds.Contains(p) {
 		return 0, false
 	}

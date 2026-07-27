@@ -1,10 +1,42 @@
 package ir
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestEdgeRelationships(t *testing.T) {
+	t.Parallel()
+
+	edge := Edge{PortA: 2, PortB: 7}
+
+	require.True(t, edge.HasPort(2))
+	require.False(t, edge.HasPort(3))
+	require.True(t, edge.Connects(2, 7))
+	require.True(t, edge.Connects(7, 2))
+	require.False(t, edge.Connects(2, 2))
+	require.True(t, edge.SharesPort(Edge{PortA: 7, PortB: 9}))
+	require.False(t, edge.SharesPort(Edge{PortA: 3, PortB: 9}))
+}
+
+func TestGraphValidate(t *testing.T) {
+	t.Parallel()
+
+	var valid Graph
+	left := valid.NewNode("left")
+	right := valid.NewNode("right")
+	edgeID := valid.ConnectNodes(left, RightSide, LeftSide, right)
+	require.NoError(t, valid.Validate())
+	require.True(t, valid.EdgeIncidentTo(edgeID, left))
+	require.True(t, valid.EdgeIncidentTo(edgeID, right))
+	require.False(t, valid.EdgeIncidentTo(edgeID, math.MaxUint32))
+
+	invalid := valid.Clone()
+	invalid.Edges[edgeID].PortB = math.MaxUint32
+	require.EqualError(t, invalid.Validate(), "edge 0 references an unknown port")
+}
 
 func TestGraphReusesDeletedIDs(t *testing.T) {
 	t.Parallel()

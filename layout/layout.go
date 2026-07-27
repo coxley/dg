@@ -42,6 +42,11 @@ func (r Rect) Max() Point {
 	return r.Min.Add(r.Size.Width, r.Size.Height)
 }
 
+// Empty reports whether the rectangle contains no cells.
+func (r Rect) Empty() bool {
+	return r.Size.Width == 0 || r.Size.Height == 0
+}
+
 // NewRect returns the half-open rectangle [origin, limit).
 func NewRect(origin, limit Point) (Rect, error) {
 	if limit.X <= origin.X || limit.Y <= origin.Y {
@@ -68,8 +73,7 @@ type Node struct {
 
 // Empty reports whether the node contains no geometry.
 func (n Node) Empty() bool {
-	var zero Node
-	return n == zero
+	return n.Rect.Empty()
 }
 
 // Port contains a boundary cell and its outward neighbor.
@@ -201,11 +205,8 @@ func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
 	if !l.graph.NodeExists(nodeID) {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
 	}
-	node, err := l.nodeGeometry(nodeID, label, l.origins[nodeID])
+	node, err := l.prepareNode(nodeID, label, l.origins[nodeID])
 	if err != nil {
-		return err
-	}
-	if err := l.resolveNodePorts(nodeID, node.Rect); err != nil {
 		return err
 	}
 
@@ -220,11 +221,8 @@ func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 	if !l.graph.NodeExists(nodeID) {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
 	}
-	node, err := l.nodeGeometry(nodeID, l.graph.Nodes[nodeID].Label, point)
+	node, err := l.prepareNode(nodeID, l.graph.Nodes[nodeID].Label, point)
 	if err != nil {
-		return err
-	}
-	if err := l.resolveNodePorts(nodeID, node.Rect); err != nil {
 		return err
 	}
 
@@ -256,12 +254,11 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
 	}
 
-	for edgeID, edge := range l.graph.Edges {
+	for edgeID := range l.graph.Edges {
 		if !l.graph.EdgeExists(uint32(edgeID)) {
 			continue
 		}
-		if l.graph.Ports[edge.PortA].Node == nodeID ||
-			l.graph.Ports[edge.PortB].Node == nodeID {
+		if l.graph.EdgeIncidentTo(uint32(edgeID), nodeID) {
 			l.Edges[edgeID] = Edge{}
 		}
 	}
@@ -368,7 +365,7 @@ func pointOnSegment(point, a, b Point) bool {
 }
 
 func (l *Layout) initializeGeometry() error {
-	if err := validateGraph(&l.graph); err != nil {
+	if err := l.graph.Validate(); err != nil {
 		return fmt.Errorf("load graph: %w", err)
 	}
 
@@ -413,6 +410,17 @@ func (l *Layout) nodeGeometry(nodeID uint32, label string, point Point) (Node, e
 	}, nil
 }
 
+func (l *Layout) prepareNode(nodeID uint32, label string, point Point) (Node, error) {
+	node, err := l.nodeGeometry(nodeID, label, point)
+	if err != nil {
+		return Node{}, err
+	}
+	if err := l.resolveNodePorts(nodeID, node.Rect); err != nil {
+		return Node{}, err
+	}
+	return node, nil
+}
+
 func (l *Layout) resolveNodePorts(nodeID uint32, rect Rect) error {
 	source := &l.graph.Nodes[nodeID]
 	l.draftPorts = slices.Grow(l.draftPorts[:0], len(source.Ports))[:len(source.Ports)]
@@ -435,53 +443,6 @@ func (l *Layout) commitNodePorts(nodeID uint32) {
 
 func cloneGraph(graph ir.Graph) ir.Graph {
 	return graph.Clone()
-}
-
-func validateGraph(graph *ir.Graph) error {
-	seenPorts := make([]bool, len(graph.Ports))
-	for nodeID := range graph.Nodes {
-		if !graph.NodeExists(uint32(nodeID)) {
-			continue
-		}
-		for _, portID := range graph.Nodes[nodeID].Ports {
-			if uint64(portID) >= uint64(len(graph.Ports)) {
-				return fmt.Errorf("node %d references unknown port %d", nodeID, portID)
-			}
-			if seenPorts[portID] {
-				return fmt.Errorf("port %d belongs to multiple nodes", portID)
-			}
-			if graph.Ports[portID].Node != uint32(nodeID) {
-				return fmt.Errorf(
-					"node %d references port %d owned by node %d",
-					nodeID,
-					portID,
-					graph.Ports[portID].Node,
-				)
-			}
-			seenPorts[portID] = true
-		}
-	}
-	for portID, seen := range seenPorts {
-		if graph.PortExists(uint32(portID)) && !seen {
-			return fmt.Errorf("port %d has no owning node", portID)
-		}
-	}
-	for edgeID, edge := range graph.Edges {
-		if !graph.EdgeExists(uint32(edgeID)) {
-			continue
-		}
-		if uint64(edge.PortA) >= uint64(len(graph.Ports)) ||
-			uint64(edge.PortB) >= uint64(len(graph.Ports)) {
-			return fmt.Errorf("edge %d references an unknown port", edgeID)
-		}
-		if !graph.PortExists(edge.PortA) || !graph.PortExists(edge.PortB) {
-			return fmt.Errorf("edge %d references a deleted port", edgeID)
-		}
-		if edge.PortA == edge.PortB {
-			return fmt.Errorf("edge %d connects port %d to itself", edgeID, edge.PortA)
-		}
-	}
-	return nil
 }
 
 func growTo[S ~[]E, E any](values S, length int) S {

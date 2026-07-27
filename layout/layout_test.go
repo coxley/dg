@@ -61,6 +61,41 @@ func TestNewRect(t *testing.T) {
 	require.False(t, got.Contains(limit))
 }
 
+func TestRectEmpty(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, (Rect{}).Empty())
+	require.True(t, (Rect{Size: Size{Width: 1}}).Empty())
+	require.True(t, (Rect{Size: Size{Height: 1}}).Empty())
+	require.False(t, (Rect{Size: Size{Width: 1, Height: 1}}).Empty())
+}
+
+func TestConnectionsContains(t *testing.T) {
+	t.Parallel()
+
+	connections := North | East
+	require.True(t, connections.ContainsAll(North|East))
+	require.False(t, connections.ContainsAll(North|South))
+	require.True(t, connections.ContainsAny(East|West))
+	require.False(t, connections.ContainsAny(South|West))
+}
+
+func TestGridIndex(t *testing.T) {
+	t.Parallel()
+
+	grid, err := NewGrid(Rect{
+		Min:  Point{X: 3, Y: 5},
+		Size: Size{Width: 4, Height: 2},
+	})
+	require.NoError(t, err)
+
+	index, ok := grid.Index(Point{X: 5, Y: 6})
+	require.True(t, ok)
+	require.Equal(t, 6, index)
+	_, ok = grid.Index(Point{X: 2, Y: 6})
+	require.False(t, ok)
+}
+
 func TestNodeRect(t *testing.T) {
 	t.Parallel()
 

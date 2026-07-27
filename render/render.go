@@ -80,14 +80,14 @@ func placeLabel(
 			continue
 		}
 		point := layout.Point{X: x, Y: origin.Y}
-		index, ok := cellIndex(grid.Bounds, point)
+		index, ok := grid.Index(point)
 		if !ok {
 			return fmt.Errorf("label cell %+v outside grid", point)
 		}
 		labels[index] = value
 		for offset := 1; offset < width; offset++ {
 			continuationX := x + uint32(offset)
-			continuation, ok := cellIndex(grid.Bounds, layout.Point{X: continuationX, Y: origin.Y})
+			continuation, ok := grid.Index(layout.Point{X: continuationX, Y: origin.Y})
 			if !ok {
 				return fmt.Errorf("label cell at x=%d outside grid", continuationX)
 			}
@@ -96,15 +96,6 @@ func placeLabel(
 		x += uint32(width)
 	}
 	return nil
-}
-
-func cellIndex(bounds layout.Rect, point layout.Point) (int, bool) {
-	if !bounds.Contains(point) {
-		return 0, false
-	}
-	x := point.X - bounds.Min.X
-	y := point.Y - bounds.Min.Y
-	return int(y)*int(bounds.Size.Width) + int(x), true
 }
 
 func glyph(connections layout.Connections) rune {

@@ -65,6 +65,22 @@ func (e Edge) Empty() bool {
 	return e == zero
 }
 
+// HasPort reports whether portID is one of the edge's endpoints.
+func (e Edge) HasPort(portID uint32) bool {
+	return e.PortA == portID || e.PortB == portID
+}
+
+// Connects reports whether the edge connects portA and portB in either order.
+func (e Edge) Connects(portA, portB uint32) bool {
+	return e.PortA == portA && e.PortB == portB ||
+		e.PortA == portB && e.PortB == portA
+}
+
+// SharesPort reports whether the edges have an endpoint in common.
+func (e Edge) SharesPort(other Edge) bool {
+	return e.HasPort(other.PortA) || e.HasPort(other.PortB)
+}
+
 type Port struct {
 	Node uint32
 	Side Side
@@ -184,7 +200,7 @@ func (g *Graph) ConnectPorts(portA, portB uint32) uint32 {
 			continue
 		}
 		edge := g.Edges[i]
-		if (edge.PortA == portA || edge.PortA == portB) && (edge.PortB == portA || edge.PortB == portB) {
+		if edge.Connects(portA, portB) {
 			// Already exists
 			return uint32(i)
 		}
@@ -217,11 +233,11 @@ func (g *Graph) DeleteNode(nodeID uint32) error {
 		return fmt.Errorf("%w: %d", ErrNodeNotFound, nodeID)
 	}
 
-	for edgeID, edge := range g.Edges {
+	for edgeID := range g.Edges {
 		if !g.EdgeExists(uint32(edgeID)) {
 			continue
 		}
-		if g.Ports[edge.PortA].Node == nodeID || g.Ports[edge.PortB].Node == nodeID {
+		if g.EdgeIncidentTo(uint32(edgeID), nodeID) {
 			if err := g.DeleteEdge(uint32(edgeID)); err != nil {
 				return err
 			}
@@ -255,6 +271,61 @@ func (g *Graph) PortExists(portID uint32) bool {
 // AllPortsLive reports whether the graph contains no deleted ports.
 func (g *Graph) AllPortsLive() bool {
 	return len(g.freePorts) == 0
+}
+
+// EdgeIncidentTo reports whether edgeID connects to a port owned by nodeID.
+// Both IDs must identify live graph entries.
+func (g *Graph) EdgeIncidentTo(edgeID, nodeID uint32) bool {
+	edge := g.Edges[edgeID]
+	return g.Ports[edge.PortA].Node == nodeID || g.Ports[edge.PortB].Node == nodeID
+}
+
+// Validate checks graph ownership and edge endpoint invariants.
+func (g *Graph) Validate() error {
+	seenPorts := make([]bool, len(g.Ports))
+	for nodeID := range g.Nodes {
+		if !g.NodeExists(uint32(nodeID)) {
+			continue
+		}
+		for _, portID := range g.Nodes[nodeID].Ports {
+			if uint64(portID) >= uint64(len(g.Ports)) {
+				return fmt.Errorf("node %d references unknown port %d", nodeID, portID)
+			}
+			if seenPorts[portID] {
+				return fmt.Errorf("port %d belongs to multiple nodes", portID)
+			}
+			if g.Ports[portID].Node != uint32(nodeID) {
+				return fmt.Errorf(
+					"node %d references port %d owned by node %d",
+					nodeID,
+					portID,
+					g.Ports[portID].Node,
+				)
+			}
+			seenPorts[portID] = true
+		}
+	}
+	for portID, seen := range seenPorts {
+		if g.PortExists(uint32(portID)) && !seen {
+			return fmt.Errorf("port %d has no owning node", portID)
+		}
+	}
+	for edgeID, edge := range g.Edges {
+		if !g.EdgeExists(uint32(edgeID)) {
+			continue
+		}
+		if uint64(edge.PortA) >= uint64(len(g.Ports)) ||
+			uint64(edge.PortB) >= uint64(len(g.Ports)) {
+			return fmt.Errorf("edge %d references an unknown port", edgeID)
+		}
+		if !g.PortExists(edge.PortA) || !g.PortExists(edge.PortB) {
+			return fmt.Errorf("edge %d references a deleted port", edgeID)
+		}
+		if edge.PortA == edge.PortB {
+			return fmt.Errorf("edge %d connects port %d to itself", edgeID, edge.PortA)
+		}
+	}
+	return nil
 }
 
 // Clone returns an independent graph with reconstructed free lists.

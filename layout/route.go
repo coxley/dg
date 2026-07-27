@@ -599,6 +599,8 @@ func (r Router) stepCost(
 		return uint64(r.Costs.Step), 0, true
 	}
 
+	// Sharing applies to entire routes. More sophisticated routing may need to
+	// restrict shared segments to the common port's vicinity.
 	segmentOwners := occupancy.segments[newRouteSegment(a, b)]
 	shared := false
 	for index := segmentOwners; index != 0; index = occupancy.segmentUses[index-1].next {
@@ -606,7 +608,7 @@ func (r Router) stepCost(
 		if owner == edgeID {
 			continue
 		}
-		if !edgesSharePort(g.Edges[edgeID], g.Edges[owner]) {
+		if !g.Edges[edgeID].SharesPort(g.Edges[owner]) {
 			return 0, 0, false
 		}
 		shared = true
@@ -627,17 +629,17 @@ func (r Router) stepCost(
 		use := occupancy.cellUses[index-1]
 		if use.edge == edgeID ||
 			occupancy.segmentContains(segmentOwners, use.edge) ||
-			edgesSharePort(g.Edges[edgeID], g.Edges[use.edge]) {
+			g.Edges[edgeID].SharesPort(g.Edges[use.edge]) {
 			continue
 		}
 		along, across := East|West, North|South
 		if !horizontal {
 			along, across = across, along
 		}
-		if use.connections&along != 0 {
+		if use.connections.ContainsAny(along) {
 			return 0, 0, false
 		}
-		if use.connections&across == across {
+		if use.connections.ContainsAll(across) {
 			crossings++
 			continue
 		}
@@ -645,15 +647,6 @@ func (r Router) stepCost(
 	}
 	cost = addCost(cost, multiplyCost(uint64(crossings), uint64(r.Costs.Crossing)))
 	return cost, crossings, true
-}
-
-// Sharing applies to entire routes. The router does not restrict shared
-// segments to the common port's vicinity.
-func edgesSharePort(a, b ir.Edge) bool {
-	return a.PortA == b.PortA ||
-		a.PortA == b.PortB ||
-		a.PortB == b.PortA ||
-		a.PortB == b.PortB
 }
 
 func (r Router) scorePath(
