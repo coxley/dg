@@ -63,7 +63,8 @@ The example program renders:
 - `Edge` stores two port IDs
 
 Edges are undirected. Duplicate port pairs return the existing edge ID.
-New nodes currently receive fixed candidate ports on every side.
+New nodes receive ports at offsets `.5`, `.25`, and `.75` on every side. Stored
+order defines connection priority.
 
 Deletion leaves tombstones in the public slices. Per-type free lists reuse those
 indices before growing storage. Node deletion also removes its ports and
@@ -119,12 +120,31 @@ The Bubble Tea model keeps terminal-only state:
 
 - cursor and viewport origins
 - the reusable hit-selection buffer
-- navigation, node movement, and label editing modes
-- cached rendered text and document bounds
+- navigation, node movement, live label editing, and edge connection modes
+- cached rendered text, document bounds, raster scratch, and terminal cursor
 
-Bubble Tea messages mutate `Layout` synchronously. Node movement and label
-editing call `Build` and refresh the cached frame. The model accepts pasted
-single-line labels and rejects pasted newlines before they reach the layout.
+Bubble Tea messages mutate `Layout` synchronously. Every node movement and label
+keystroke calls `Build` and refreshes the cached frame. Editing has a
+grapheme-aware caret; Escape restores an existing label or deletes a newly
+created node. Label editing supports Ctrl-A and Ctrl-E for the line bounds,
+Alt-B to move to the previous word, Ctrl-W to delete the previous word, and
+Ctrl-U to delete to the line start.
+
+The TUI also supports:
+
+- ANSI highlighting for selected node outlines and edges
+- port-only highlighting while creating or reconnecting an edge
+- node creation at the cursor
+- two-step port-to-port edge creation
+- edge endpoint reassignment without changing the edge ID
+- mouse hit selection and overlapping-hit cycling
+- mouse node dragging
+- click-dragging a node commits an active label edit
+- mouse-wheel viewport panning
+- terminal cursor visibility only while editing a label
+
+The model accepts pasted single-line labels and rejects pasted newlines before
+they reach the layout.
 
 Run the example editor with:
 
@@ -137,6 +157,12 @@ go run ./cmd/dg
 - `Point` and `Size` use `uint32`.
 - `Padding` uses `uint8`.
 - rectangles use half-open bounds.
+- node dimensions are exactly label size plus padding and borders. Layout does
+  not add parity padding; odd-width nodes retain their true center cell.
+- the first port stored on each side is always connectable. Later ports become
+  connectable in stored order when one boundary cell separates them from both
+  corners and every earlier connectable port. Availability is offset-agnostic,
+  so future custom ports use the same rule.
 - default padding is one horizontal cell and zero vertical cells.
 - labels support one line for the initial milestone.
 - label measurement uses terminal display width, including wide graphemes.
@@ -151,6 +177,7 @@ go run ./cmd/dg
   would need different logic.
 - the router uses a concrete heap and `cmp.Compare`.
 - `Layout` owns reusable router scratch. `Router` remains copyable configuration.
+- `render.Encoder` owns reusable raster and label-placement scratch.
 - obstacle access uses `Layout.Obstacles()` instead of a stored obstacle slice.
 - rasterization decides glyph connectivity after layout.
 - node tombstones retain an empty port buffer; zero-value edges represent
@@ -165,17 +192,17 @@ go run ./cmd/dg
 Results from an Apple M4 Max on July 27, 2026:
 
 ```text
-BenchmarkLayoutBuild             18.5 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutMoveAndBuild      20.0 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutEditLabelAndBuild 16.4 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutBuild             39.9 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutMoveAndBuild      43.7 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutEditLabelAndBuild 38.2 µs/op   0 B/op   0 allocs/op
 BenchmarkLayoutDeleteAndCreateNode
-                                  130 ns/op   0 B/op   0 allocs/op
+                                  114 ns/op   0 B/op   0 allocs/op
 BenchmarkLayoutDeleteAndConnectEdge
-                                  7.2 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/node         37.1 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/edge         35.7 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/miss         36.1 ns/op   0 B/op   0 allocs/op
-BenchmarkModelMoveAndView         3.1 µs/op   2577 B/op   9 allocs/op
+                                  7.7 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/node         32.6 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/edge         30.5 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/miss         31.2 ns/op   0 B/op   0 allocs/op
+BenchmarkModelMoveAndView         4.2 µs/op   2304 B/op   1 allocs/op
 ```
 
 These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
@@ -184,13 +211,14 @@ interactive diagrams show that this scan matters.
 
 The TUI benchmark uses a one-node document and covers a Bubble Tea key update,
 node movement, layout build, rasterization, viewport composition, and view
-creation. Its allocations remain outside the layout hot path.
+creation. Its only steady-state allocation converts the completed byte buffer
+to the frame string required by Bubble Tea.
 
 ## Recommended next work
 
-The basic TUI is complete. It supports cursor navigation, overlapping-hit
-cycling, node movement, label editing, node and edge deletion, viewport
-tracking, and resize-aware rendering.
+The basic TUI is complete. It supports keyboard and mouse interaction, ANSI
+selection, node and edge creation and reconnection, live label editing,
+deletion, viewport tracking, and resize-aware rendering.
 
 ### 1. Define a persisted document format
 

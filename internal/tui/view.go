@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"fmt"
+	"strconv"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
@@ -9,8 +9,13 @@ import (
 	"github.com/rivo/uniseg"
 )
 
+const (
+	selectionStart = "\x1b[48;5;24;38;5;231m"
+	selectionEnd   = "\x1b[0m"
+)
+
 func (m *Model) View() tea.View {
-	m.viewBuffer = appendViewport(
+	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
 		m.frame,
 		m.frameRows,
@@ -19,54 +24,75 @@ func (m *Model) View() tea.View {
 		m.diagramHeight(),
 	)
 	if m.height >= 1 {
-		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusLine(), m.width)
+		m.statusText = m.appendStatusText(m.statusText[:0])
+		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
 	}
 	if m.height >= 2 {
-		m.viewBuffer = appendStatusLine(m.viewBuffer, m.helpLine(), m.width)
+		m.statusText = append(m.statusText[:0], m.helpLine()...)
+		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
 	}
 
 	view := tea.NewView(string(m.viewBuffer))
 	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "dg"
-	if m.width > 0 && m.diagramHeight() > 0 {
-		x := int(m.cursor.X - m.viewport.X)
-		y := int(m.cursor.Y - m.viewport.Y)
-		view.Cursor = tea.NewCursor(x, y)
+	if m.mode == modeEditLabel {
+		if x, y, ok := m.cursorPosition(); ok {
+			cursor := &m.viewCursor[m.nextCursor]
+			m.nextCursor ^= 1
+			cursor.X = x
+			cursor.Y = y
+			view.Cursor = cursor
+		}
 	}
 	return view
 }
 
-func (m *Model) statusLine() string {
+func (m *Model) appendStatusText(dst []byte) []byte {
 	if m.status != "" {
-		return m.status
+		return append(dst, m.status...)
 	}
 	if m.mode == modeEditLabel {
-		return fmt.Sprintf("edit label: %s", m.editBuffer)
+		dst = append(dst, "edit label  node "...)
+		dst = strconv.AppendUint(dst, uint64(m.target.ID), 10)
+		dst = append(dst, "  cell "...)
+		dst = strconv.AppendInt(dst, int64(displayWidth(m.editBuffer[:m.editCaret])), 10)
+		dst = append(dst, '/')
+		return strconv.AppendInt(dst, int64(displayWidth(m.editBuffer)), 10)
 	}
+
+	dst = append(dst, m.mode.String()...)
+	dst = append(dst, "  ("...)
+	dst = strconv.AppendUint(dst, uint64(m.cursor.X), 10)
+	dst = append(dst, ',')
+	dst = strconv.AppendUint(dst, uint64(m.cursor.Y), 10)
+	dst = append(dst, ")  "...)
 	hit, ok := m.activeHit()
 	if !ok {
-		return fmt.Sprintf("%s  (%d,%d)  no hit", m.mode, m.cursor.X, m.cursor.Y)
+		return append(dst, "no hit"...)
 	}
-	return fmt.Sprintf(
-		"%s  (%d,%d)  %s %d  hit %d/%d",
-		m.mode,
-		m.cursor.X,
-		m.cursor.Y,
-		hitKindName(hit.Kind),
-		hit.ID,
-		m.active+1,
-		len(m.hits),
-	)
+	dst = append(dst, hitKindName(hit.Kind)...)
+	dst = append(dst, ' ')
+	dst = strconv.AppendUint(dst, uint64(hit.ID), 10)
+	dst = append(dst, "  hit "...)
+	dst = strconv.AppendInt(dst, int64(m.active+1), 10)
+	dst = append(dst, '/')
+	return strconv.AppendInt(dst, int64(len(m.hits)), 10)
 }
 
 func (m *Model) helpLine() string {
 	switch m.mode {
 	case modeMove:
-		return "arrows/hjkl move node • enter/m/esc finish • ctrl+c quit"
+		return "arrows/hjkl move node • enter/m/esc finish • mouse drag • ctrl+c quit"
 	case modeEditLabel:
-		return "type to edit • enter save • esc cancel • ctrl+c quit"
+		return "type • ctrl-a/e ends • alt-b back word • ctrl-w/u delete • enter save • esc cancel"
+	case modeConnect:
+		if m.reconnecting {
+			return "select replacement port • enter/c/click move endpoint • esc cancel"
+		}
+		return "select destination port • enter/c/click connect • esc cancel"
 	default:
-		return "arrows/hjkl move • tab cycle • enter/m move node • e edit • d delete • q quit"
+		return "arrows/hjkl move • tab cycle • n new • m move • e edit • c connect • d delete"
 	}
 }
 
@@ -83,7 +109,21 @@ func hitKindName(kind layout.HitKind) string {
 	}
 }
 
-func appendViewport(
+func (m *Model) cursorPosition() (int, int, bool) {
+	height := m.diagramHeight()
+	if m.width <= 0 || height <= 0 ||
+		m.cursor.X < m.viewport.X || m.cursor.Y < m.viewport.Y {
+		return 0, 0, false
+	}
+	x := uint64(m.cursor.X - m.viewport.X)
+	y := uint64(m.cursor.Y - m.viewport.Y)
+	if x >= uint64(m.width) || y >= uint64(height) {
+		return 0, 0, false
+	}
+	return int(x), int(y), true
+}
+
+func (m *Model) appendViewport(
 	dst []byte,
 	frame render.Frame,
 	rows []rowSpan,
@@ -110,19 +150,27 @@ func appendViewport(
 			frame.Text[span.start:span.end],
 			frame.Bounds.Min.X,
 			origin.X,
+			uint32(documentY),
 			width,
+			m,
 		)
 		dst = append(dst, '\n')
 	}
 	return dst
 }
 
-func appendViewportRow(dst, row []byte, rowOrigin, viewportOrigin uint32, width int) []byte {
+func appendViewportRow(
+	dst, row []byte,
+	rowOrigin, viewportOrigin, documentY uint32,
+	width int,
+	model *Model,
+) []byte {
 	viewportStart := uint64(viewportOrigin)
 	viewportEnd := viewportStart + uint64(width)
 	documentX := uint64(rowOrigin)
 	screenX := 0
 	state := -1
+	styled := false
 
 	for len(row) != 0 && screenX < width {
 		cluster, rest, clusterWidth, nextState := uniseg.FirstGraphemeCluster(row, state)
@@ -147,8 +195,28 @@ func appendViewportRow(dst, row []byte, rowOrigin, viewportOrigin uint32, width 
 		visibleStart := max(clusterStart, viewportStart)
 		visibleEnd := min(clusterEnd, viewportEnd)
 		targetX := int(visibleStart - viewportStart)
-		dst = appendSpaces(dst, targetX-screenX)
+		if gap := targetX - screenX; gap != 0 {
+			if styled {
+				dst = append(dst, selectionEnd...)
+				styled = false
+			}
+			dst = appendSpaces(dst, gap)
+		}
 		screenX = targetX
+
+		selected := model != nil &&
+			model.highlightedRange(
+				documentY,
+				uint32(visibleStart),
+				uint32(visibleEnd),
+			)
+		if selected && !styled {
+			dst = append(dst, selectionStart...)
+			styled = true
+		} else if !selected && styled {
+			dst = append(dst, selectionEnd...)
+			styled = false
+		}
 		if visibleStart == clusterStart && visibleEnd == clusterEnd {
 			dst = append(dst, cluster...)
 		} else {
@@ -156,14 +224,70 @@ func appendViewportRow(dst, row []byte, rowOrigin, viewportOrigin uint32, width 
 		}
 		screenX += int(visibleEnd - visibleStart)
 	}
+	if styled {
+		dst = append(dst, selectionEnd...)
+	}
 	return appendSpaces(dst, width-screenX)
 }
 
-func appendStatusLine(dst []byte, text string, width int) []byte {
+func (m *Model) highlightedRange(y, start, end uint32) bool {
+	for x := start; x < end; x++ {
+		if m.highlightedPoint(layout.NewPoint(x, y)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) highlightedPoint(point layout.Point) bool {
+	if m.mode == modeConnect {
+		return m.portAt(point)
+	}
+	hit, ok := m.primaryHighlight()
+	if !ok {
+		return false
+	}
+	return m.highlightForHit(hit, point)
+}
+
+func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
+	switch hit.Kind {
+	case layout.HitNode:
+		return m.geo.NodeExists(hit.ID) &&
+			m.geo.Nodes[hit.ID].Rect.OnBoundary(point)
+	case layout.HitPort:
+		return false
+	case layout.HitEdge:
+		return m.geo.EdgeExists(hit.ID) &&
+			m.geo.Edges[hit.ID].Contains(point)
+	}
+	return false
+}
+
+func (m *Model) portAt(point layout.Point) bool {
+	for i := range m.geo.Ports {
+		portID := uint32(i)
+		if m.geo.PortUsable(portID) && m.geo.Ports[i].Anchor == point {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) primaryHighlight() (layout.Hit, bool) {
+	switch m.mode {
+	case modeMove, modeEditLabel:
+		return m.target, true
+	default:
+		return m.activeHit()
+	}
+}
+
+func appendStatusLine(dst, text []byte, width int) []byte {
 	if width <= 0 {
 		return dst
 	}
-	remaining := []byte(text)
+	remaining := text
 	state := -1
 	used := 0
 	for len(remaining) != 0 {

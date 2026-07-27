@@ -7,6 +7,7 @@ require (
 	github.com/orsinium-labs/enum v1.5.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.11.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (

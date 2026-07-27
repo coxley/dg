@@ -141,7 +141,7 @@ func newBenchmarkLayout(tb testing.TB) (*Layout, uint32) {
 
 	geo, err := New()
 	require.NoError(tb, err)
-	sink, err := geo.NewNodeAt("sinks", NewPoint(6, 6))
+	sink, err := geo.NewNodeAt("sinks", NewPoint(7, 6))
 	require.NoError(tb, err)
 	moving, err := geo.NewNodeAt("foo", NewPoint(4, 0))
 	require.NoError(tb, err)
@@ -151,7 +151,7 @@ func newBenchmarkLayout(tb testing.TB) (*Layout, uint32) {
 		ir.Top,
 		sink,
 	)
-	bar, err := geo.NewNodeAt("bar", NewPoint(10, 0))
+	bar, err := geo.NewNodeAt("bar", NewPoint(12, 0))
 	require.NoError(tb, err)
 	geo.ConnectNodes(
 		bar,

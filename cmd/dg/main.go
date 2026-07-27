@@ -23,7 +23,7 @@ func exampleLayout() (*layout.Layout, error) {
 	if err != nil {
 		return nil, err
 	}
-	sink, err := geo.NewNodeAt("sinks", layout.NewPoint(6, 6))
+	sink, err := geo.NewNodeAt("sinks", layout.NewPoint(7, 6))
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func exampleLayout() (*layout.Layout, error) {
 		return nil, err
 	}
 	geo.ConnectNodes(foo, ir.Bottom, ir.Top, sink)
-	bar, err := geo.NewNodeAt("bar", layout.NewPoint(15, 0))
+	bar, err := geo.NewNodeAt("bar", layout.NewPoint(12, 0))
 	if err != nil {
 		return nil, err
 	}

@@ -31,6 +31,34 @@ func TestUnicode(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestEncoderReusesScratch(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	newNodeAt(t, geo, "node", layout.Point{})
+	require.NoError(t, geo.Build())
+
+	var encoder Encoder
+	frame, err := encoder.EncodeFrame(nil, geo)
+	require.NoError(t, err)
+	cells := &encoder.grid.Cells[0]
+	labels := &encoder.labels[0]
+	continuations := &encoder.continuations[0]
+
+	frame, err = encoder.EncodeFrame(frame.Text[:0], geo)
+	require.NoError(t, err)
+	require.Same(t, cells, &encoder.grid.Cells[0])
+	require.Same(t, labels, &encoder.labels[0])
+	require.Same(t, continuations, &encoder.continuations[0])
+	require.Equal(
+		t, ""+
+			"┌──────┐\n"+
+			"│ node │\n"+
+			"└──────┘\n",
+		string(frame.Text),
+	)
+}
+
 func TestUnicodeWideLabel(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +67,10 @@ func TestUnicodeWideLabel(t *testing.T) {
 	require.NoError(t, geo.Build())
 	got, err := Unicode(geo)
 	require.NoError(t, err)
-	want := "┌─────┐\n│ A界 │\n└─────┘\n"
+	want := "" +
+		"┌─────┐\n" +
+		"│ A界 │\n" +
+		"└─────┘\n"
 	require.Equal(t, want, got)
 }
 
@@ -56,14 +87,20 @@ func TestEncodeFrameIncludesBounds(t *testing.T) {
 		Min:  layout.NewPoint(4, 7),
 		Size: layout.Size{Width: 8, Height: 3},
 	}, frame.Bounds)
-	require.Equal(t, "┌──────┐\n│ node │\n└──────┘\n", string(frame.Text))
+	require.Equal(
+		t, ""+
+			"┌──────┐\n"+
+			"│ node │\n"+
+			"└──────┘\n",
+		string(frame.Text),
+	)
 }
 
 func TestUnicodeSharedEndpoint(t *testing.T) {
 	t.Parallel()
 
 	geo := newLayout(t)
-	sink := newNodeAt(t, geo, "sinks", layout.NewPoint(6, 6))
+	sink := newNodeAt(t, geo, "sinks", layout.NewPoint(7, 6))
 	geo.ConnectNodes(
 		newNodeAt(t, geo, "foo", layout.NewPoint(4, 0)),
 		ir.Bottom,
@@ -71,7 +108,7 @@ func TestUnicodeSharedEndpoint(t *testing.T) {
 		sink,
 	)
 	geo.ConnectNodes(
-		newNodeAt(t, geo, "bar", layout.NewPoint(10, 0)),
+		newNodeAt(t, geo, "bar", layout.NewPoint(12, 0)),
 		ir.Bottom,
 		ir.Top,
 		sink,
@@ -80,15 +117,15 @@ func TestUnicodeSharedEndpoint(t *testing.T) {
 	got, err := Unicode(geo)
 	require.NoError(t, err)
 	want := "" +
-		"┌─────┬─────┐\n" +
-		"│ foo │ bar │\n" +
-		"└──┬──┴──┬──┘\n" +
-		"   │     │   \n" +
-		"   │     │   \n" +
-		"   └──┬──┘   \n" +
-		"  ┌───┴───┐  \n" +
-		"  │ sinks │  \n" +
-		"  └───────┘  \n"
+		"┌─────┐ ┌─────┐\n" +
+		"│ foo │ │ bar │\n" +
+		"└──┬──┘ └──┬──┘\n" +
+		"   │       │   \n" +
+		"   │       │   \n" +
+		"   └───┬───┘   \n" +
+		"   ┌───┴───┐   \n" +
+		"   │ sinks │   \n" +
+		"   └───────┘   \n"
 	require.Equal(t, want, got)
 }
 
@@ -104,7 +141,13 @@ func TestUnicodeOmitsDeletedNode(t *testing.T) {
 
 	got, err := Unicode(geo)
 	require.NoError(t, err)
-	require.Equal(t, "┌──────┐\n│ kept │\n└──────┘\n", got)
+	require.Equal(
+		t, ""+
+			"┌──────┐\n"+
+			"│ kept │\n"+
+			"└──────┘\n",
+		got,
+	)
 }
 
 func newLayout(t testing.TB) *layout.Layout {

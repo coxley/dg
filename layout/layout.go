@@ -2,6 +2,7 @@
 package layout
 
 import (
+	"errors"
 	"fmt"
 	"iter"
 	"math"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/coxley/dg/ir"
 )
+
+var ErrPortUnavailable = errors.New("port unavailable at current node size")
 
 type Point struct {
 	X, Y uint32
@@ -66,6 +69,16 @@ func (r Rect) Contains(p Point) bool {
 	return p.X >= r.Min.X && p.X < maxp.X && p.Y >= r.Min.Y && p.Y < maxp.Y
 }
 
+// OnBoundary reports whether p lies on the rectangle's inner boundary.
+func (r Rect) OnBoundary(p Point) bool {
+	if !r.Contains(p) {
+		return false
+	}
+	maxp := r.Max()
+	return p.X == r.Min.X || p.X == maxp.X-1 ||
+		p.Y == r.Min.Y || p.Y == maxp.Y-1
+}
+
 type Node struct {
 	Rect       Rect
 	LabelPoint Point
@@ -91,6 +104,16 @@ func (e Edge) Empty() bool {
 	return len(e.Points) < 2
 }
 
+// Contains reports whether point lies on a route segment.
+func (e Edge) Contains(point Point) bool {
+	for i := 1; i < len(e.Points); i++ {
+		if pointOnSegment(point, e.Points[i-1], e.Points[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 // HitKind identifies the geometry occupying a cell.
 type HitKind uint8
 
@@ -113,12 +136,14 @@ type Layout struct {
 	Ports []Port
 	Edges []Edge
 
-	graph      ir.Graph
-	origins    []Point
-	padding    Padding
-	router     Router
-	scratch    routeScratch
-	draftPorts []Port
+	graph       ir.Graph
+	origins     []Point
+	padding     Padding
+	router      Router
+	scratch     routeScratch
+	draftPorts  []Port
+	portUsable  []bool
+	draftUsable []bool
 }
 
 // Option configures a Layout.
@@ -194,6 +219,7 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 	l.origins = growTo(l.origins, len(l.graph.Nodes))
 	l.Nodes = growTo(l.Nodes, len(l.graph.Nodes))
 	l.Ports = growTo(l.Ports, len(l.graph.Ports))
+	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.origins[nodeID] = point
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
@@ -239,6 +265,53 @@ func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) 
 	return edgeID
 }
 
+// ConnectPorts connects two ports and returns the edge index. It returns the
+// existing edge when the ports are already connected.
+func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
+	if !l.graph.PortExists(portA) {
+		return 0, fmt.Errorf("%w: %d", ir.ErrPortNotFound, portA)
+	}
+	if !l.graph.PortExists(portB) {
+		return 0, fmt.Errorf("%w: %d", ir.ErrPortNotFound, portB)
+	}
+	if !l.PortUsable(portA) {
+		return 0, fmt.Errorf("%w: %d", ErrPortUnavailable, portA)
+	}
+	if !l.PortUsable(portB) {
+		return 0, fmt.Errorf("%w: %d", ErrPortUnavailable, portB)
+	}
+	if portA == portB {
+		return 0, ir.ErrSamePort
+	}
+	edgeID := l.graph.ConnectPorts(portA, portB)
+	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	return edgeID, nil
+}
+
+// ReconnectEdge replaces one endpoint while preserving the edge index.
+func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
+	if !l.graph.EdgeExists(edgeID) {
+		return fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
+	}
+	if !l.graph.PortExists(newPort) {
+		return fmt.Errorf("%w: %d", ir.ErrPortNotFound, newPort)
+	}
+	if !l.graph.Edges[edgeID].HasPort(oldPort) {
+		return fmt.Errorf("%w: %d", ir.ErrPortNotOnEdge, oldPort)
+	}
+	if oldPort == newPort {
+		return nil
+	}
+	if !l.PortUsable(newPort) {
+		return fmt.Errorf("%w: %d", ErrPortUnavailable, newPort)
+	}
+	if err := l.graph.ReconnectEdge(edgeID, oldPort, newPort); err != nil {
+		return err
+	}
+	l.Edges[edgeID] = Edge{}
+	return nil
+}
+
 // DeleteEdge removes an edge and makes its ID available for reuse.
 func (l *Layout) DeleteEdge(edgeID uint32) error {
 	if err := l.graph.DeleteEdge(edgeID); err != nil {
@@ -264,6 +337,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	}
 	for _, portID := range l.graph.Nodes[nodeID].Ports {
 		l.Ports[portID] = Port{}
+		l.portUsable[portID] = false
 	}
 	if err := l.graph.DeleteNode(nodeID); err != nil {
 		return err
@@ -281,6 +355,43 @@ func (l *Layout) NodeExists(nodeID uint32) bool {
 // EdgeExists reports whether edgeID identifies a live edge.
 func (l *Layout) EdgeExists(edgeID uint32) bool {
 	return l.graph.EdgeExists(edgeID)
+}
+
+// PortExists reports whether portID identifies a live port.
+func (l *Layout) PortExists(portID uint32) bool {
+	return l.graph.PortExists(portID)
+}
+
+// PortUsable reports whether portID can start or receive a new connection.
+// The first port on each side is always usable. Each later port needs one
+// boundary cell between itself, both corners, and every earlier usable port.
+func (l *Layout) PortUsable(portID uint32) bool {
+	return l.graph.PortExists(portID) &&
+		uint64(portID) < uint64(len(l.portUsable)) &&
+		l.portUsable[portID]
+}
+
+// EdgePorts returns an edge's endpoint port IDs.
+func (l *Layout) EdgePorts(edgeID uint32) (uint32, uint32, error) {
+	if !l.graph.EdgeExists(edgeID) {
+		return 0, 0, fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
+	}
+	edge := l.graph.Edges[edgeID]
+	return edge.PortA, edge.PortB, nil
+}
+
+// NodePorts yields the IDs of ports owned by nodeID.
+func (l *Layout) NodePorts(nodeID uint32) iter.Seq[uint32] {
+	return func(yield func(uint32) bool) {
+		if !l.graph.NodeExists(nodeID) {
+			return
+		}
+		for _, portID := range l.graph.Nodes[nodeID].Ports {
+			if !yield(portID) {
+				return
+			}
+		}
+	}
 }
 
 // Label returns a node's source label.
@@ -322,7 +433,8 @@ func (l *Layout) Hits(point Point) iter.Seq[Hit] {
 		}
 		if l.graph.AllPortsLive() {
 			for i := range l.Ports {
-				if l.Ports[i].Anchor == point &&
+				if (len(l.portUsable) == 0 || l.portUsable[i]) &&
+					l.Ports[i].Anchor == point &&
 					!yield(Hit{ID: uint32(i), Kind: HitPort}) {
 					return
 				}
@@ -330,6 +442,7 @@ func (l *Layout) Hits(point Point) iter.Seq[Hit] {
 		} else {
 			for i := range l.Ports {
 				if l.graph.PortExists(uint32(i)) &&
+					l.portUsable[i] &&
 					l.Ports[i].Anchor == point &&
 					!yield(Hit{ID: uint32(i), Kind: HitPort}) {
 					return
@@ -337,13 +450,9 @@ func (l *Layout) Hits(point Point) iter.Seq[Hit] {
 			}
 		}
 		for i := range l.Edges {
-			for j := 1; j < len(l.Edges[i].Points); j++ {
-				if pointOnSegment(point, l.Edges[i].Points[j-1], l.Edges[i].Points[j]) {
-					if !yield(Hit{ID: uint32(i), Kind: HitEdge}) {
-						return
-					}
-					break
-				}
+			if l.Edges[i].Contains(point) &&
+				!yield(Hit{ID: uint32(i), Kind: HitEdge}) {
+				return
 			}
 		}
 	}
@@ -372,6 +481,7 @@ func (l *Layout) initializeGeometry() error {
 	l.origins = make([]Point, len(l.graph.Nodes))
 	l.Nodes = make([]Node, len(l.graph.Nodes))
 	l.Ports = make([]Port, len(l.graph.Ports))
+	l.portUsable = make([]bool, len(l.graph.Ports))
 	l.Edges = make([]Edge, len(l.graph.Edges))
 
 	for i := range l.graph.Nodes {
@@ -424,6 +534,8 @@ func (l *Layout) prepareNode(nodeID uint32, label string, point Point) (Node, er
 func (l *Layout) resolveNodePorts(nodeID uint32, rect Rect) error {
 	source := &l.graph.Nodes[nodeID]
 	l.draftPorts = slices.Grow(l.draftPorts[:0], len(source.Ports))[:len(source.Ports)]
+	l.draftUsable = slices.Grow(l.draftUsable[:0], len(source.Ports))[:len(source.Ports)]
+	clear(l.draftUsable)
 	for i, portID := range source.Ports {
 		port := l.graph.Ports[portID]
 		resolved, err := ResolvePort(rect, port.Side, port.Offset)
@@ -431,13 +543,56 @@ func (l *Layout) resolveNodePorts(nodeID uint32, rect Rect) error {
 			return fmt.Errorf("resolve port %d: %w", portID, err)
 		}
 		l.draftPorts[i] = resolved
+		l.draftUsable[i] = l.canUseDraftPort(source, i, rect)
 	}
 	return nil
+}
+
+func (l *Layout) canUseDraftPort(node *ir.Node, index int, rect Rect) bool {
+	candidate := l.graph.Ports[node.Ports[index]]
+	primary := true
+	for i := range index {
+		if l.graph.Ports[node.Ports[i]].Side == candidate.Side {
+			primary = false
+			break
+		}
+	}
+	if primary {
+		return true
+	}
+
+	position, length := sidePosition(l.draftPorts[index].Anchor, rect, candidate.Side)
+	if length < 3 || position < 2 || position > length-3 {
+		return false
+	}
+	for i := range index {
+		previous := l.graph.Ports[node.Ports[i]]
+		if previous.Side != candidate.Side || !l.draftUsable[i] {
+			continue
+		}
+		previousPosition, _ := sidePosition(l.draftPorts[i].Anchor, rect, previous.Side)
+		if max(position, previousPosition)-min(position, previousPosition) < 2 {
+			return false
+		}
+	}
+	return true
+}
+
+func sidePosition(point Point, rect Rect, side ir.Side) (position, length uint32) {
+	switch side {
+	case ir.Top, ir.Bottom:
+		return point.X - rect.Min.X, rect.Size.Width
+	case ir.RightSide, ir.LeftSide:
+		return point.Y - rect.Min.Y, rect.Size.Height
+	default:
+		return 0, 0
+	}
 }
 
 func (l *Layout) commitNodePorts(nodeID uint32) {
 	for i, portID := range l.graph.Nodes[nodeID].Ports {
 		l.Ports[portID] = l.draftPorts[i]
+		l.portUsable[portID] = l.draftUsable[i]
 	}
 }
 
@@ -455,9 +610,8 @@ func growTo[S ~[]E, E any](values S, length int) S {
 // NodeRect returns the cells occupied by a bordered label and its padding.
 func NodeRect(origin Point, label Size, padding Padding) (Rect, error) {
 	if label.Width == 0 && label.Height == 0 {
-		return NewRect(origin, origin.Add(3, 2))
+		label.Height = 1
 	}
-
 	hpad := uint32(padding.Left) + uint32(padding.Right) + 2
 	vpad := uint32(padding.Top) + uint32(padding.Bottom) + 2
 	if label.Width > math.MaxUint32-hpad || label.Height > math.MaxUint32-vpad {

@@ -38,6 +38,23 @@ func TestGraphValidate(t *testing.T) {
 	require.EqualError(t, invalid.Validate(), "edge 0 references an unknown port")
 }
 
+func TestNewNodeCreatesInteriorPorts(t *testing.T) {
+	t.Parallel()
+
+	var graph Graph
+	nodeID := graph.NewNode("node")
+	require.Len(t, graph.Nodes[nodeID].Ports, 12)
+
+	wantOffsets := []float32{.5, .25, .75}
+	for _, side := range []Side{Top, RightSide, Bottom, LeftSide} {
+		portIDs := graph.PortsOnSide(nodeID, side)
+		require.Len(t, portIDs, len(wantOffsets))
+		for i, portID := range portIDs {
+			require.Equal(t, wantOffsets[i], graph.Ports[portID].Offset)
+		}
+	}
+}
+
 func TestGraphReusesDeletedIDs(t *testing.T) {
 	t.Parallel()
 

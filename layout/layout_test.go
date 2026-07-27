@@ -7,6 +7,7 @@ import (
 
 	"github.com/coxley/dg/ir"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func TestMeasureLabel(t *testing.T) {
@@ -27,6 +28,10 @@ func TestMeasureLabel(t *testing.T) {
 			name: "wide rune",
 			text: "A界",
 			want: Size{Width: 3, Height: 1},
+		},
+		{
+			name: "empty",
+			want: Size{},
 		},
 		{
 			name:    "newline",
@@ -112,6 +117,98 @@ func TestNodeRect(t *testing.T) {
 	require.Equal(t, want, got)
 	require.True(t, got.Contains(Point{X: 15, Y: 9}))
 	require.False(t, got.Contains(got.Max()))
+	require.True(t, got.OnBoundary(got.Min))
+	require.False(t, got.OnBoundary(got.Min.Add(1, 1)))
+	require.False(t, got.OnBoundary(got.Max()))
+}
+
+func TestNodeRectReservesAnEmptyLabelRow(t *testing.T) {
+	t.Parallel()
+
+	got, err := NodeRect(Point{}, Size{}, Padding{Left: 1, Right: 1})
+	require.NoError(t, err)
+	require.Equal(t, Size{Width: 4, Height: 3}, got.Size)
+}
+
+func TestNodeRectPreservesNaturalWidth(t *testing.T) {
+	t.Parallel()
+
+	got, err := NodeRect(Point{}, Size{Width: 5, Height: 1}, Padding{Left: 1, Right: 1})
+	require.NoError(t, err)
+	require.Equal(t, Size{Width: 9, Height: 3}, got.Size)
+}
+
+func TestCenterPortPreservesNaturalWidth(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	sink, err := geo.NewNode("sink")
+	require.NoError(t, err)
+	sinks, err := geo.NewNode("sinks")
+	require.NoError(t, err)
+
+	sinkPort, ok := geo.graph.PickCenterPort(sink, ir.Top)
+	require.True(t, ok)
+	sinksPort, ok := geo.graph.PickCenterPort(sinks, ir.Top)
+	require.True(t, ok)
+	require.Equal(t, Size{Width: 8, Height: 3}, geo.Nodes[sink].Rect.Size)
+	require.Equal(t, Size{Width: 9, Height: 3}, geo.Nodes[sinks].Rect.Size)
+	require.Equal(t, uint32(4), geo.Ports[sinkPort].Anchor.X)
+	require.Equal(t, uint32(4), geo.Ports[sinksPort].Anchor.X)
+}
+
+func TestNodeRectAddsOnlyExplicitPadding(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		label := Size{
+			Width:  rapid.Uint32Range(0, 1<<16).Draw(t, "label width"),
+			Height: rapid.Uint32Range(0, 1<<16).Draw(t, "label height"),
+		}
+		padding := Padding{
+			Top:    rapid.Uint8().Draw(t, "top padding"),
+			Right:  rapid.Uint8().Draw(t, "right padding"),
+			Bottom: rapid.Uint8().Draw(t, "bottom padding"),
+			Left:   rapid.Uint8().Draw(t, "left padding"),
+		}
+		rect, err := NodeRect(Point{}, label, padding)
+		require.NoError(t, err)
+
+		labelHeight := label.Height
+		if label == (Size{}) {
+			labelHeight = 1
+		}
+		require.Equal(
+			t,
+			label.Width+uint32(padding.Left)+uint32(padding.Right)+2,
+			rect.Size.Width,
+		)
+		require.Equal(
+			t,
+			labelHeight+uint32(padding.Top)+uint32(padding.Bottom)+2,
+			rect.Size.Height,
+		)
+	})
+}
+
+func TestCenterPortUsesMiddleBoundaryCell(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		label := rapid.StringMatching(`[a-z]{0,64}`).Draw(t, "label")
+		geo, err := New()
+		require.NoError(t, err)
+		nodeID, err := geo.NewNode(label)
+		require.NoError(t, err)
+		portID, ok := geo.graph.PickCenterPort(nodeID, ir.Top)
+		require.True(t, ok)
+
+		rect := geo.Nodes[nodeID].Rect
+		position := geo.Ports[portID].Anchor.X - rect.Min.X
+		require.Equal(t, rect.Size.Width/2, position)
+		require.Equal(t, (rect.Size.Width-1)/2, rect.Size.Width-1-position)
+	})
 }
 
 func TestResolvePort(t *testing.T) {
@@ -175,6 +272,76 @@ func TestResolvePortAtCoordinateBoundary(t *testing.T) {
 	}
 }
 
+func TestPortUsabilityFollowsSideLength(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		label string
+		size  Size
+		want  map[ir.Side]int
+	}{
+		{
+			label: "a",
+			size:  Size{Width: 5, Height: 3},
+			want:  map[ir.Side]int{ir.Top: 1, ir.RightSide: 1, ir.Bottom: 1, ir.LeftSide: 1},
+		},
+		{
+			label: "foo bar",
+			size:  Size{Width: 11, Height: 3},
+			want:  map[ir.Side]int{ir.Top: 3, ir.RightSide: 1, ir.Bottom: 3, ir.LeftSide: 1},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.label, func(t *testing.T) {
+			t.Parallel()
+
+			geo, err := New()
+			require.NoError(t, err)
+			nodeID, err := geo.NewNode(test.label)
+			require.NoError(t, err)
+			require.Equal(t, test.size, geo.Nodes[nodeID].Rect.Size)
+
+			got := make(map[ir.Side]int)
+			for portID := range geo.NodePorts(nodeID) {
+				if !geo.PortUsable(portID) {
+					continue
+				}
+				port := geo.graph.Ports[portID]
+				got[port.Side]++
+				require.True(t, geo.Nodes[nodeID].Rect.OnBoundary(geo.Ports[portID].Anchor))
+				require.False(t, isCorner(geo.Nodes[nodeID].Rect, geo.Ports[portID].Anchor))
+			}
+			require.Equal(t, test.want, got)
+		})
+	}
+}
+
+func TestPortUsabilitySupportsArbitraryOffsets(t *testing.T) {
+	t.Parallel()
+
+	var graph ir.Graph
+	nodeID := graph.NewNode("long custom label")
+	usable := uint32(len(graph.Ports))
+	graph.Ports = append(graph.Ports, ir.NewPort(nodeID, ir.Top, .4))
+	graph.Nodes[nodeID].Ports = append(graph.Nodes[nodeID].Ports, usable)
+	tooClose := uint32(len(graph.Ports))
+	graph.Ports = append(graph.Ports, ir.NewPort(nodeID, ir.Top, .42))
+	graph.Nodes[nodeID].Ports = append(graph.Nodes[nodeID].Ports, tooClose)
+
+	geo, err := New(WithGraph(graph))
+	require.NoError(t, err)
+	require.True(t, geo.PortUsable(usable))
+	require.False(t, geo.PortUsable(tooClose))
+}
+
+func isCorner(rect Rect, point Point) bool {
+	maxp := rect.Max()
+	onHorizontalCorner := point.X == rect.Min.X || point.X == maxp.X-1
+	onVerticalCorner := point.Y == rect.Min.Y || point.Y == maxp.Y-1
+	return onHorizontalCorner && onVerticalCorner
+}
+
 func TestBuildPreservesIRIndices(t *testing.T) {
 	t.Parallel()
 
@@ -192,6 +359,53 @@ func TestBuildPreservesIRIndices(t *testing.T) {
 	require.Equal(t, Point{X: 14, Y: 4}, got.Nodes[right].Rect.Min)
 	require.NoError(t, got.Build())
 	require.GreaterOrEqual(t, len(got.Edges[edgeID].Points), 2)
+}
+
+func TestConnectPortsValidatesIDs(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	left, err := geo.NewNode("left")
+	require.NoError(t, err)
+	right, err := geo.NewNode("right")
+	require.NoError(t, err)
+	third, err := geo.NewNode("third")
+	require.NoError(t, err)
+	portA, ok := geo.graph.PickCenterPort(left, ir.RightSide)
+	require.True(t, ok)
+	portB, ok := geo.graph.PickCenterPort(right, ir.LeftSide)
+	require.True(t, ok)
+	portC, ok := geo.graph.PickCenterPort(third, ir.LeftSide)
+	require.True(t, ok)
+
+	edgeID, err := geo.ConnectPorts(portA, portB)
+	require.NoError(t, err)
+	require.True(t, geo.EdgeExists(edgeID))
+	require.Contains(t, slices.Collect(geo.NodePorts(left)), portA)
+	require.NoError(t, geo.ReconnectEdge(edgeID, portB, portC))
+	gotA, gotB, err := geo.EdgePorts(edgeID)
+	require.NoError(t, err)
+	require.Equal(t, [2]uint32{portA, portC}, [2]uint32{gotA, gotB})
+	require.True(t, geo.Edges[edgeID].Empty())
+
+	topPorts := geo.graph.PortsOnSide(left, ir.Top)
+	require.Len(t, topPorts, 3)
+	unavailable := topPorts[2]
+	require.False(t, geo.PortUsable(unavailable))
+	_, err = geo.ConnectPorts(unavailable, portB)
+	require.ErrorIs(t, err, ErrPortUnavailable)
+	require.ErrorIs(t, geo.ReconnectEdge(edgeID, portA, unavailable), ErrPortUnavailable)
+
+	_, err = geo.ConnectPorts(portB, portC)
+	require.NoError(t, err)
+	require.ErrorIs(t, geo.ReconnectEdge(edgeID, portA, portB), ir.ErrDuplicateEdge)
+	require.ErrorIs(t, geo.ReconnectEdge(edgeID, portB, portA), ir.ErrPortNotOnEdge)
+	require.ErrorIs(t, geo.ReconnectEdge(edgeID, portC, portA), ir.ErrSamePort)
+	_, err = geo.ConnectPorts(portA, portA)
+	require.ErrorIs(t, err, ir.ErrSamePort)
+	_, err = geo.ConnectPorts(portA, math.MaxUint32)
+	require.ErrorIs(t, err, ir.ErrPortNotFound)
 }
 
 func TestNewOptions(t *testing.T) {

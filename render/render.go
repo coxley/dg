@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/coxley/dg/layout"
 	"github.com/rivo/uniseg"
@@ -14,6 +15,13 @@ import (
 type Frame struct {
 	Bounds layout.Rect
 	Text   []byte
+}
+
+// Encoder owns reusable rasterization and label-placement storage.
+type Encoder struct {
+	grid          layout.Grid
+	labels        []string
+	continuations []bool
 }
 
 // Unicode renders layout connectivity and labels with box-drawing characters.
@@ -39,14 +47,51 @@ func EncodeFrame(dst []byte, l *layout.Layout) (Frame, error) {
 	if err != nil {
 		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
 	}
-
 	labels := make([]string, len(grid.Cells))
 	continuations := make([]bool, len(grid.Cells))
+	return encodeFrame(dst, l, grid, labels, continuations)
+}
+
+// EncodeFrame appends a rendered layout to dst and includes its document
+// bounds. It reuses the Encoder's rasterization and label-placement storage.
+func (e *Encoder) EncodeFrame(dst []byte, l *layout.Layout) (Frame, error) {
+	if l == nil {
+		return Frame{}, errors.New("nil layout")
+	}
+	grid, err := layout.RasterizeInto(e.grid.Cells, l)
+	if err != nil {
+		return Frame{}, fmt.Errorf("rasterize layout: %w", err)
+	}
+	e.grid = grid
+
+	e.labels = slices.Grow(e.labels[:0], len(grid.Cells))[:len(grid.Cells)]
+	e.continuations = slices.Grow(
+		e.continuations[:0],
+		len(grid.Cells),
+	)[:len(grid.Cells)]
+	clear(e.labels)
+	clear(e.continuations)
+	return encodeFrame(dst, l, e.grid, e.labels, e.continuations)
+}
+
+func encodeFrame(
+	dst []byte,
+	l *layout.Layout,
+	grid layout.Grid,
+	labels []string,
+	continuations []bool,
+) (Frame, error) {
 	for i := range l.Nodes {
 		if l.Nodes[i].Empty() {
 			continue
 		}
-		if err := placeLabel(&grid, labels, continuations, l.Nodes[i].LabelPoint, l.Label(uint32(i))); err != nil {
+		if err := placeLabel(
+			&grid,
+			labels,
+			continuations,
+			l.Nodes[i].LabelPoint,
+			l.Label(uint32(i)),
+		); err != nil {
 			return Frame{}, fmt.Errorf("place node %d label: %w", i, err)
 		}
 	}

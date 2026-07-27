@@ -225,6 +225,10 @@ func TestRasterizeMergesRouteWithNodeBorder(t *testing.T) {
 
 	grid, err := Rasterize(l)
 	require.NoError(t, err)
+	cells := &grid.Cells[0]
+	grid, err = RasterizeInto(grid.Cells, l)
+	require.NoError(t, err)
+	require.Same(t, cells, &grid.Cells[0])
 	got, ok := grid.At(Point{X: 4, Y: 1})
 	require.True(t, ok)
 	want := North | East | South

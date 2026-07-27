@@ -12,8 +12,12 @@ import (
 )
 
 var (
-	ErrNodeNotFound = errors.New("node not found")
-	ErrEdgeNotFound = errors.New("edge not found")
+	ErrNodeNotFound  = errors.New("node not found")
+	ErrEdgeNotFound  = errors.New("edge not found")
+	ErrPortNotFound  = errors.New("port not found")
+	ErrSamePort      = errors.New("cannot connect a port to itself")
+	ErrPortNotOnEdge = errors.New("port is not an edge endpoint")
+	ErrDuplicateEdge = errors.New("edge already connects ports")
 )
 
 const deletedPortNode = math.MaxUint32
@@ -129,8 +133,8 @@ func (g *Graph) String() string {
 }
 
 func (g *Graph) NewNode(label string) uint32 {
-	offsets := []float32{.5, .25, .75, .1}
-	sides := []Side{Top, RightSide, Bottom, LeftSide}
+	offsets := [...]float32{.5, .25, .75}
+	sides := [...]Side{Top, RightSide, Bottom, LeftSide}
 	portCount := len(offsets) * len(sides)
 	nid := g.NextNodeID()
 	var ports []uint32
@@ -215,6 +219,44 @@ func (g *Graph) ConnectPorts(portA, portB uint32) uint32 {
 	g.freeEdges = g.freeEdges[:len(g.freeEdges)-1]
 	g.Edges[edgeID] = edge
 	return edgeID
+}
+
+// ReconnectEdge replaces one endpoint while preserving the edge ID.
+func (g *Graph) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
+	if !g.EdgeExists(edgeID) {
+		return fmt.Errorf("%w: %d", ErrEdgeNotFound, edgeID)
+	}
+	if !g.PortExists(newPort) {
+		return fmt.Errorf("%w: %d", ErrPortNotFound, newPort)
+	}
+	edge := g.Edges[edgeID]
+	if !edge.HasPort(oldPort) {
+		return fmt.Errorf("%w: %d", ErrPortNotOnEdge, oldPort)
+	}
+	if oldPort == newPort {
+		return nil
+	}
+
+	otherPort := edge.PortA
+	if oldPort == edge.PortA {
+		otherPort = edge.PortB
+	}
+	if otherPort == newPort {
+		return ErrSamePort
+	}
+	for i := range g.Edges {
+		if uint32(i) != edgeID &&
+			g.EdgeExists(uint32(i)) &&
+			g.Edges[i].Connects(otherPort, newPort) {
+			return ErrDuplicateEdge
+		}
+	}
+	if oldPort == edge.PortA {
+		g.Edges[edgeID].PortA = newPort
+	} else {
+		g.Edges[edgeID].PortB = newPort
+	}
+	return nil
 }
 
 // DeleteEdge removes an edge and makes its ID available for reuse.

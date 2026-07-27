@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
 // Connections records which neighboring cells connect to the center of a cell.
@@ -33,6 +34,10 @@ type Grid struct {
 }
 
 func NewGrid(bounds Rect) (Grid, error) {
+	return newGrid(nil, bounds)
+}
+
+func newGrid(cells []Connections, bounds Rect) (Grid, error) {
 	if bounds.Empty() {
 		return Grid{}, fmt.Errorf("invalid grid size %+v", bounds.Size)
 	}
@@ -40,9 +45,11 @@ func NewGrid(bounds Rect) (Grid, error) {
 	if area > uint64(math.MaxInt) {
 		return Grid{}, fmt.Errorf("grid area %d exceeds supported size", area)
 	}
+	cells = slices.Grow(cells[:0], int(area))[:int(area)]
+	clear(cells)
 	return Grid{
 		Bounds: bounds,
-		Cells:  make([]Connections, int(area)),
+		Cells:  cells,
 	}, nil
 }
 
@@ -85,6 +92,12 @@ func (g *Grid) AddPath(points []Point) error {
 
 // Rasterize converts layout geometry into directional cell occupancy.
 func Rasterize(l *Layout) (Grid, error) {
+	return RasterizeInto(nil, l)
+}
+
+// RasterizeInto converts layout geometry into directional cell occupancy,
+// reusing cells when it has sufficient capacity.
+func RasterizeInto(cells []Connections, l *Layout) (Grid, error) {
 	if l == nil {
 		return Grid{}, errors.New("nil layout")
 	}
@@ -95,7 +108,7 @@ func Rasterize(l *Layout) (Grid, error) {
 	if !ok {
 		return Grid{}, errors.New("layout has no geometry")
 	}
-	grid, err := NewGrid(bounds)
+	grid, err := newGrid(cells, bounds)
 	if err != nil {
 		return Grid{}, err
 	}

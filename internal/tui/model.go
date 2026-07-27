@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
-	"github.com/rivo/uniseg"
 )
 
 type mode uint8
@@ -20,7 +18,10 @@ const (
 	modeNavigate mode = iota
 	modeMove
 	modeEditLabel
+	modeConnect
 )
+
+const finishOperation = "finish the current operation first"
 
 func (m mode) String() string {
 	switch m {
@@ -30,6 +31,8 @@ func (m mode) String() string {
 		return "move"
 	case modeEditLabel:
 		return "edit label"
+	case modeConnect:
+		return "connect"
 	default:
 		return "unknown"
 	}
@@ -44,17 +47,39 @@ type rowSpan struct {
 type Model struct {
 	geo *layout.Layout
 
-	cursor   layout.Point
-	viewport layout.Point
-	hits     []layout.Hit
-	active   int
-	target   layout.Hit
+	cursor         layout.Point
+	viewport       layout.Point
+	hits           []layout.Hit
+	active         int
+	target         layout.Hit
+	connectSource  uint32
+	connectEdge    uint32
+	connectOldPort uint32
+	reconnecting   bool
 
-	mode       mode
-	editBuffer []byte
+	mode         mode
+	editBuffer   []byte
+	editDraft    []byte
+	editOriginal string
+	editCaret    int
+	editCreated  bool
+
+	dragging      bool
+	dragOffset    layout.Point
+	editMouseDown bool
+	lastClick     layout.Point
+	hasLastClick  bool
+
 	frame      render.Frame
+	encoder    render.Encoder
 	frameRows  []rowSpan
 	viewBuffer []byte
+	statusText []byte
+
+	// Bubble Tea compares consecutive cursor pointers, so each View writes the
+	// cursor value that the previous View does not reference.
+	viewCursor [2]tea.Cursor
+	nextCursor uint8
 
 	width  int
 	height int
@@ -67,6 +92,8 @@ func New(geo *layout.Layout) (*Model, error) {
 		return nil, errors.New("nil layout")
 	}
 	m := &Model{geo: geo}
+	m.viewCursor[0] = *tea.NewCursor(0, 0)
+	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
 		if !geo.Nodes[i].Empty() {
 			m.cursor = geo.Nodes[i].LabelPoint
@@ -101,88 +128,78 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(message.Height, 0)
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
-		if message.String() == "ctrl+c" {
+		key := message.Key()
+		if key.Code == 'c' && key.Mod == tea.ModCtrl {
 			return m, tea.Quit
 		}
+		m.hasLastClick = false
 		if m.mode == modeEditLabel {
 			m.updateLabel(message)
 		} else {
-			if message.String() == "q" {
+			if key.Code == 'q' && key.Mod == 0 {
 				return m, tea.Quit
 			}
-			m.updateCommand(message.String())
+			m.updateCommand(key)
 		}
 	case tea.PasteMsg:
 		if m.mode == modeEditLabel {
-			m.appendLabelText(message.Content)
+			m.insertLabelText(message.Content)
 		}
+	case tea.MouseClickMsg:
+		m.updateMouseClick(message.Mouse())
+	case tea.MouseReleaseMsg:
+		m.dragging = false
+		m.editMouseDown = false
+	case tea.MouseMotionMsg:
+		m.updateMouseMotion(message.Mouse())
+	case tea.MouseWheelMsg:
+		m.updateMouseWheel(message.Mouse())
 	}
 	return m, nil
 }
 
-func (m *Model) updateCommand(key string) {
-	switch key {
-	case "up", "k":
-		m.move(0, -1)
-	case "right", "l":
-		m.move(1, 0)
-	case "down", "j":
-		m.move(0, 1)
-	case "left", "h":
-		m.move(-1, 0)
-	case "tab":
-		m.cycleHit(1)
-	case "shift+tab":
+func (m *Model) updateCommand(key tea.Key) {
+	if key.Code == tea.KeyTab && key.Mod == tea.ModShift {
 		m.cycleHit(-1)
-	case "enter", "m":
+		return
+	}
+	if key.Mod != 0 {
+		return
+	}
+	switch key.Code {
+	case tea.KeyUp, 'k':
+		m.move(0, -1)
+	case tea.KeyRight, 'l':
+		m.move(1, 0)
+	case tea.KeyDown, 'j':
+		m.move(0, 1)
+	case tea.KeyLeft, 'h':
+		m.move(-1, 0)
+	case tea.KeyTab:
+		m.cycleHit(1)
+	case tea.KeyEnter:
+		if m.mode == modeConnect {
+			m.completeConnection()
+		} else {
+			m.beginMove()
+		}
+	case 'm':
 		m.beginMove()
-	case "e":
+	case 'e':
 		m.beginLabelEdit()
-	case "d", "delete":
+	case 'n':
+		m.newNode()
+	case 'c':
+		if m.mode == modeConnect {
+			m.completeConnection()
+		} else {
+			m.beginConnection()
+		}
+	case 'd', tea.KeyDelete:
 		m.deleteActive()
-	case "esc":
-		m.mode = modeNavigate
-		m.status = ""
+	case tea.KeyEscape:
+		m.cancelMode()
 	}
-}
-
-func (m *Model) updateLabel(key tea.KeyPressMsg) {
-	switch key.String() {
-	case "esc":
-		m.editBuffer = m.editBuffer[:0]
-		m.mode = modeNavigate
-		m.status = ""
-	case "enter":
-		label := string(m.editBuffer)
-		if err := m.geo.SetNodeLabel(m.target.ID, label); err != nil {
-			m.status = err.Error()
-			return
-		}
-		if err := m.rebuild(); err != nil {
-			m.status = err.Error()
-			return
-		}
-		m.editBuffer = m.editBuffer[:0]
-		m.mode = modeNavigate
-		m.refreshHits()
-		m.status = ""
-	case "backspace":
-		m.deleteLastGrapheme()
-	default:
-		m.appendLabelText(key.Key().Text)
-	}
-}
-
-func (m *Model) appendLabelText(text string) {
-	if text == "" {
-		return
-	}
-	if strings.ContainsAny(text, "\r\n") {
-		m.status = "labels currently support one line"
-		return
-	}
-	m.editBuffer = append(m.editBuffer, text...)
-	m.status = ""
 }
 
 func (m *Model) move(dx, dy int) {
@@ -214,15 +231,20 @@ func (m *Model) moveNode(dx, dy int) {
 	if !ok {
 		return
 	}
-	if err := m.geo.PlaceNode(m.target.ID, origin); err != nil {
+	m.placeNode(m.target.ID, origin, cursor)
+}
+
+func (m *Model) placeNode(nodeID uint32, origin, cursor layout.Point) {
+	if err := m.geo.PlaceNode(nodeID, origin); err != nil {
 		m.status = err.Error()
 		return
 	}
-	m.cursor = cursor
 	if err := m.rebuild(); err != nil {
 		m.status = err.Error()
 		return
 	}
+	m.cursor = cursor
+	m.target = layout.Hit{ID: nodeID, Kind: layout.HitNode}
 	m.refreshHits()
 	m.selectTarget()
 	m.ensureCursorVisible()
@@ -232,7 +254,12 @@ func (m *Model) moveNode(dx, dy int) {
 func (m *Model) beginMove() {
 	if m.mode == modeMove {
 		m.mode = modeNavigate
+		m.dragging = false
 		m.status = ""
+		return
+	}
+	if m.mode != modeNavigate {
+		m.status = finishOperation
 		return
 	}
 	hit, ok := m.activeHit()
@@ -246,18 +273,108 @@ func (m *Model) beginMove() {
 }
 
 func (m *Model) beginLabelEdit() {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
 	hit, ok := m.activeHit()
 	if !ok || hit.Kind != layout.HitNode {
 		m.status = "select a node to edit"
 		return
 	}
-	m.target = hit
-	m.editBuffer = append(m.editBuffer[:0], m.geo.Label(hit.ID)...)
-	m.mode = modeEditLabel
+	m.startLabelEdit(hit, false)
+}
+
+func (m *Model) newNode() {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
+	nodeID, err := m.geo.NewNodeAt("", m.cursor)
+	if err != nil {
+		m.status = err.Error()
+		return
+	}
+	if err := m.rebuild(); err != nil {
+		_ = m.geo.DeleteNode(nodeID)
+		_ = m.rebuild()
+		m.status = err.Error()
+		return
+	}
+	m.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode}, true)
+}
+
+func (m *Model) beginConnection() {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
+	hit, ok := m.activeHit()
+	if !ok {
+		m.status = "select a port or edge"
+		return
+	}
+	switch hit.Kind {
+	case layout.HitPort:
+		m.connectSource = hit.ID
+		m.reconnecting = false
+	case layout.HitEdge:
+		portA, portB, err := m.geo.EdgePorts(hit.ID)
+		if err != nil {
+			m.status = err.Error()
+			return
+		}
+		moving, stationary := portA, portB
+		if pointDistance(m.cursor, m.geo.Ports[portB].Anchor) <
+			pointDistance(m.cursor, m.geo.Ports[portA].Anchor) {
+			moving, stationary = portB, portA
+		}
+		m.connectEdge = hit.ID
+		m.connectOldPort = moving
+		m.connectSource = stationary
+		m.reconnecting = true
+	default:
+		m.status = "select a port or edge"
+		return
+	}
+	m.mode = modeConnect
+	m.status = ""
+}
+
+func (m *Model) completeConnection() {
+	hit, ok := m.activeHit()
+	if !ok || hit.Kind != layout.HitPort {
+		m.status = "select a destination port"
+		return
+	}
+	edgeID := m.connectEdge
+	var err error
+	if m.reconnecting {
+		err = m.geo.ReconnectEdge(edgeID, m.connectOldPort, hit.ID)
+	} else {
+		edgeID, err = m.geo.ConnectPorts(m.connectSource, hit.ID)
+	}
+	if err != nil {
+		m.status = err.Error()
+		return
+	}
+	if err := m.rebuild(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	m.mode = modeNavigate
+	m.target = layout.Hit{ID: edgeID, Kind: layout.HitEdge}
+	m.clearConnection()
+	m.refreshHits()
+	m.selectTarget()
 	m.status = ""
 }
 
 func (m *Model) deleteActive() {
+	if m.mode != modeNavigate && m.mode != modeMove {
+		m.status = finishOperation
+		return
+	}
 	hit, ok := m.activeHit()
 	if !ok {
 		m.status = "nothing selected"
@@ -283,8 +400,23 @@ func (m *Model) deleteActive() {
 	}
 	m.mode = modeNavigate
 	m.target = layout.Hit{}
+	m.dragging = false
 	m.refreshHits()
 	m.status = ""
+}
+
+func (m *Model) cancelMode() {
+	m.mode = modeNavigate
+	m.clearConnection()
+	m.dragging = false
+	m.status = ""
+}
+
+func (m *Model) clearConnection() {
+	m.connectSource = 0
+	m.connectEdge = 0
+	m.connectOldPort = 0
+	m.reconnecting = false
 }
 
 func (m *Model) rebuild() error {
@@ -296,7 +428,7 @@ func (m *Model) rebuild() error {
 		m.frameRows = m.frameRows[:0]
 		return nil
 	}
-	frame, err := render.EncodeFrame(m.frame.Text[:0], m.geo)
+	frame, err := m.encoder.EncodeFrame(m.frame.Text[:0], m.geo)
 	if err != nil {
 		return fmt.Errorf("render layout: %w", err)
 	}
@@ -332,20 +464,6 @@ func (m *Model) selectTarget() {
 			return
 		}
 	}
-}
-
-func (m *Model) deleteLastGrapheme() {
-	remaining := m.editBuffer
-	start := 0
-	offset := 0
-	state := -1
-	for len(remaining) != 0 {
-		start = offset
-		cluster, rest, _, nextState := uniseg.FirstGraphemeCluster(remaining, state)
-		offset += len(cluster)
-		remaining, state = rest, nextState
-	}
-	m.editBuffer = m.editBuffer[:start]
 }
 
 func (m *Model) ensureCursorVisible() {
@@ -421,6 +539,11 @@ func visibleOrigin(origin, cursor uint32, size int) uint32 {
 		return origin
 	}
 	return uint32(uint64(cursor) - size64 + 1)
+}
+
+func pointDistance(a, b layout.Point) uint64 {
+	return uint64(max(a.X, b.X)-min(a.X, b.X)) +
+		uint64(max(a.Y, b.Y)-min(a.Y, b.Y))
 }
 
 var _ tea.Model = (*Model)(nil)
