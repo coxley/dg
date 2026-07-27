@@ -37,6 +37,7 @@ The first end-to-end milestone is complete. The engine can:
 - move nodes and rebuild without steady-state allocations
 - query every node, port, and edge rasterized at a grid point
 - edit diagrams interactively through a Bubble Tea terminal UI
+- serialize live graph data, placement, and options to versioned JSON
 
 The example program renders:
 
@@ -104,6 +105,18 @@ err = geo.Build()
 `Layout.Hits(point)` yields all overlapping geometry in node, port, then edge
 order. It reports ports at their anchor cells. It checks compact edge segments,
 so its cost does not depend on rendered edge length.
+
+### `document`
+
+`document.Document` is the versioned persisted schema. It stores live semantic
+objects, node origins, padding, and router configuration. Export compacts
+runtime tombstones and remaps port references; import reconstructs independent
+runtime slices.
+
+Routes, geometry, free lists, and reusable scratch are derived state and are not
+persisted. `document.Marshal` writes indented JSON, `document.Unmarshal`
+strictly decodes and validates version 1, and `Document.Layout` creates an
+editable layout.
 
 ### `render`
 
@@ -220,26 +233,7 @@ The basic TUI is complete. It supports keyboard and mouse interaction, ANSI
 selection, node and edge creation and reconnection, live label editing,
 deletion, viewport tracking, and resize-aware rendering.
 
-### 1. Define a persisted document format
-
-Do not serialize router scratch or derived routes as authoritative state. Create
-a versioned document type that contains:
-
-- semantic graph data
-- node origins
-- document and router options
-- future node and edge styles
-- future draw order
-
-`WithGraph` loads semantic graph data but places every node at the origin. A
-document loader needs to restore placement as well.
-
-JSON is sufficient for the first format. Keep the persisted schema separate
-from runtime structs so internal layout changes do not silently break files.
-
-## Later design work
-
-### Multiline labels
+### 1. Multiline labels
 
 Separate text layout from node rectangle calculation before adding multiline
 text. The model will need:
@@ -252,6 +246,8 @@ text. The model will need:
 
 Keep the current single-line path simple. A text-layout result should provide
 measured dimensions and positioned line runs that the renderer can place.
+
+## Later design work
 
 ### Borderless nodes
 

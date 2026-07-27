@@ -115,17 +115,9 @@ func TestModelEditShortcuts(t *testing.T) {
 		wantCaret int
 	}{
 		{
-			name:      "ctrl-w deletes previous word and whitespace",
-			label:     "one two  ",
-			caret:     len("one two  "),
-			key:       tea.Key{Code: 'w', Mod: tea.ModCtrl},
-			wantLabel: "one ",
-			wantCaret: len("one "),
-		},
-		{
 			name:      "ctrl-w preserves grapheme boundaries",
-			label:     "界面 test ",
-			caret:     len("界面 test "),
+			label:     "界面 test  ",
+			caret:     len("界面 test  "),
 			key:       tea.Key{Code: 'w', Mod: tea.ModCtrl},
 			wantLabel: "界面 ",
 			wantCaret: len("界面 "),
@@ -137,22 +129,6 @@ func TestModelEditShortcuts(t *testing.T) {
 			key:       tea.Key{Code: 'u', Mod: tea.ModCtrl},
 			wantLabel: "two",
 			wantCaret: 0,
-		},
-		{
-			name:      "ctrl-a moves to line start",
-			label:     oneTwo,
-			caret:     len("one "),
-			key:       tea.Key{Code: 'a', Mod: tea.ModCtrl},
-			wantLabel: oneTwo,
-			wantCaret: 0,
-		},
-		{
-			name:      "ctrl-e moves to line end",
-			label:     oneTwo,
-			caret:     len("one "),
-			key:       tea.Key{Code: 'e', Mod: tea.ModCtrl},
-			wantLabel: oneTwo,
-			wantCaret: len(oneTwo),
 		},
 		{
 			name:      "alt-b moves to previous word",
@@ -191,6 +167,32 @@ func TestModelEditShortcuts(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestModelEditMovesToLineBounds(t *testing.T) {
+	t.Parallel()
+
+	const label = "one two"
+	model, nodeID := newTestModel(t)
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, label))
+	require.NoError(t, model.rebuild())
+	model.cursor = model.geo.Nodes[nodeID].LabelPoint
+	model.refreshHits()
+	updateModel(t, model, keyPress('e', "e"))
+	model.editCaret = len("one ")
+	model.moveCursorToCaret()
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	require.Zero(t, model.editCaret)
+	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint, model.cursor)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'e', Mod: tea.ModCtrl}))
+	require.Equal(t, len(label), model.editCaret)
+	require.Equal(
+		t,
+		model.geo.Nodes[nodeID].LabelPoint.Add(uint32(displayWidth([]byte(label))), 0),
+		model.cursor,
+	)
 }
 
 func TestModelCreatesAndCancelsNodes(t *testing.T) {

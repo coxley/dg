@@ -399,6 +399,21 @@ func (l *Layout) Label(nodeID uint32) string {
 	return l.graph.Nodes[nodeID].Label
 }
 
+// Graph returns an independent copy of the semantic graph.
+func (l *Layout) Graph() ir.Graph {
+	return l.graph.Clone()
+}
+
+// Padding returns the configured node padding.
+func (l *Layout) Padding() Padding {
+	return l.padding
+}
+
+// Router returns the configured router.
+func (l *Layout) Router() Router {
+	return l.router
+}
+
 // Build routes edges using the current node and port geometry.
 func (l *Layout) Build() error {
 	if err := l.router.route(l); err != nil {

@@ -41,13 +41,9 @@ func TestMeasureLabel(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := MeasureLabel(test.text)
-			require.ErrorIs(t, err, test.wantErr)
-			require.Equal(t, test.want, got)
-		})
+		got, err := MeasureLabel(test.text)
+		require.ErrorIs(t, err, test.wantErr, test.name)
+		require.Equal(t, test.want, got, test.name)
 	}
 }
 
@@ -122,22 +118,6 @@ func TestNodeRect(t *testing.T) {
 	require.False(t, got.OnBoundary(got.Max()))
 }
 
-func TestNodeRectReservesAnEmptyLabelRow(t *testing.T) {
-	t.Parallel()
-
-	got, err := NodeRect(Point{}, Size{}, Padding{Left: 1, Right: 1})
-	require.NoError(t, err)
-	require.Equal(t, Size{Width: 4, Height: 3}, got.Size)
-}
-
-func TestNodeRectPreservesNaturalWidth(t *testing.T) {
-	t.Parallel()
-
-	got, err := NodeRect(Point{}, Size{Width: 5, Height: 1}, Padding{Left: 1, Right: 1})
-	require.NoError(t, err)
-	require.Equal(t, Size{Width: 9, Height: 3}, got.Size)
-}
-
 func TestCenterPortPreservesNaturalWidth(t *testing.T) {
 	t.Parallel()
 
@@ -158,13 +138,17 @@ func TestCenterPortPreservesNaturalWidth(t *testing.T) {
 	require.Equal(t, uint32(4), geo.Ports[sinksPort].Anchor.X)
 }
 
-func TestNodeRectAddsOnlyExplicitPadding(t *testing.T) {
+func TestNodeRectSizing(t *testing.T) {
 	t.Parallel()
+
+	got, err := NodeRect(Point{}, Size{}, Padding{Left: 1, Right: 1})
+	require.NoError(t, err)
+	require.Equal(t, Size{Width: 4, Height: 3}, got.Size)
 
 	rapid.Check(t, func(t *rapid.T) {
 		label := Size{
-			Width:  rapid.Uint32Range(0, 1<<16).Draw(t, "label width"),
-			Height: rapid.Uint32Range(0, 1<<16).Draw(t, "label height"),
+			Width:  rapid.Uint32Range(1, 1<<16).Draw(t, "label width"),
+			Height: rapid.Uint32Range(1, 1<<16).Draw(t, "label height"),
 		}
 		padding := Padding{
 			Top:    rapid.Uint8().Draw(t, "top padding"),
@@ -175,10 +159,6 @@ func TestNodeRectAddsOnlyExplicitPadding(t *testing.T) {
 		rect, err := NodeRect(Point{}, label, padding)
 		require.NoError(t, err)
 
-		labelHeight := label.Height
-		if label == (Size{}) {
-			labelHeight = 1
-		}
 		require.Equal(
 			t,
 			label.Width+uint32(padding.Left)+uint32(padding.Right)+2,
@@ -186,7 +166,7 @@ func TestNodeRectAddsOnlyExplicitPadding(t *testing.T) {
 		)
 		require.Equal(
 			t,
-			labelHeight+uint32(padding.Top)+uint32(padding.Bottom)+2,
+			label.Height+uint32(padding.Top)+uint32(padding.Bottom)+2,
 			rect.Size.Height,
 		)
 	})
@@ -196,18 +176,28 @@ func TestCenterPortUsesMiddleBoundaryCell(t *testing.T) {
 	t.Parallel()
 
 	rapid.Check(t, func(t *rapid.T) {
-		label := rapid.StringMatching(`[a-z]{0,64}`).Draw(t, "label")
-		geo, err := New()
+		rect := Rect{
+			Min: Point{
+				X: rapid.Uint32Range(1, 1<<16).Draw(t, "x"),
+				Y: rapid.Uint32Range(1, 1<<16).Draw(t, "y"),
+			},
+			Size: Size{
+				Width:  rapid.Uint32Range(2, 1<<16).Draw(t, "width"),
+				Height: rapid.Uint32Range(2, 1<<16).Draw(t, "height"),
+			},
+		}
+		side := rapid.SampledFrom([]ir.Side{
+			ir.Top,
+			ir.RightSide,
+			ir.Bottom,
+			ir.LeftSide,
+		}).Draw(t, "side")
+		port, err := ResolvePort(rect, side, 0.5)
 		require.NoError(t, err)
-		nodeID, err := geo.NewNode(label)
-		require.NoError(t, err)
-		portID, ok := geo.graph.PickCenterPort(nodeID, ir.Top)
-		require.True(t, ok)
 
-		rect := geo.Nodes[nodeID].Rect
-		position := geo.Ports[portID].Anchor.X - rect.Min.X
-		require.Equal(t, rect.Size.Width/2, position)
-		require.Equal(t, (rect.Size.Width-1)/2, rect.Size.Width-1-position)
+		position, length := sidePosition(port.Anchor, rect, side)
+		require.Equal(t, length/2, position)
+		require.Equal(t, (length-1)/2, length-1-position)
 	})
 }
 
