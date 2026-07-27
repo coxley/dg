@@ -1,72 +1,294 @@
-The project is now at the point where the **next concrete step** is to build a terminal-aware geometry layer that turns your IR into cell-based rectangles, ports, and orthogonal routes, but stops short of choosing final Unicode glyphs. [yworks](https://www.yworks.com/pages/drawing-orthogonal-diagrams)
+# Project handoff
 
-## Project context
+## Goal
 
-You’re building a Monodraw-like diagram engine in Go, with a custom IR that models:
-- nodes with ports,
-- ports attached to sides with relative offsets,
-- undirected edges between ports,
-- and later, routing/rendering on a character grid. [sciencedirect](https://www.sciencedirect.com/science/article/abs/pii/S1045926X13000943)
+Build a Monodraw-like diagram engine in Go. The engine must support both
+programmatic editing and a point-and-click interface.
 
-The goal is **not** a Graphviz-style global layout system. Instead, it’s a freeform editor and renderer where flow can go in any direction, while the engine helps with clean orthogonal routing and sensible port placement. [docs.yfiles](https://docs.yfiles.com/yfiles/doc/developers-guide/orthogonal_edge_router.html)
+This is a freeform editor, not a Graphviz-style global layout system. Callers
+place nodes. The engine resolves cell geometry, routes orthogonal edges, and
+renders the result.
 
-## Where the IR stands
+Keep the core geometry grid-based and independent of Unicode glyphs. A future
+renderer should be able to target ASCII or graphics without replacing layout.
 
-Your current IR is already in a good place:
-- `Node` owns a list of ports.
-- `Port` stores `Node`, `Side`, and `Offset` in the normalized range `[0.0, 1.0]`.
-- `Edge` connects two ports.
-- The graph is intentionally undirected and duplicate port-pairs are rejected, which makes it behave like a simple graph over ports. [en.wikipedia](https://en.wikipedia.org/wiki/Multigraph)
+Prefer data-oriented design:
 
-That means the model now captures the important semantic information needed for orthogonal diagrams: side constraints and relative positions on node boundaries. [publikationen.uni-tuebingen](https://publikationen.uni-tuebingen.de/xmlui/bitstream/handle/10900/49366/pdf/diss.pdf?isAllowed=y&sequence=1)
+- keep structs small
+- use slice indices as IDs
+- keep related geometry in aligned slices
+- reuse hot-path memory
+- add bookkeeping only after benchmarks justify it
 
-## What the geometry layer should do
+## Current milestone
 
-The geometry layer should be **cell-aware**, because terminal box drawing depends on monospaced character cells and adjacency-aligned line art. But it should not yet decide the actual Unicode rune used for each junction; that is a final rasterization concern. [en.wikipedia](https://en.wikipedia.org/wiki/Box-drawing_characters)
+The first end-to-end milestone is complete. The engine can:
 
-Its job is to resolve:
-- node label size into a rectangle,
-- ports into concrete points on the rectangle boundary,
-- edges into orthogonal routes on a grid,
-- and occupied space into a rasterizable cell structure. [users.monash](https://users.monash.edu/~mwybrow/papers/marriott-diagrams-2014.pdf)
+- create and place nodes with single-line Unicode labels
+- connect side-constrained ports
+- route orthogonal edges around node obstacles
+- share routes between edges with a common endpoint
+- allow and cost unrelated edge crossings
+- reroute crossing edges for one extra pass by default
+- rasterize geometry into directional cell connectivity
+- render Unicode box-drawing output
+- move nodes and rebuild without steady-state allocations
+- query every node, port, and edge rasterized at a grid point
 
-## Recommended next milestone
+The example program renders:
 
-The best next milestone is:
+```text
+┌─────┬─────┐
+│ foo │ bar │
+└──┬──┴──┬──┘
+   │     │
+   │     │
+   └──┬──┘
+  ┌───┴───┐
+  │ sinks │
+  └───────┘
+```
 
-**Take two manually placed nodes and render one orthogonally routed edge between them on a Unicode grid.** [people.eng.unimelb.edu](https://people.eng.unimelb.edu.au/pstuckey/papers/gd09.pdf)
+## Package boundaries
 
-That forces you to build the full pipeline in miniature:
-1. measure text,
-2. assign a rectangle,
-3. resolve ports to anchor points,
-4. route a path,
-5. rasterize box drawing characters. [link.springer](https://link.springer.com/article/10.1007/s00454-023-00593-y)
+### `ir`
 
-## Suggested package split
+`ir.Graph` stores the semantic graph:
 
-A clean split for the project is:
+- `Node` stores its label and port IDs
+- `Port` stores its node ID, side, and normalized offset
+- `Edge` stores two port IDs
 
-- `ir/` — your current semantic model.
-- `layout/` — cell geometry, port resolution, routing.
-- `render/` — convert occupancy/segments into Unicode box drawing.
+Edges are undirected. Duplicate port pairs return the existing edge ID.
+New nodes currently receive fixed candidate ports on every side.
 
-That mirrors the common graph-drawing separation between abstract graph representation, geometric layout, and final drawing output. [cs.brown](https://cs.brown.edu/people/rtamassi/papers/gdbiblio.pdf)
+### `layout`
 
-## What to build first
+`layout.Layout` owns a cloned graph and index-aligned geometry:
 
-Build these in order:
+- `Layout.Nodes[nodeID]`
+- `Layout.Ports[portID]`
+- `Layout.Edges[edgeID]`
 
-1. `MeasureLabel(text)`.
-2. `NodeRect` from label size and padding.
-3. `ResolvePort(rect, side, offset)`.
-4. `RouteOrthogonal(a, b, obstacles)`.
-5. `Rasterize(grid)` into box-drawing characters. [en.wikipedia](https://en.wikipedia.org/wiki/Box-drawing_characters)
+Mutations made through `Layout` update node and port geometry immediately.
+`Build` routes the edges.
 
-## The design choice that matters most
+`Layout.geometryPorts` is reusable transactional scratch space. Port resolution
+finishes there before it commits results to `Layout.Ports`.
 
-The single biggest decision is: **make geometry grid-based, not glyph-based**. Unicode box-drawing characters are just the terminal encoding of orthogonal connectivity, so your layout logic should think in cells, segments, and junction occupancy, not in runes. [unicode](https://www.unicode.org/charts/nameslist/n_2500.html)
+The public construction API is:
 
-That keeps the engine flexible enough to support ASCII fallback later, or even a graphical renderer, without redoing the core geometry.
+```go
+geo, err := layout.New(
+	layout.WithPadding(1, 0),
+	layout.WithRouter(layout.DefaultRouter()),
+	layout.WithGraph(graph),
+)
+source, err := geo.NewNodeAt("source", layout.NewPoint(2, 3))
+sink, err := geo.NewNode("sink")
+edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+err = geo.PlaceNode(sink, layout.NewPoint(20, 3))
+err = geo.Build()
+```
 
-So the short answer is: your next step is to implement the **layout/cell-geometry layer** with manual placement and simple orthogonal routing, then add rasterization as a separate final pass. [yworks](https://www.yworks.com/pages/drawing-orthogonal-diagrams)
+`Layout.Hits(point)` yields all overlapping geometry in node, port, then edge
+order. It reports ports at their anchor cells. It checks compact edge segments,
+so its cost does not depend on rendered edge length.
+
+### `render`
+
+`layout.Rasterize` converts rectangles and routes into directional cell
+connectivity. `render.Unicode` maps that connectivity to box-drawing glyphs and
+places labels.
+
+The renderer merges connectivity. It does not retain object ownership or
+layering information.
+
+## Settled design decisions
+
+- `Point` and `Size` use `uint32`.
+- `Padding` uses `uint8`.
+- rectangles use half-open bounds.
+- default padding is one horizontal cell and zero vertical cells.
+- labels support one line for the initial milestone.
+- label measurement uses terminal display width, including wide graphemes.
+- ports contain an `Anchor` on the node boundary and an `Exit` outside it.
+- an `Exit` equals its `Anchor` when unsigned coordinates cannot represent the
+  outward neighbor.
+- the router is configuration passed to `layout.New`.
+- routing costs include step, shared step, bend, and crossing costs.
+- route sharing requires a common endpoint and applies to the entire route.
+- unrelated edges may cross but may not share a segment or touch an endpoint.
+- rerouting replaces an entire route. Comments mark where more local rerouting
+  would need different logic.
+- the router uses a concrete heap and `cmp.Compare`.
+- `Layout` owns reusable router scratch. `Router` remains copyable configuration.
+- obstacle access uses `Layout.Obstacles()` instead of a stored obstacle slice.
+- rasterization decides glyph connectivity after layout.
+
+## Current performance
+
+Results from an Apple M4 Max on July 26, 2026:
+
+```text
+BenchmarkLayoutBuild             17.3 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutMoveAndBuild      19.0 µs/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/node         33.8 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/edge         33.1 ns/op   0 B/op   0 allocs/op
+BenchmarkLayoutHits/miss         33.7 ns/op   0 B/op   0 allocs/op
+```
+
+These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
+nodes, ports, and compact edge segments. Add a spatial index only if larger
+interactive diagrams show that this scan matters.
+
+The obstacle iterator removed a stored slice and preserved zero allocations. It
+made the small build benchmark about 6% to 7% slower.
+
+## Recommended next session
+
+Start with document mutation semantics, then use them in a small TUI.
+
+### 1. Add label editing
+
+Add a transactional method such as:
+
+```go
+func (l *Layout) SetNodeLabel(nodeID uint32, label string) error
+```
+
+It should measure the label, update the node rectangle, resolve its ports into
+scratch, and commit only after every step succeeds. Connected edges can reroute
+on the next `Build`.
+
+This provides the first real editing operation and establishes the pattern for
+later style changes.
+
+### 2. Decide deletion and identity rules
+
+Deleting nodes or edges conflicts with raw slice indices as durable IDs. Decide
+the contract before implementing removal:
+
+- compact slices and return an ID remap
+- use swap removal and report the moved ID
+- retain holes with a free list
+- add indirect or generational handles
+
+Node deletion must also remove its ports, incident edges, route scratch, and any
+selection or draw-order references. Edge deletion is the smaller first step.
+
+Favor the least bookkeeping that still gives the TUI and persisted documents
+predictable identity.
+
+### 3. Build a basic TUI
+
+Use the existing APIs to test the full interactive loop:
+
+- move a cursor across the cell grid
+- inspect `Layout.Hits`
+- select and cycle through overlapping hits
+- move the selected node with `PlaceNode`
+- edit its label with `SetNodeLabel`
+- call `Build` and render after each mutation
+
+Programmatic movement already works. The initial TUI only needs to connect input,
+selection, movement, and rendering.
+
+Profile the complete loop before adding incremental routing or a dense hit
+index. The current small layout rebuilds in about 19 microseconds after a move.
+
+### 4. Define a persisted document format
+
+Do not serialize router scratch or derived routes as authoritative state. Create
+a versioned document type that contains:
+
+- semantic graph data
+- node origins
+- document and router options
+- future node and edge styles
+- future draw order
+
+`WithGraph` loads semantic graph data but places every node at the origin. A
+document loader needs to restore placement as well.
+
+JSON is sufficient for the first format. Keep the persisted schema separate
+from runtime structs so internal layout changes do not silently break files.
+
+## Later design work
+
+### Multiline labels
+
+Separate text layout from node rectangle calculation before adding multiline
+text. The model will need:
+
+- wrapping width and height constraints
+- horizontal alignment
+- vertical alignment
+- justified lines
+- explicit newlines
+
+Keep the current single-line path simple. A text-layout result should provide
+measured dimensions and positioned line runs that the renderer can place.
+
+### Borderless nodes
+
+Keep a logical rectangle for obstacle avoidance and port placement even when no
+border is drawn. Define whether padding remains part of the obstacle and where
+an invisible boundary anchors ports.
+
+### Edge endpoint shapes
+
+Store visual endpoint styles independently for each end of an undirected edge.
+Define how arrowheads occupy cells, attach to port anchors, and combine with node
+borders before changing the router.
+
+### Layering
+
+Creation order should define the default back-to-front order. Reordering should
+not renumber semantic IDs.
+
+A compact direction is a draw-order slice containing object kind and object ID.
+Operations can move entries backward, to the back, forward, or to the front.
+
+Layering affects more than rendering:
+
+- `Layout.Hits` must expose or respect back-to-front order
+- deletion must remove draw-order entries
+- persistence must save draw order
+- rasterization must retain ownership instead of only merged connectivity
+- unrelated crossings need a rule for which edge appears above the other
+
+Settle whether ports are independent drawable objects before defining this
+representation.
+
+## Known limits
+
+- coordinates cannot be negative
+- labels cannot contain newlines
+- node and edge styles do not exist
+- nodes always draw borders
+- edges have no arrowheads
+- every `Build` routes every edge
+- hit testing scans all geometry
+- public geometry slices rely on callers not mutating them
+- several methods assume valid IDs and may panic on invalid indices
+- loaded graphs do not contain node placement
+- raster cells lose object ownership
+
+## Verification
+
+Use a writable Go build cache in the sandbox:
+
+```sh
+GOCACHE=/private/tmp/dg-codex-go-build go test ./...
+GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...
+GOCACHE=/private/tmp/dg-codex-go-build go vet ./...
+GOCACHE=/private/tmp/dg-codex-go-build \
+  GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache \
+  golangci-lint run --path-mode abs
+GOCACHE=/private/tmp/dg-codex-go-build \
+  go test ./layout -run '^$' \
+  -bench 'BenchmarkLayout(Build|MoveAndBuild|Hits)$' -benchmem
+```
+
+Before this handoff, tests, race detection, vet, and lint passed.
