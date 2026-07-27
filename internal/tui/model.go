@@ -21,6 +21,7 @@ const (
 	modeMove
 	modeEditLabel
 	modeConnect
+	modeRectangle
 	modeSavePath
 )
 
@@ -44,6 +45,8 @@ func (m mode) String() string {
 		return "edit label"
 	case modeConnect:
 		return "connect"
+	case modeRectangle:
+		return "rectangle"
 	case modeSavePath:
 		return "save path"
 	default:
@@ -61,22 +64,23 @@ type Model struct {
 	geo     *layout.Layout
 	history *layout.History
 
-	cursor          layout.Point
-	viewport        layout.Point
-	hits            []layout.Hit
-	active          int
-	target          layout.Hit
-	connectSource   uint32
-	connectEdge     uint32
-	connectOldPort  uint32
-	reconnecting    bool
-	connectStarted  bool
-	connectDragging bool
-	connectPreview  []layout.Point
-	connectRaster   []layout.RasterCell
-	edgeDragPending bool
-	edgeDragHit     layout.Hit
-	edgeDragStart   layout.Point
+	cursor            layout.Point
+	viewport          layout.Point
+	hits              []layout.Hit
+	active            int
+	target            layout.Hit
+	connectSource     uint32
+	connectEdge       uint32
+	connectOldPort    uint32
+	reconnecting      bool
+	connectStarted    bool
+	connectDragging   bool
+	connectPreview    []layout.Point
+	connectRaster     []layout.RasterCell
+	edgeDragPending   bool
+	edgeDragHit       layout.Hit
+	edgeDragStart     layout.Point
+	creatingRectangle bool
 
 	mode             mode
 	editBuffer       []byte
@@ -114,6 +118,9 @@ type Model struct {
 
 	saveHint string
 
+	nodeStyle layout.NodeStyle
+	edgeStyle layout.EdgeStyle
+
 	transaction     layout.Transaction
 	transactionOpen bool
 
@@ -139,6 +146,15 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		if !geo.Nodes[i].Empty() {
 			m.cursor = geo.Nodes[i].LabelPoint
 			break
+		}
+	}
+	for hit := range geo.DrawOrder() {
+		switch hit.Kind {
+		case layout.HitNode:
+			m.nodeStyle, _ = geo.NodeStyle(hit.ID)
+		case layout.HitEdge:
+			m.edgeStyle, _ = geo.EdgeStyle(hit.ID)
+		case layout.HitPort:
 		}
 	}
 	if err := m.rebuild(); err != nil {
@@ -235,8 +251,16 @@ func (m *Model) updateCommand(key tea.Key) {
 		m.expandSelection()
 		return
 	}
-	if key.Code == tea.KeyTab && key.Mod == tea.ModShift {
+	if key.Code == tea.KeyTab && key.Mod == tea.ModCtrl {
+		m.cycleHit(1)
+		return
+	}
+	if key.Code == tea.KeyTab && key.Mod == tea.ModCtrl|tea.ModShift {
 		m.cycleHit(-1)
+		return
+	}
+	if key.Code == tea.KeyTab && key.Mod == tea.ModShift {
+		m.focusNode(-1)
 		return
 	}
 	if key.Mod == tea.ModShift {
@@ -245,6 +269,8 @@ func (m *Model) updateCommand(key tea.Key) {
 			m.reorderLayer(true, true)
 		case ']', '}':
 			m.reorderLayer(true, false)
+		case 'a', 'A':
+			m.cycleEdgeArrow(true)
 		}
 		return
 	}
@@ -265,7 +291,7 @@ func (m *Model) updateNavigationCommand(code rune) {
 	case tea.KeyLeft:
 		m.move(-1, 0)
 	case tea.KeyTab:
-		m.cycleHit(1)
+		m.focusNode(1)
 	case '[':
 		m.reorderLayer(false, true)
 	case ']':
@@ -286,6 +312,12 @@ func (m *Model) updateNavigationCommand(code rune) {
 		m.beginLabelEdit()
 	case 'n':
 		m.newNode()
+	case 'r':
+		m.beginRectangle()
+	case 'b':
+		m.cycleBorder()
+	case 'a':
+		m.cycleEdgeArrow(false)
 	case 'l':
 		if m.mode != modeConnect {
 			m.beginConnection()
@@ -352,6 +384,17 @@ func (m *Model) move(dx, dy int) {
 		m.moveNode(dx, dy)
 		return
 	}
+	if m.mode == modeNavigate {
+		nodes, edges := m.selectedCounts()
+		if nodes > 0 && nodes+edges > 1 {
+			m.shiftSelection(dx, dy)
+			return
+		}
+		if hit, ok := m.focusedNode(); ok {
+			m.shiftFocusedNode(hit, dx, dy)
+			return
+		}
+	}
 	point, ok := movePoint(m.cursor, dx, dy)
 	if !ok {
 		return
@@ -375,7 +418,9 @@ func (m *Model) moveNode(dx, dy int) {
 	if !ok {
 		return
 	}
-	m.moveSelectedNodes(int64(dx), int64(dy), cursor)
+	if _, err := m.moveSelectedNodes(int64(dx), int64(dy), cursor); err != nil {
+		m.status = err.Error()
+	}
 }
 
 func (m *Model) placeNode(nodeID uint32, origin, cursor layout.Point) {
@@ -387,10 +432,15 @@ func (m *Model) placeNode(nodeID uint32, origin, cursor layout.Point) {
 	previous := m.geo.Nodes[nodeID].Rect.Min
 	dx := int64(origin.X) - int64(previous.X)
 	dy := int64(origin.Y) - int64(previous.Y)
-	m.moveSelectedNodes(dx, dy, cursor)
+	if _, err := m.moveSelectedNodes(dx, dy, cursor); err != nil {
+		m.status = err.Error()
+	}
 }
 
-func (m *Model) moveSelectedNodes(dx, dy int64, cursor layout.Point) {
+func (m *Model) moveSelectedNodes(
+	dx, dy int64,
+	cursor layout.Point,
+) (bool, error) {
 	if missing := len(m.geo.Nodes) - len(m.moveOrigins); missing > 0 {
 		m.moveOrigins = slices.Grow(m.moveOrigins, missing)[:len(m.geo.Nodes)]
 	}
@@ -398,11 +448,11 @@ func (m *Model) moveSelectedNodes(dx, dy int64, cursor layout.Point) {
 		origin := m.geo.Nodes[nodeID].Rect.Min
 		_, ok := moveCoordinate64(origin.X, dx)
 		if !ok {
-			return
+			return false, nil
 		}
 		_, ok = moveCoordinate64(origin.Y, dy)
 		if !ok {
-			return
+			return false, nil
 		}
 		m.moveOrigins[nodeID] = origin
 	}
@@ -411,19 +461,18 @@ func (m *Model) moveSelectedNodes(dx, dy int64, cursor layout.Point) {
 		x, _ := moveCoordinate64(origin.X, dx)
 		y, _ := moveCoordinate64(origin.Y, dy)
 		if err := m.geo.PlaceNode(nodeID, layout.NewPoint(x, y)); err != nil {
-			m.status = errors.Join(err, m.restoreMovedNodes()).Error()
-			return
+			return false, errors.Join(err, m.restoreMovedNodes())
 		}
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(err, m.restoreMovedNodes()).Error()
-		return
+		return false, errors.Join(err, m.restoreMovedNodes())
 	}
 	m.cursor = cursor
 	m.refreshHits()
 	m.selectTarget()
 	m.ensureCursorVisible()
 	m.status = ""
+	return true, nil
 }
 
 func (m *Model) restoreMovedNodes() error {
@@ -490,11 +539,25 @@ func (m *Model) newNode() {
 		m.status = errors.Join(err, m.cancelTransaction()).Error()
 		return
 	}
+	if err := m.geo.SetNodeStyle(nodeID, m.nodeStyle); err != nil {
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		return
+	}
 	if err := m.rebuild(); err != nil {
 		m.status = errors.Join(err, m.cancelTransaction()).Error()
 		return
 	}
 	m.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+}
+
+func (m *Model) beginRectangle() {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
+	m.clearConnection()
+	m.mode = modeRectangle
+	m.status = "drag to create a rectangle"
 }
 
 func (m *Model) beginConnection() {
@@ -569,6 +632,13 @@ func (m *Model) completeConnectionTo(destination uint32) {
 		_ = m.cancelTransaction()
 		m.status = err.Error()
 		return
+	}
+	if !m.reconnecting {
+		if err := m.geo.SetEdgeStyle(edgeID, m.edgeStyle); err != nil {
+			_ = m.cancelTransaction()
+			m.status = err.Error()
+			return
+		}
 	}
 	if err := m.rebuild(); err != nil {
 		m.status = errors.Join(
@@ -662,10 +732,26 @@ func (m *Model) cancelMode() {
 		m.finishMove()
 		return
 	}
+	if m.mode == modeRectangle && m.creatingRectangle {
+		m.creatingRectangle = false
+		m.mode = modeNavigate
+		err := errors.Join(
+			m.cancelTransaction(),
+			m.render(),
+		)
+		if err != nil {
+			m.status = err.Error()
+		} else {
+			m.status = ""
+		}
+		m.refreshHits()
+		return
+	}
 	m.mode = modeNavigate
 	m.clearConnection()
 	m.dragging = false
 	m.selecting = false
+	m.creatingRectangle = false
 	m.status = ""
 }
 
@@ -717,6 +803,7 @@ func (m *Model) interruptInteraction() {
 	m.clearConnection()
 	m.dragging = false
 	m.resizing = false
+	m.creatingRectangle = false
 	m.editMouseDown = false
 	m.selecting = false
 }

@@ -45,6 +45,11 @@ The first end-to-end milestone is complete. The engine can:
 - resize nodes from the nearest corner with right-drag
 - order nodes and edges in persistent back-to-front layers
 - occlude lower geometry and labels using raster-cell ownership
+- create explicitly sized empty rectangles with left-drag
+- cycle node focus with Tab and move the focused node with arrow keys
+- persist solid, rounded, and borderless node styles
+- persist independent smart arrow styles at both edge endpoints
+- inherit the most recently chosen node and edge styles when creating objects
 
 The example program renders:
 
@@ -150,7 +155,14 @@ on rendered edge length.
 `Layout.PreviewRoute` treats a grid point as a temporary port and chooses its
 approach side by route cost. `PreviewRouteWithoutEdge` omits a relocated edge
 from occupancy. Both methods reuse router scratch and leave graph and history
-state unchanged.
+state unchanged. Their styled variants reserve straight endpoint cells for
+smart arrows.
+
+Smart-arrow ports prefer two straight route cells before a bend, including
+across every edge sharing the port. This leaves one line cell between a shared
+bend and the arrow. The router keeps full clearance when it does not lengthen
+the path. Otherwise it scores full- and short-clearance candidates and chooses
+the shorter clearance when the extra cell would require a costlier detour.
 
 `Layout.Selection()` owns index-aligned node and edge selection sets. It
 supports individual replacement and toggling, area intersection, iteration,
@@ -177,10 +189,12 @@ layout and accepts layout options such as `WithHistory`.
 `layout.Rasterize` converts rectangles and routes into aligned directional
 connectivity and ownership slices. Later layers replace lower connectivity at
 unrelated crossings and across complete node rectangles. Common-endpoint edges
-still merge shared connectivity. `render.Unicode` maps visible connectivity to
-box-drawing glyphs and only places label graphemes whose cells remain owned by
-their node. Fixed-size nodes wrap to their inner width and clip visually at
-their inner height without changing the stored label.
+still merge shared connectivity. Collinear node boundaries also merge into
+T-sections; node interiors continue to occlude lower geometry. `render.Unicode`
+maps visible connectivity to box-drawing glyphs and only places label graphemes
+whose cells remain owned by their node. Fixed-size nodes wrap to their inner
+width and clip visually at their inner height without changing the stored
+label.
 
 ### `internal/tui`
 
@@ -202,8 +216,18 @@ the previous word, and Ctrl-U to delete to the line start.
 The TUI also supports:
 
 - ANSI highlighting for selected node outlines and edges
-- port-only highlighting while creating or reconnecting an edge
+- high-contrast green port-only highlighting while creating or reconnecting an
+  edge
 - node creation at the cursor
+- `r` rectangle tool for creating an explicitly sized empty node with left-drag
+- Tab and Shift-Tab node focus in draw order; Ctrl-Tab cycles overlapping hits
+- arrow-key movement of the focused node or every node in a multi-object
+  selection
+- `b` cycles solid, rounded, and borderless node styles
+- `a` and Shift-`a` cycle filled and outline smart arrows at either edge end
+- style cycling applies to every matching object in the current selection as
+  one history interaction without collapsing mixed selections
+- style inheritance for newly created nodes and edges
 - `l` line tool with direct port-to-port mouse dragging and a live orthogonal
   preview routed around node obstacles
 - direct endpoint reconnection by dragging an edge within three cells of its
@@ -339,39 +363,10 @@ to the frame string required by Bubble Tea.
 
 ## Recommended next work
 
-The next phase should make object creation, focus, styling, and export feel like
-one editor rather than separate engine demonstrations.
+The next phase should make export and richer text layout feel native to the
+editor.
 
-### 1. Add rectangle creation and node focus
-
-Add an explicit rectangle tool on `r`:
-
-- click-drag creates an explicitly sized node with an empty label
-- `e` edits the label after creation
-- the rectangle uses the same fixed-size wrapping and clipping rules
-- creation, sizing, and interruption form one history interaction
-
-Change Tab navigation to cycle focused nodes in draw order. Arrow keys should
-move the focused node. Preserve a separate way to cycle overlapping hits when
-needed.
-
-### 2. Add inherited node and edge styles
-
-Pressing `b` on a focused node should cycle its border style. Each new node
-inherits the most recently selected border style.
-
-Support a no-border style for text-only labels. Borderless nodes still need a
-logical rectangle for obstacle avoidance and ports along its invisible
-boundary.
-
-Lines need independent arrow styles at both ends. Each new line inherits the
-most recent origin and destination arrow styles. Leave about one cell between
-an arrowhead and the node border so the endpoint remains readable.
-
-Increase port contrast while the line tool is active. Test red and green
-against the current theme instead of relying on the existing blue highlight.
-
-### 3. Add clipboard export
+### 1. Add clipboard export
 
 Ctrl-C should copy the selected rendered cells to the system clipboard. This
 replaces the current Ctrl-C quit binding, so choose another quit shortcut.
@@ -384,7 +379,7 @@ Store the preferred comment prefix, such as `// ` or `# `, in a user
 preferences file under the platform cache directory. Keep preferences separate
 from per-document history.
 
-### 4. Complete text layout
+### 2. Complete text layout
 
 Add horizontal alignment, vertical alignment, and justification after the
 object and style model can persist those choices.
@@ -419,15 +414,10 @@ can quickly reuse designs across documents.
 ## Known limits
 
 - coordinates cannot be negative
-- node and edge styles do not exist
-- nodes always draw borders
-- edges have no arrowheads
 - layer commands currently reorder one selected object rather than a selected
   group
 - moving a connected node still rolls back when an edge cannot route around
   unrelated obstacles
-- Tab cycles overlapping hits rather than focused nodes
-- line-tool ports need stronger contrast
 - Ctrl-C quits instead of copying
 - every `Build` routes every edge
 - hit testing scans all geometry

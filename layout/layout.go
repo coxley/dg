@@ -144,15 +144,19 @@ type Layout struct {
 	graph         ir.Graph
 	origins       []Point
 	explicitSizes []Size
-	padding       Padding
-	router        Router
-	scratch       routeScratch
-	draftPorts    []Port
-	portUsable    []bool
-	draftUsable   []bool
-	drawOrder     []Hit
-	history       *History
-	selection     Selection
+	// TODO: Should styles be a lookup table instead for more compactness? Or a list of
+	// int64 with each entry representing styles for 8 nodes / edges at once?
+	nodeStyles  []NodeStyle
+	edgeStyles  []EdgeStyle
+	padding     Padding
+	router      Router
+	scratch     routeScratch
+	draftPorts  []Port
+	portUsable  []bool
+	draftUsable []bool
+	drawOrder   []Hit
+	history     *History
+	selection   Selection
 }
 
 // Option configures a Layout.
@@ -243,11 +247,13 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 
 	l.origins = growTo(l.origins, len(l.graph.Nodes))
 	l.explicitSizes = growTo(l.explicitSizes, len(l.graph.Nodes))
+	l.nodeStyles = growTo(l.nodeStyles, len(l.graph.Nodes))
 	l.Nodes = growTo(l.Nodes, len(l.graph.Nodes))
 	l.Ports = growTo(l.Ports, len(l.graph.Ports))
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.origins[nodeID] = point
 	l.explicitSizes[nodeID] = Size{}
+	l.nodeStyles[nodeID] = NodeStyle{}
 	l.Nodes[nodeID] = node
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.commitNodePorts(nodeID)
@@ -380,16 +386,19 @@ func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) 
 	_, existed := l.connectedEdge(portA, portB)
 	edgeID := l.graph.ConnectNodes(nodeA, sideA, sideB, nodeB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
 	if !existed {
+		l.edgeStyles[edgeID] = EdgeStyle{}
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
 	if l.history != nil && !existed {
 		l.history.record(historyChange{
-			kind:       historyCreateEdge,
-			id:         edgeID,
-			afterEdge:  l.graph.Edges[edgeID],
-			afterLayer: uint32(len(l.drawOrder) - 1),
+			kind:           historyCreateEdge,
+			id:             edgeID,
+			afterEdge:      l.graph.Edges[edgeID],
+			afterEdgeStyle: l.edgeStyles[edgeID],
+			afterLayer:     uint32(len(l.drawOrder) - 1),
 		})
 	}
 	return edgeID
@@ -416,16 +425,19 @@ func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
 	_, existed := l.connectedEdge(portA, portB)
 	edgeID := l.graph.ConnectPorts(portA, portB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
 	if !existed {
+		l.edgeStyles[edgeID] = EdgeStyle{}
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
 	if l.history != nil && !existed {
 		l.history.record(historyChange{
-			kind:       historyCreateEdge,
-			id:         edgeID,
-			afterEdge:  l.graph.Edges[edgeID],
-			afterLayer: uint32(len(l.drawOrder) - 1),
+			kind:           historyCreateEdge,
+			id:             edgeID,
+			afterEdge:      l.graph.Edges[edgeID],
+			afterEdgeStyle: l.edgeStyles[edgeID],
+			afterLayer:     uint32(len(l.drawOrder) - 1),
 		})
 	}
 	return edgeID, nil
@@ -455,11 +467,14 @@ func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
 	l.Edges[edgeID] = Edge{}
 	l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 	if l.history != nil && previous != l.graph.Edges[edgeID] {
+		style := l.edgeStyles[edgeID]
 		l.history.record(historyChange{
-			kind:       historyReconnectEdge,
-			id:         edgeID,
-			beforeEdge: previous,
-			afterEdge:  l.graph.Edges[edgeID],
+			kind:            historyReconnectEdge,
+			id:              edgeID,
+			beforeEdge:      previous,
+			afterEdge:       l.graph.Edges[edgeID],
+			beforeEdgeStyle: style,
+			afterEdgeStyle:  style,
 		})
 	}
 	return nil
@@ -471,17 +486,20 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 		return fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
 	}
 	previous := l.graph.Edges[edgeID]
+	previousStyle := l.edgeStyles[edgeID]
 	layer, _ := l.removeLayer(Hit{ID: edgeID, Kind: HitEdge})
 	if err := l.graph.DeleteEdge(edgeID); err != nil {
 		return err
 	}
 	l.Edges[edgeID] = Edge{}
+	l.edgeStyles[edgeID] = EdgeStyle{}
 	if l.history != nil {
 		l.history.record(historyChange{
-			kind:        historyDeleteEdge,
-			id:          edgeID,
-			beforeEdge:  previous,
-			beforeLayer: uint32(layer),
+			kind:            historyDeleteEdge,
+			id:              edgeID,
+			beforeEdge:      previous,
+			beforeEdgeStyle: previousStyle,
+			beforeLayer:     uint32(layer),
 		})
 	}
 	return nil
@@ -503,6 +521,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		}
 		if l.graph.EdgeIncidentTo(uint32(edgeID), nodeID) {
 			l.Edges[edgeID] = Edge{}
+			l.edgeStyles[edgeID] = EdgeStyle{}
 			l.removeLayer(Hit{ID: uint32(edgeID), Kind: HitEdge})
 			l.selection.discard(Hit{ID: uint32(edgeID), Kind: HitEdge})
 		}
@@ -516,6 +535,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	}
 	l.origins[nodeID] = Point{}
 	l.explicitSizes[nodeID] = Size{}
+	l.nodeStyles[nodeID] = NodeStyle{}
 	l.Nodes[nodeID] = Node{}
 	l.removeLayer(Hit{ID: nodeID, Kind: HitNode})
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
@@ -782,10 +802,12 @@ func (l *Layout) initializeGeometry() error {
 
 	l.origins = make([]Point, len(l.graph.Nodes))
 	l.explicitSizes = make([]Size, len(l.graph.Nodes))
+	l.nodeStyles = make([]NodeStyle, len(l.graph.Nodes))
 	l.Nodes = make([]Node, len(l.graph.Nodes))
 	l.Ports = make([]Port, len(l.graph.Ports))
 	l.portUsable = make([]bool, len(l.graph.Ports))
 	l.Edges = make([]Edge, len(l.graph.Edges))
+	l.edgeStyles = make([]EdgeStyle, len(l.graph.Edges))
 	if err := l.initializeDrawOrder(); err != nil {
 		return err
 	}

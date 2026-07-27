@@ -27,6 +27,8 @@ const (
 	historyReconnectEdge
 	historySetNodeSize
 	historySetLayer
+	historySetNodeStyle
+	historySetEdgeStyle
 )
 
 type historyPort struct {
@@ -35,8 +37,9 @@ type historyPort struct {
 }
 
 type historyEdge struct {
-	ID   uint32
-	Edge ir.Edge
+	ID    uint32
+	Edge  ir.Edge
+	Style EdgeStyle
 }
 
 type historyLayer struct {
@@ -49,6 +52,7 @@ type historyNode struct {
 	Label  string
 	Origin Point
 	Size   Size
+	Style  NodeStyle
 	Ports  []historyPort
 	Edges  []historyEdge
 	Layers []historyLayer
@@ -58,18 +62,22 @@ type historyChange struct {
 	kind historyKind
 	id   uint32
 
-	beforePoint Point
-	afterPoint  Point
-	beforeSize  Size
-	afterSize   Size
-	beforeLabel string
-	afterLabel  string
-	beforeEdge  ir.Edge
-	afterEdge   ir.Edge
-	layerHit    Hit
-	beforeLayer uint32
-	afterLayer  uint32
-	node        historyNode
+	beforePoint     Point
+	afterPoint      Point
+	beforeSize      Size
+	afterSize       Size
+	beforeLabel     string
+	afterLabel      string
+	beforeEdge      ir.Edge
+	afterEdge       ir.Edge
+	beforeNodeStyle NodeStyle
+	afterNodeStyle  NodeStyle
+	beforeEdgeStyle EdgeStyle
+	afterEdgeStyle  EdgeStyle
+	layerHit        Hit
+	beforeLayer     uint32
+	afterLayer      uint32
+	node            historyNode
 }
 
 type historyEntry struct {
@@ -286,7 +294,9 @@ func (h *History) coalesce(change historyChange) bool {
 	if change.kind != historySetLabel &&
 		change.kind != historyPlaceNode &&
 		change.kind != historySetNodeSize &&
-		change.kind != historySetLayer {
+		change.kind != historySetLayer &&
+		change.kind != historySetNodeStyle &&
+		change.kind != historySetEdgeStyle {
 		return false
 	}
 	if change.kind == historySetLayer {
@@ -350,6 +360,12 @@ func coalesceChange(previous *historyChange, change historyChange) bool {
 	case historySetLayer:
 		previous.afterLayer = change.afterLayer
 		return previous.beforeLayer == previous.afterLayer
+	case historySetNodeStyle:
+		previous.afterNodeStyle = change.afterNodeStyle
+		return previous.beforeNodeStyle == previous.afterNodeStyle
+	case historySetEdgeStyle:
+		previous.afterEdgeStyle = change.afterEdgeStyle
+		return previous.beforeEdgeStyle == previous.afterEdgeStyle
 	default:
 		return false
 	}
@@ -473,6 +489,7 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 			return h.layout.restoreHistoryEdge(
 				change.id,
 				change.afterEdge,
+				change.afterEdgeStyle,
 				int(change.afterLayer),
 			)
 		}
@@ -484,6 +501,7 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 		return h.layout.restoreHistoryEdge(
 			change.id,
 			change.beforeEdge,
+			change.beforeEdgeStyle,
 			int(change.beforeLayer),
 		)
 	case historyReconnectEdge:
@@ -491,35 +509,55 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 		if forward {
 			edge = change.afterEdge
 		}
-		return h.layout.restoreHistoryEdge(change.id, edge, -1)
+		style := change.beforeEdgeStyle
+		if forward {
+			style = change.afterEdgeStyle
+		}
+		return h.layout.restoreHistoryEdge(change.id, edge, style, -1)
 	case historySetLayer:
 		index := change.beforeLayer
 		if forward {
 			index = change.afterLayer
 		}
 		return h.layout.setLayerIndex(change.layerHit, int(index))
+	case historySetNodeStyle:
+		style := change.beforeNodeStyle
+		if forward {
+			style = change.afterNodeStyle
+		}
+		return h.layout.SetNodeStyle(change.id, style)
+	case historySetEdgeStyle:
+		style := change.beforeEdgeStyle
+		if forward {
+			style = change.afterEdgeStyle
+		}
+		return h.layout.SetEdgeStyle(change.id, style)
 	default:
 		return fmt.Errorf("unknown history change %d", change.kind)
 	}
 }
 
 type layoutHistoryState struct {
-	graph   ir.Graph
-	origins []Point
-	sizes   []Size
-	order   []Hit
-	padding Padding
-	router  Router
+	graph      ir.Graph
+	origins    []Point
+	sizes      []Size
+	nodeStyles []NodeStyle
+	edgeStyles []EdgeStyle
+	order      []Hit
+	padding    Padding
+	router     Router
 }
 
 func (l *Layout) historyState() layoutHistoryState {
 	return layoutHistoryState{
-		graph:   l.graph.Clone(),
-		origins: slices.Clone(l.origins),
-		sizes:   slices.Clone(l.explicitSizes),
-		order:   slices.Clone(l.drawOrder),
-		padding: l.padding,
-		router:  l.router,
+		graph:      l.graph.Clone(),
+		origins:    slices.Clone(l.origins),
+		sizes:      slices.Clone(l.explicitSizes),
+		nodeStyles: slices.Clone(l.nodeStyles),
+		edgeStyles: slices.Clone(l.edgeStyles),
+		order:      slices.Clone(l.drawOrder),
+		padding:    l.padding,
+		router:     l.router,
 	}
 }
 
@@ -532,6 +570,8 @@ func (l *Layout) restoreHistoryState(state layoutHistoryState) error {
 		return err
 	}
 	l.explicitSizes = slices.Clone(state.sizes)
+	l.nodeStyles = slices.Clone(state.nodeStyles)
+	l.edgeStyles = slices.Clone(state.edgeStyles)
 	for nodeID := range l.graph.Nodes {
 		if !l.graph.NodeExists(uint32(nodeID)) {
 			continue
@@ -558,6 +598,7 @@ func (l *Layout) historyNode(nodeID uint32) historyNode {
 		Label:  source.Label,
 		Origin: l.origins[nodeID],
 		Size:   l.explicitSizes[nodeID],
+		Style:  l.nodeStyles[nodeID],
 		Ports:  make([]historyPort, 0, len(source.Ports)),
 	}
 	for _, portID := range source.Ports {
@@ -570,8 +611,9 @@ func (l *Layout) historyNode(nodeID uint32) historyNode {
 		if l.graph.EdgeExists(uint32(edgeID)) &&
 			l.graph.EdgeIncidentTo(uint32(edgeID), nodeID) {
 			node.Edges = append(node.Edges, historyEdge{
-				ID:   uint32(edgeID),
-				Edge: l.graph.Edges[edgeID],
+				ID:    uint32(edgeID),
+				Edge:  l.graph.Edges[edgeID],
+				Style: l.edgeStyles[edgeID],
 			})
 		}
 	}
@@ -613,11 +655,14 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 
 	l.origins = growTo(l.origins, len(l.graph.Nodes))
 	l.explicitSizes = growTo(l.explicitSizes, len(l.graph.Nodes))
+	l.nodeStyles = growTo(l.nodeStyles, len(l.graph.Nodes))
 	l.Nodes = growTo(l.Nodes, len(l.graph.Nodes))
 	l.Ports = growTo(l.Ports, len(l.graph.Ports))
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
 	l.explicitSizes[node.ID] = node.Size
+	l.nodeStyles[node.ID] = node.Style
 	resolved, err := l.prepareNode(node.ID, node.Label, node.Origin)
 	if err != nil {
 		return err
@@ -627,6 +672,7 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	l.commitNodePorts(node.ID)
 	for _, edge := range node.Edges {
 		l.Edges[edge.ID] = Edge{}
+		l.edgeStyles[edge.ID] = edge.Style
 	}
 	if len(node.Layers) == 0 {
 		l.appendLayer(Hit{ID: node.ID, Kind: HitNode})
@@ -641,7 +687,12 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	return nil
 }
 
-func (l *Layout) restoreHistoryEdge(edgeID uint32, edge ir.Edge, layer int) error {
+func (l *Layout) restoreHistoryEdge(
+	edgeID uint32,
+	edge ir.Edge,
+	style EdgeStyle,
+	layer int,
+) error {
 	if !l.graph.PortExists(edge.PortA) || !l.graph.PortExists(edge.PortB) {
 		return errors.New("restore edge with deleted port")
 	}
@@ -649,7 +700,9 @@ func (l *Layout) restoreHistoryEdge(edgeID uint32, edge ir.Edge, layer int) erro
 	l.graph.Edges[edgeID] = edge
 	l.graph = l.graph.Clone()
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
+	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
 	l.Edges[edgeID] = Edge{}
+	l.edgeStyles[edgeID] = style
 	hit := Hit{ID: edgeID, Kind: HitEdge}
 	if !l.hasLayer(hit) {
 		if layer < 0 {

@@ -174,6 +174,20 @@ func TestDocumentValidation(t *testing.T) {
 			want: "unknown side",
 		},
 		{
+			name: "unknown border style",
+			mutate: func(doc *Document) {
+				doc.Nodes[0].Style.Border = "future"
+			},
+			want: "unknown border",
+		},
+		{
+			name: "unknown arrow style",
+			mutate: func(doc *Document) {
+				doc.Edges[0].Style.PortBArrow = "future"
+			},
+			want: "unknown arrow",
+		},
+		{
 			name: "unknown node port",
 			mutate: func(doc *Document) {
 				doc.Nodes[0].Ports[0] = 9
@@ -387,6 +401,13 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 					Y: origins[nodeID*2+1],
 				},
 				Ports: make([]uint32, 0, portCounts[nodeID]),
+				Style: NodeStyle{
+					Border: rapid.SampledFrom([]BorderStyle{
+						"",
+						BorderRounded,
+						BorderNone,
+					}).Draw(t, "node border"),
+				},
 			}
 			if rapid.Bool().Draw(t, "explicit size") {
 				node.Size = Size{
@@ -435,6 +456,20 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			rapid.SliceOfNDistinct(edge, 0, maxEdges, rapid.ID[Edge]).
 				Draw(t, "edges")...,
 		)
+		for i := range doc.Edges {
+			doc.Edges[i].Style = EdgeStyle{
+				PortAArrow: rapid.SampledFrom([]ArrowStyle{
+					"",
+					ArrowOpen,
+					ArrowFilled,
+				}).Draw(t, "port A arrow"),
+				PortBArrow: rapid.SampledFrom([]ArrowStyle{
+					"",
+					ArrowOpen,
+					ArrowFilled,
+				}).Draw(t, "port B arrow"),
+			}
+		}
 		layers := make([]Layer, 0, len(doc.Nodes)+len(doc.Edges))
 		for nodeID := range doc.Nodes {
 			layers = append(layers, Layer{Kind: LayerNode, ID: uint32(nodeID)})

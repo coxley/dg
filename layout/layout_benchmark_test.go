@@ -38,6 +38,22 @@ func BenchmarkLayoutBuild(b *testing.B) {
 	}
 }
 
+func BenchmarkLayoutBuildSmartArrows(b *testing.B) {
+	geo, _ := newBenchmarkLayout(b)
+	for edgeID := range geo.Edges {
+		require.NoError(b, geo.SetEdgeStyle(uint32(edgeID), EdgeStyle{
+			PortBArrow: ArrowFilled,
+		}))
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := geo.Build(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkLayoutMoveAndBuild(b *testing.B) {
 	geo, nodeID := newBenchmarkLayout(b)
 	require.NoError(b, geo.Build())

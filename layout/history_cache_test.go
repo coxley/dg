@@ -241,6 +241,61 @@ func TestHistoryRestoreRecoversLayerRedoTail(t *testing.T) {
 	require.Equal(t, unsavedOrder, slices.Collect(restored.DrawOrder()))
 }
 
+func TestHistoryRestoreRecoversStyleRedoTail(t *testing.T) {
+	t.Parallel()
+
+	store := newMapHistoryStore()
+	history, err := NewHistory(WithHistoryStore(store))
+	require.NoError(t, err)
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("left", NewPoint(2, 2))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", NewPoint(20, 2))
+	require.NoError(t, err)
+	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, history.Store("diagram.json"))
+
+	nodeStyle := NodeStyle{Border: BorderRounded}
+	edgeStyle := EdgeStyle{
+		PortAArrow: ArrowOpen,
+		PortBArrow: ArrowFilled,
+	}
+	require.NoError(t, geo.SetNodeStyle(left, nodeStyle))
+	require.NoError(t, geo.SetEdgeStyle(edgeID, edgeStyle))
+	require.NoError(t, history.Flush())
+
+	restoredHistory, err := NewHistory(WithHistoryStore(store))
+	require.NoError(t, err)
+	restored, err := New(WithHistory(restoredHistory))
+	require.NoError(t, err)
+	restoredLeft, err := restored.NewNodeAt("left", NewPoint(2, 2))
+	require.NoError(t, err)
+	restoredRight, err := restored.NewNodeAt("right", NewPoint(20, 2))
+	require.NoError(t, err)
+	restoredEdge := restored.ConnectNodes(
+		restoredLeft,
+		ir.RightSide,
+		ir.LeftSide,
+		restoredRight,
+	)
+
+	ok, err := restoredHistory.Restore("diagram.json")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, NodeStyle{}, mustNodeStyle(t, restored, restoredLeft))
+	require.Equal(t, EdgeStyle{}, mustEdgeStyle(t, restored, restoredEdge))
+
+	changed, err := restoredHistory.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, nodeStyle, mustNodeStyle(t, restored, restoredLeft))
+	changed, err = restoredHistory.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, edgeStyle, mustEdgeStyle(t, restored, restoredEdge))
+}
+
 func TestHistoryRestoreRecoversExactDeletedSlots(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +336,20 @@ func TestHistoryRestoreRecoversExactDeletedSlots(t *testing.T) {
 	require.True(t, changed)
 	require.True(t, restored.NodeExists(deleted))
 	require.Equal(t, "deleted", restored.Label(deleted))
+}
+
+func mustNodeStyle(t testing.TB, geo *Layout, nodeID uint32) NodeStyle {
+	t.Helper()
+	style, ok := geo.NodeStyle(nodeID)
+	require.True(t, ok)
+	return style
+}
+
+func mustEdgeStyle(t testing.TB, geo *Layout, edgeID uint32) EdgeStyle {
+	t.Helper()
+	style, ok := geo.EdgeStyle(edgeID)
+	require.True(t, ok)
+	return style
 }
 
 func TestHistoryCacheRejectsDifferentSavedDocument(t *testing.T) {

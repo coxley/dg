@@ -246,7 +246,11 @@ func rasterizeInto(
 			if l.Nodes[hit.ID].Empty() {
 				continue
 			}
-			grid.claimRect(l.Nodes[hit.ID].Rect, hit)
+			grid.claimNode(l, hit.ID)
+			style, _ := l.NodeStyle(hit.ID)
+			if style.Border == BorderNone {
+				continue
+			}
 			if err := grid.AddRect(l.Nodes[hit.ID].Rect); err != nil {
 				return Grid{}, fmt.Errorf("rasterize node %d: %w", hit.ID, err)
 			}
@@ -267,15 +271,50 @@ func rasterizeInto(
 	return grid, nil
 }
 
-func (g *Grid) claimRect(rect Rect, owner Hit) {
+func (g *Grid) claimNode(l *Layout, nodeID uint32) {
+	rect := l.Nodes[nodeID].Rect
+	owner := Hit{ID: nodeID, Kind: HitNode}
+	hasBorder := l.nodeHasBorder(nodeID)
 	limit := rect.Max()
 	for y := rect.Min.Y; y < limit.Y; y++ {
 		for x := rect.Min.X; x < limit.X; x++ {
-			index, _ := g.Index(Point{X: x, Y: y})
-			g.Cells[index] = 0
+			point := Point{X: x, Y: y}
+			index, _ := g.Index(point)
+			previous := g.Owners[index]
+			if !hasBorder ||
+				!rect.OnBoundary(point) ||
+				!l.sharedNodeBoundaryAt(rect, previous, point) {
+				g.Cells[index] = 0
+			}
 			g.Owners[index] = owner
 		}
 	}
+}
+
+func (l *Layout) sharedNodeBoundaryAt(
+	rect Rect,
+	hit Hit,
+	point Point,
+) bool {
+	if hit.Kind != HitNode ||
+		!l.graph.NodeExists(hit.ID) ||
+		!l.nodeHasBorder(hit.ID) {
+		return false
+	}
+	other := l.Nodes[hit.ID].Rect
+	if !other.OnBoundary(point) {
+		return false
+	}
+	rectLimit, otherLimit := rect.Max(), other.Max()
+	return point.X == rect.Min.X && point.X == otherLimit.X-1 ||
+		point.X == rectLimit.X-1 && point.X == other.Min.X ||
+		point.Y == rect.Min.Y && point.Y == otherLimit.Y-1 ||
+		point.Y == rectLimit.Y-1 && point.Y == other.Min.Y
+}
+
+func (l *Layout) nodeHasBorder(nodeID uint32) bool {
+	return uint64(nodeID) >= uint64(len(l.nodeStyles)) ||
+		l.nodeStyles[nodeID].Border != BorderNone
 }
 
 func (g *Grid) claimEdge(l *Layout, edgeID uint32) error {

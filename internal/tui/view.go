@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	selectionStart = "\x1b[48;5;24;38;5;231m"
-	selectionEnd   = "\x1b[0m"
+	selectionStart     = "\x1b[48;5;24;38;5;231m"
+	portHighlightStart = "\x1b[48;5;34;38;5;231m"
+	selectionEnd       = "\x1b[0m"
 )
 
 func (m *Model) View() tea.View {
@@ -120,6 +121,8 @@ func (m *Model) helpLine() string {
 			return "drag to replacement port • enter move endpoint • esc cancel"
 		}
 		return "drag between ports • enter connects selected port • esc cancel"
+	case modeRectangle:
+		return "left-drag creates rectangle • esc cancel"
 	case modeSavePath:
 		if m.status != "" {
 			return m.status
@@ -129,7 +132,7 @@ func (m *Model) helpLine() string {
 		}
 		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "arrows move • left-drag move • right-drag resize • [/] layer • shift-[/] back/front • drag empty select • ctrl-click toggle • ctrl-a expand/all • n new • e edit • l line • d delete • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
+		return "tab focus • arrows move focused node • ctrl-tab cycle hits • n label • r rectangle • e edit • l line • b border • a/A arrows • d delete • [/] layer • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
 	}
 }
 
@@ -263,7 +266,7 @@ func appendViewportRow(
 				uint32(visibleEnd),
 			)
 		if selected && !styled {
-			dst = append(dst, selectionStart...)
+			dst = append(dst, model.highlightStart()...)
 			styled = true
 		} else if !selected && styled {
 			dst = append(dst, selectionEnd...)
@@ -401,18 +404,21 @@ func (m *Model) refreshConnectionPreview() {
 		preview []layout.Point
 		err     error
 	)
+	style := m.connectionPreviewStyle()
 	if m.reconnecting {
-		preview, err = m.geo.PreviewRouteWithoutEdge(
+		preview, err = m.geo.PreviewRouteWithoutEdgeStyled(
 			m.connectPreview[:0],
 			m.connectSource,
 			m.cursor,
 			m.connectEdge,
+			style,
 		)
 	} else {
-		preview, err = m.geo.PreviewRoute(
+		preview, err = m.geo.PreviewRouteStyled(
 			m.connectPreview[:0],
 			m.connectSource,
 			m.cursor,
+			style,
 		)
 	}
 	if err != nil {
@@ -522,7 +528,7 @@ func appendHighlightedSpaces(
 				layout.NewPoint(uint32(x), uint32(y)),
 			)
 		if selected && !styled {
-			dst = append(dst, selectionStart...)
+			dst = append(dst, model.highlightStart()...)
 			styled = true
 		} else if !selected && styled {
 			dst = append(dst, selectionEnd...)
@@ -537,6 +543,13 @@ func appendHighlightedSpaces(
 	return dst, styled
 }
 
+func (m *Model) highlightStart() string {
+	if m != nil && m.mode == modeConnect {
+		return portHighlightStart
+	}
+	return selectionStart
+}
+
 func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 	if model == nil || x > math.MaxUint32 || y > math.MaxUint32 {
 		return 0, false
@@ -546,5 +559,25 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 	if !ok {
 		return 0, false
 	}
+	if glyph, ok := render.ArrowGlyphAt(
+		model.connectPreview,
+		model.connectionPreviewStyle(),
+		point,
+	); ok {
+		return glyph, true
+	}
 	return render.Glyph(connections), true
+}
+
+func (m *Model) connectionPreviewStyle() layout.EdgeStyle {
+	if !m.reconnecting {
+		return m.edgeStyle
+	}
+	style, _ := m.geo.EdgeStyle(m.connectEdge)
+	portA, _, err := m.geo.EdgePorts(m.connectEdge)
+	if err == nil && m.connectSource != portA {
+		style.PortAArrow, style.PortBArrow =
+			style.PortBArrow, style.PortAArrow
+	}
+	return style
 }

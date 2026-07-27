@@ -30,11 +30,25 @@ type Document struct {
 
 // Node stores label, placement, and ordered port membership.
 type Node struct {
-	Label  string   `json:"label"`
-	Origin Point    `json:"origin"`
-	Size   Size     `json:"size,omitzero"`
-	Ports  []uint32 `json:"ports"`
+	Label  string    `json:"label"`
+	Origin Point     `json:"origin"`
+	Size   Size      `json:"size,omitzero"`
+	Style  NodeStyle `json:"style,omitzero"`
+	Ports  []uint32  `json:"ports"`
 }
+
+// NodeStyle stores node rendering choices.
+type NodeStyle struct {
+	Border BorderStyle `json:"border,omitempty"`
+}
+
+// BorderStyle identifies a persisted node border.
+type BorderStyle string
+
+const (
+	BorderRounded BorderStyle = "rounded"
+	BorderNone    BorderStyle = "none"
+)
 
 // Size stores fixed outer node dimensions. The zero value enables auto sizing.
 type Size struct {
@@ -66,9 +80,24 @@ type Port struct {
 
 // Edge stores two port indices.
 type Edge struct {
-	PortA uint32 `json:"port_a"`
-	PortB uint32 `json:"port_b"`
+	PortA uint32    `json:"port_a"`
+	PortB uint32    `json:"port_b"`
+	Style EdgeStyle `json:"style,omitzero"`
 }
+
+// EdgeStyle stores endpoint arrow choices.
+type EdgeStyle struct {
+	PortAArrow ArrowStyle `json:"port_a_arrow,omitempty"`
+	PortBArrow ArrowStyle `json:"port_b_arrow,omitempty"`
+}
+
+// ArrowStyle identifies a persisted endpoint marker.
+type ArrowStyle string
+
+const (
+	ArrowOpen   ArrowStyle = "open"
+	ArrowFilled ArrowStyle = "filled"
+)
 
 // Layer identifies one node or edge in back-to-front order.
 type Layer struct {
@@ -155,6 +184,8 @@ func FromLayout(geo *layout.Layout) Document {
 			},
 			Ports: make([]uint32, 0, len(source.Ports)),
 		}
+		style, _ := geo.NodeStyle(uint32(nodeID))
+		node.Style = documentNodeStyle(style)
 		if size, ok := geo.ExplicitNodeSize(uint32(nodeID)); ok {
 			node.Size = Size{Width: size.Width, Height: size.Height}
 		}
@@ -175,10 +206,12 @@ func FromLayout(geo *layout.Layout) Document {
 			continue
 		}
 		edge := graph.Edges[edgeID]
+		style, _ := geo.EdgeStyle(uint32(edgeID))
 		edgeIDs[edgeID] = uint32(len(doc.Edges))
 		doc.Edges = append(doc.Edges, Edge{
 			PortA: portIDs[edge.PortA],
 			PortB: portIDs[edge.PortB],
+			Style: documentEdgeStyle(style),
 		})
 	}
 	for hit := range geo.DrawOrder() {
@@ -280,6 +313,13 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		return nil, fmt.Errorf("create layout: %w", err)
 	}
 	for nodeID, node := range d.Nodes {
+		style, err := node.Style.layoutStyle()
+		if err != nil {
+			return nil, fmt.Errorf("style node %d: %w", nodeID, err)
+		}
+		if err := geo.SetNodeStyle(uint32(nodeID), style); err != nil {
+			return nil, fmt.Errorf("style node %d: %w", nodeID, err)
+		}
 		if node.Size.Width != 0 || node.Size.Height != 0 {
 			if err := geo.SetNodeSize(uint32(nodeID), layout.Size{
 				Width:  node.Size.Width,
@@ -292,10 +332,89 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 			return nil, fmt.Errorf("place node %d: %w", nodeID, err)
 		}
 	}
+	for edgeID, edge := range d.Edges {
+		style, err := edge.Style.layoutStyle()
+		if err != nil {
+			return nil, fmt.Errorf("style edge %d: %w", edgeID, err)
+		}
+		if err := geo.SetEdgeStyle(uint32(edgeID), style); err != nil {
+			return nil, fmt.Errorf("style edge %d: %w", edgeID, err)
+		}
+	}
 	if history := geo.History(); history != nil {
 		history.Clear()
 	}
 	return geo, nil
+}
+
+func documentNodeStyle(style layout.NodeStyle) NodeStyle {
+	var border BorderStyle
+	switch style.Border {
+	case layout.BorderSolid:
+	case layout.BorderRounded:
+		border = BorderRounded
+	case layout.BorderNone:
+		border = BorderNone
+	}
+	return NodeStyle{Border: border}
+}
+
+func (s NodeStyle) layoutStyle() (layout.NodeStyle, error) {
+	var border layout.BorderStyle
+	switch s.Border {
+	case "":
+		border = layout.BorderSolid
+	case BorderRounded:
+		border = layout.BorderRounded
+	case BorderNone:
+		border = layout.BorderNone
+	default:
+		return layout.NodeStyle{}, fmt.Errorf("unknown border %q", s.Border)
+	}
+	return layout.NodeStyle{Border: border}, nil
+}
+
+func documentEdgeStyle(style layout.EdgeStyle) EdgeStyle {
+	return EdgeStyle{
+		PortAArrow: documentArrowStyle(style.PortAArrow),
+		PortBArrow: documentArrowStyle(style.PortBArrow),
+	}
+}
+
+func documentArrowStyle(style layout.ArrowStyle) ArrowStyle {
+	switch style {
+	case layout.ArrowOpen:
+		return ArrowOpen
+	case layout.ArrowFilled:
+		return ArrowFilled
+	default:
+		return ""
+	}
+}
+
+func (s EdgeStyle) layoutStyle() (layout.EdgeStyle, error) {
+	portA, err := s.PortAArrow.layoutStyle()
+	if err != nil {
+		return layout.EdgeStyle{}, fmt.Errorf("port A: %w", err)
+	}
+	portB, err := s.PortBArrow.layoutStyle()
+	if err != nil {
+		return layout.EdgeStyle{}, fmt.Errorf("port B: %w", err)
+	}
+	return layout.EdgeStyle{PortAArrow: portA, PortBArrow: portB}, nil
+}
+
+func (s ArrowStyle) layoutStyle() (layout.ArrowStyle, error) {
+	switch s {
+	case "":
+		return layout.ArrowNone, nil
+	case ArrowOpen:
+		return layout.ArrowOpen, nil
+	case ArrowFilled:
+		return layout.ArrowFilled, nil
+	default:
+		return layout.ArrowNone, fmt.Errorf("unknown arrow %q", s)
+	}
 }
 
 func (d Document) drawOrder() ([]layout.Hit, error) {

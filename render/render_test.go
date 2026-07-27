@@ -1,6 +1,7 @@
 package render
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -44,6 +45,8 @@ func TestEncoderReusesScratch(t *testing.T) {
 	cells := &encoder.grid.Cells[0]
 	owners := &encoder.grid.Owners[0]
 	labels := &encoder.labels[0]
+	symbols := &encoder.symbols[0]
+	endpoints := &encoder.endpoints[0]
 	continuations := &encoder.continuations[0]
 
 	frame, err = encoder.EncodeFrame(frame.Text[:0], geo)
@@ -51,6 +54,8 @@ func TestEncoderReusesScratch(t *testing.T) {
 	require.Same(t, cells, &encoder.grid.Cells[0])
 	require.Same(t, owners, &encoder.grid.Owners[0])
 	require.Same(t, labels, &encoder.labels[0])
+	require.Same(t, symbols, &encoder.symbols[0])
+	require.Same(t, endpoints, &encoder.endpoints[0])
 	require.Same(t, continuations, &encoder.continuations[0])
 	require.Equal(
 		t, ""+
@@ -59,6 +64,122 @@ func TestEncoderReusesScratch(t *testing.T) {
 			"└──────┘\n",
 		string(frame.Text),
 	)
+}
+
+func TestUnicodeNodeBorderStyles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		style  layout.BorderStyle
+		output string
+	}{
+		{
+			name:  "rounded",
+			style: layout.BorderRounded,
+			output: "" +
+				"╭──────╮\n" +
+				"│ node │\n" +
+				"╰──────╯\n",
+		},
+		{
+			name:  "none",
+			style: layout.BorderNone,
+			output: "" +
+				"        \n" +
+				"  node  \n" +
+				"        \n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			geo := newLayout(t)
+			nodeID := newNodeAt(t, geo, "node", layout.Point{})
+			require.NoError(t, geo.SetNodeStyle(nodeID, layout.NodeStyle{
+				Border: test.style,
+			}))
+			require.NoError(t, geo.Build())
+
+			got, err := Unicode(geo)
+			require.NoError(t, err)
+			require.Equal(t, test.output, got)
+		})
+	}
+}
+
+func TestUnicodeEdgeArrowsDoNotMutateRoute(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	source := newNodeAt(t, geo, "source", layout.Point{})
+	sink := newNodeAt(t, geo, "sink", layout.Point{X: 18})
+	edgeID := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+	require.NoError(t, geo.SetEdgeStyle(edgeID, layout.EdgeStyle{
+		PortAArrow: layout.ArrowOpen,
+		PortBArrow: layout.ArrowFilled,
+	}))
+	require.NoError(t, geo.Build())
+	route := slices.Clone(geo.Edges[edgeID].Points)
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Contains(t, got, "│ source │◁──────▶│ sink │")
+	require.Equal(t, route, geo.Edges[edgeID].Points)
+}
+
+func TestEdgeArrowsPointTowardTheirEndpoint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		points []layout.Point
+		start  bool
+		point  layout.Point
+		glyph  rune
+	}{
+		{
+			name:   "left endpoint",
+			points: []layout.Point{{X: 2, Y: 4}, {X: 8, Y: 4}},
+			start:  true,
+			point:  layout.Point{X: 3, Y: 4},
+			glyph:  '◀',
+		},
+		{
+			name:   "right endpoint",
+			points: []layout.Point{{X: 2, Y: 4}, {X: 8, Y: 4}},
+			point:  layout.Point{X: 7, Y: 4},
+			glyph:  '▶',
+		},
+		{
+			name:   "top endpoint",
+			points: []layout.Point{{X: 5, Y: 2}, {X: 5, Y: 8}},
+			start:  true,
+			point:  layout.Point{X: 5, Y: 3},
+			glyph:  '▲',
+		},
+		{
+			name:   "bottom endpoint",
+			points: []layout.Point{{X: 5, Y: 2}, {X: 5, Y: 8}},
+			point:  layout.Point{X: 5, Y: 7},
+			glyph:  '▼',
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			point, anchor, ok := edgeArrowPoint(test.points, test.start)
+			require.True(t, ok)
+			require.Equal(t, test.point, point)
+			require.Equal(t, test.glyph, arrowGlyph(
+				layout.ArrowFilled,
+				point,
+				anchor,
+			))
+		})
+	}
 }
 
 func TestUnicodeOccludesLowerNode(t *testing.T) {
@@ -83,6 +204,48 @@ func TestUnicodeOccludesLowerNode(t *testing.T) {
 	got, err = Unicode(geo)
 	require.NoError(t, err)
 	require.Equal(t, "┌───────┐\n│ back  │\n└───────┘\n", got)
+}
+
+func TestUnicodeJoinsSharedNodeBorder(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	newNodeAt(t, geo, "foo", layout.Point{})
+	newNodeAt(t, geo, "bar", layout.NewPoint(6, 0))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"┌─────┬─────┐\n"+
+			"│ foo │ bar │\n"+
+			"└─────┴─────┘\n",
+		got,
+	)
+}
+
+func TestUnicodeJoinsPartiallySharedNodeBorder(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	left := newNodeAt(t, geo, "foo", layout.Point{})
+	right := newNodeAt(t, geo, "bar", layout.NewPoint(6, 1))
+	require.NoError(t, geo.SetNodeSize(left, layout.Size{Width: 7, Height: 4}))
+	require.NoError(t, geo.SetNodeSize(right, layout.Size{Width: 7, Height: 4}))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"┌─────┐      \n"+
+			"│ foo ├─────┐\n"+
+			"│     │ bar │\n"+
+			"└─────┤     │\n"+
+			"      └─────┘\n",
+		got,
+	)
 }
 
 func TestUnicodeWideLabel(t *testing.T) {
@@ -195,6 +358,46 @@ func TestUnicodeSharedEndpoint(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestUnicodeSharedEndpointArrowTerminatesBeforeNode(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	sink := newNodeAt(t, geo, "sinks", layout.NewPoint(7, 7))
+	geo.ConnectNodes(
+		newNodeAt(t, geo, "foo", layout.NewPoint(4, 0)),
+		ir.Bottom,
+		ir.Top,
+		sink,
+	)
+	arrowEdge := geo.ConnectNodes(
+		newNodeAt(t, geo, "bar", layout.NewPoint(12, 0)),
+		ir.Bottom,
+		ir.Top,
+		sink,
+	)
+	require.NoError(t, geo.SetEdgeStyle(arrowEdge, layout.EdgeStyle{
+		PortBArrow: layout.ArrowFilled,
+	}))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Equal(
+		t,
+		"┌─────┐ ┌─────┐\n"+
+			"│ foo │ │ bar │\n"+
+			"└──┬──┘ └──┬──┘\n"+
+			"   │       │   \n"+
+			"   └───┬───┘   \n"+
+			"       │       \n"+
+			"       ▼       \n"+
+			"   ┌───────┐   \n"+
+			"   │ sinks │   \n"+
+			"   └───────┘   \n",
+		got,
+	)
+}
+
 func TestUnicodeOmitsDeletedNode(t *testing.T) {
 	t.Parallel()
 
@@ -270,20 +473,37 @@ func BenchmarkEncode(b *testing.B) {
 }
 
 func BenchmarkEncoderEncode(b *testing.B) {
-	geo := newLayout(b)
-	source := newNodeAt(b, geo, "source", layout.Point{})
-	sink := newNodeAt(b, geo, "sink", layout.Point{X: 18, Y: 6})
-	geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
-	require.NoError(b, geo.Build())
-
-	var encoder Encoder
-	var dst []byte
-	b.ReportAllocs()
-	for b.Loop() {
-		frame, err := encoder.EncodeFrame(dst[:0], geo)
-		if err != nil {
-			b.Fatal(err)
+	for _, styled := range []bool{false, true} {
+		name := "plain"
+		if styled {
+			name = "styled"
 		}
-		dst = frame.Text
+		b.Run(name, func(b *testing.B) {
+			geo := newLayout(b)
+			source := newNodeAt(b, geo, "source", layout.Point{})
+			sink := newNodeAt(b, geo, "sink", layout.Point{X: 18, Y: 6})
+			edgeID := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+			if styled {
+				require.NoError(b, geo.SetNodeStyle(source, layout.NodeStyle{
+					Border: layout.BorderRounded,
+				}))
+				require.NoError(b, geo.SetEdgeStyle(edgeID, layout.EdgeStyle{
+					PortAArrow: layout.ArrowOpen,
+					PortBArrow: layout.ArrowFilled,
+				}))
+			}
+			require.NoError(b, geo.Build())
+
+			var encoder Encoder
+			var dst []byte
+			b.ReportAllocs()
+			for b.Loop() {
+				frame, err := encoder.EncodeFrame(dst[:0], geo)
+				if err != nil {
+					b.Fatal(err)
+				}
+				dst = frame.Text
+			}
+		})
 	}
 }

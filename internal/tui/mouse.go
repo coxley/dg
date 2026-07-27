@@ -15,6 +15,12 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	if !ok {
 		return
 	}
+	if m.mode == modeRectangle {
+		if mouse.Button == tea.MouseLeft {
+			m.startRectangle(point)
+		}
+		return
+	}
 	m.edgeDragPending = false
 	if mouse.Button == tea.MouseRight {
 		m.hasLastClick = false
@@ -202,6 +208,9 @@ func (m *Model) nearEdgeEndpoint(edgeID uint32, point layout.Point) bool {
 }
 
 func (m *Model) updateMouseMotion(mouse tea.Mouse) {
+	if m.updateRectangleMotion(mouse) {
+		return
+	}
 	if m.edgeDragPending && mouse.Button == tea.MouseLeft {
 		point, ok := m.documentPoint(mouse.X, mouse.Y)
 		if !ok || point == m.edgeDragStart {
@@ -278,8 +287,23 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 	m.placeNode(m.target.ID, origin, point)
 }
 
+func (m *Model) updateRectangleMotion(mouse tea.Mouse) bool {
+	if !m.creatingRectangle || mouse.Button != tea.MouseLeft {
+		return false
+	}
+	if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+		m.resizeNode(point)
+	}
+	return true
+}
+
 func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 	switch {
+	case m.creatingRectangle && mouse.Button == tea.MouseLeft:
+		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+			m.resizeNode(point)
+		}
+		m.finishRectangle()
 	case m.mode == modeConnect && m.connectDragging:
 		m.updateConnectionRelease(mouse)
 	case m.edgeDragPending:
@@ -297,6 +321,41 @@ func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 		m.finishMove()
 	}
 	m.editMouseDown = false
+}
+
+func (m *Model) startRectangle(point layout.Point) {
+	if m.creatingRectangle {
+		return
+	}
+	m.beginTransaction()
+	nodeID, err := m.geo.NewNodeAt("", point)
+	if err != nil {
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		return
+	}
+	if err := m.geo.SetNodeStyle(nodeID, m.nodeStyle); err != nil {
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		return
+	}
+	hit := layout.Hit{ID: nodeID, Kind: layout.HitNode}
+	m.target = hit
+	m.resizeFixed = point
+	m.resizeCorner = resizeEast | resizeSouth
+	m.creatingRectangle = true
+	m.selectOnly(hit)
+	m.resizeNode(point)
+}
+
+func (m *Model) finishRectangle() {
+	m.creatingRectangle = false
+	m.mode = modeNavigate
+	if err := m.commitTransaction(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	m.refreshHits()
+	m.selectTarget()
+	m.status = ""
 }
 
 func (m *Model) resizeNode(point layout.Point) {
@@ -371,6 +430,10 @@ func resizeCornerPoint(rect layout.Rect, corner resizeCorner) layout.Point {
 
 func (m *Model) abortResize(resizeErr error) {
 	m.resizing = false
+	if m.creatingRectangle {
+		m.creatingRectangle = false
+		m.mode = modeNavigate
+	}
 	m.status = errors.Join(
 		resizeErr,
 		m.cancelTransaction(),

@@ -370,6 +370,102 @@ func TestRoutePrefersDetourAroundEndpointNodes(t *testing.T) {
 	))
 }
 
+func TestSmartArrowClearanceWorksFromRouteStart(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sinkY      uint32
+		minSegment uint64
+		maxSegment uint64
+	}{
+		{
+			name:       "full clearance",
+			sinkY:      7,
+			minSegment: 3,
+		},
+		{
+			name:       "close fallback",
+			sinkY:      5,
+			minSegment: 2,
+			maxSegment: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			geo, err := New()
+			require.NoError(t, err)
+			sink, err := geo.NewNodeAt("sinks", NewPoint(7, test.sinkY))
+			require.NoError(t, err)
+			foo, err := geo.NewNodeAt("foo", NewPoint(4, 0))
+			require.NoError(t, err)
+			bar, err := geo.NewNodeAt("bar", NewPoint(12, 0))
+			require.NoError(t, err)
+			edges := [...]uint32{
+				geo.ConnectNodes(foo, ir.Bottom, ir.Top, sink),
+				geo.ConnectNodes(bar, ir.Bottom, ir.Top, sink),
+			}
+			for _, edgeID := range edges {
+				require.NoError(t, geo.SetEdgeStyle(edgeID, EdgeStyle{
+					PortAArrow: ArrowFilled,
+				}))
+			}
+			require.NoError(t, geo.Build())
+
+			for _, edgeID := range edges {
+				points := geo.Edges[edgeID].Points
+				require.GreaterOrEqual(t, len(points), 3)
+				distance := manhattan(points[0], points[1])
+				require.GreaterOrEqual(
+					t,
+					distance,
+					test.minSegment,
+				)
+				if test.maxSegment != 0 {
+					require.LessOrEqual(t, distance, test.maxSegment)
+				}
+			}
+		})
+	}
+}
+
+func TestSmartArrowClearanceChoosesShortTwoSidedRoute(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	sink, err := geo.NewNodeAt("sinks", NewPoint(7, 6))
+	require.NoError(t, err)
+	foo, err := geo.NewNodeAt("foo", NewPoint(4, 0))
+	require.NoError(t, err)
+	bar, err := geo.NewNodeAt("bar", NewPoint(12, 0))
+	require.NoError(t, err)
+	edges := [...]uint32{
+		geo.ConnectNodes(foo, ir.Bottom, ir.Top, sink),
+		geo.ConnectNodes(bar, ir.Bottom, ir.Top, sink),
+	}
+	for _, edgeID := range edges {
+		require.NoError(t, geo.SetEdgeStyle(edgeID, EdgeStyle{
+			PortAArrow: ArrowFilled,
+			PortBArrow: ArrowFilled,
+		}))
+	}
+	require.NoError(t, geo.Build())
+
+	for _, edgeID := range edges {
+		points := geo.Edges[edgeID].Points
+		require.GreaterOrEqual(t, len(points), 3)
+		require.Equal(t, uint64(2), manhattan(points[0], points[1]))
+		require.Equal(
+			t,
+			uint64(2),
+			manhattan(points[len(points)-2], points[len(points)-1]),
+		)
+	}
+}
+
 func TestPreviewRouteTreatsPointAsFloatingPort(t *testing.T) {
 	t.Parallel()
 
@@ -466,6 +562,28 @@ func TestRasterizeOccludesUnrelatedCrossingByLayer(t *testing.T) {
 	owner, ok = grid.OwnerAt(NewPoint(2, 2))
 	require.True(t, ok)
 	require.Equal(t, vertical, owner)
+}
+
+func TestRasterizeDoesNotJoinCrossingNodeBorders(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	back, err := geo.NewNodeAt("", Point{})
+	require.NoError(t, err)
+	front, err := geo.NewNodeAt("", NewPoint(3, 2))
+	require.NoError(t, err)
+	size := Size{Width: 7, Height: 4}
+	require.NoError(t, geo.SetNodeSize(back, size))
+	require.NoError(t, geo.SetNodeSize(front, size))
+	require.NoError(t, geo.Build())
+
+	grid, err := Rasterize(geo)
+	require.NoError(t, err)
+	index, ok := grid.Index(NewPoint(6, 2))
+	require.True(t, ok)
+	require.Equal(t, East|West, grid.Cells[index])
+	require.Equal(t, Hit{ID: front, Kind: HitNode}, grid.Owners[index])
 }
 
 func routeTraversesEndpoint(geo *Layout, edgeID uint32) bool {

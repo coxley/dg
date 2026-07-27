@@ -33,9 +33,15 @@ func TestModelNavigatesAndCyclesHits(t *testing.T) {
 
 	model.cursor = model.geo.Ports[rightPort].Anchor
 	model.refreshHits()
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyTab,
+		Mod:  tea.ModCtrl,
+	}))
 	require.Equal(t, 1, model.active)
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyTab,
+		Mod:  tea.ModCtrl | tea.ModShift,
+	}))
 	require.Zero(t, model.active)
 }
 
@@ -61,6 +67,233 @@ func TestModelMoveIsOneUndoInteraction(t *testing.T) {
 	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
 	require.Equal(t, after, model.geo.Nodes[nodeID].Rect.Min)
+}
+
+func TestModelFocusCyclesNodesAndArrowMovesFocusedNode(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	leftOrigin := model.geo.Nodes[left].Rect.Min
+
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, layout.Hit{ID: left, Kind: layout.HitNode}, model.target)
+	require.True(t, model.geo.Selection().Contains(model.target))
+
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	require.Equal(t, leftOrigin.Add(1, 0), model.geo.Nodes[left].Rect.Min)
+
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, layout.Hit{ID: right, Kind: layout.HitNode}, model.target)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyTab,
+		Mod:  tea.ModShift,
+	}))
+	require.Equal(t, layout.Hit{ID: left, Kind: layout.HitNode}, model.target)
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, leftOrigin, model.geo.Nodes[left].Rect.Min)
+}
+
+func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, keyPress('r', "r"))
+	require.Equal(t, modeRectangle, model.mode)
+
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      15,
+		Y:      8,
+		Button: tea.MouseLeft,
+	})
+	nodeID := model.target.ID
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      22,
+		Y:      12,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      22,
+		Y:      12,
+		Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, modeNavigate, model.mode)
+	require.True(t, model.geo.NodeExists(nodeID))
+	require.Equal(t, "", model.geo.Label(nodeID))
+	size, explicit := model.geo.ExplicitNodeSize(nodeID)
+	require.True(t, explicit)
+	require.Equal(t, layout.Size{Width: 8, Height: 5}, size)
+	require.Equal(t, layout.NewPoint(15, 8), model.geo.Nodes[nodeID].Rect.Min)
+	require.True(t, model.geo.Selection().Contains(layout.Hit{
+		ID:   nodeID,
+		Kind: layout.HitNode,
+	}))
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.False(t, model.geo.NodeExists(nodeID))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
+	require.True(t, model.geo.NodeExists(nodeID))
+	require.Equal(t, layout.Size{Width: 8, Height: 5}, model.geo.Nodes[nodeID].Rect.Size)
+}
+
+func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, keyPress('r', "r"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      15,
+		Y:      8,
+		Button: tea.MouseLeft,
+	})
+	nodeID := model.target.ID
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      22,
+		Y:      12,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, layout.Size{Width: 8, Height: 5}, model.geo.Nodes[nodeID].Rect.Size)
+	updateModel(t, model, keyPress('u', "u"))
+	require.False(t, model.geo.NodeExists(nodeID))
+}
+
+func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
+	model.target = layout.Hit{ID: left, Kind: layout.HitNode}
+	updateModel(t, model, keyPress('b', "b"))
+	require.Equal(t, layout.NodeStyle{Border: layout.BorderRounded}, model.nodeStyle)
+
+	updateModel(t, model, keyPress('r', "r"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      35,
+		Y:      2,
+		Button: tea.MouseLeft,
+	})
+	created := model.target.ID
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      42,
+		Y:      4,
+		Button: tea.MouseLeft,
+	})
+	style, ok := model.geo.NodeStyle(created)
+	require.True(t, ok)
+	require.Equal(t, model.nodeStyle, style)
+
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, model.rebuild())
+	edgeHit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
+	model.selectOnly(edgeHit)
+	model.target = edgeHit
+	require.True(t, model.geo.Selection().Contains(edgeHit))
+	updateModel(t, model, keyPress('a', "a"))
+	require.Empty(t, model.status)
+	require.Equal(t, layout.EdgeStyle{PortBArrow: layout.ArrowFilled}, model.edgeStyle)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'A',
+		Mod:  tea.ModShift,
+	}))
+	require.Equal(t, layout.EdgeStyle{
+		PortAArrow: layout.ArrowFilled,
+		PortBArrow: layout.ArrowFilled,
+	}, model.edgeStyle)
+
+	source := portExiting(t, model, right, 1)
+	destination := portExiting(t, model, created, -1)
+	model.connectSource = source
+	model.connectStarted = true
+	model.completeConnectionTo(destination)
+	require.Equal(t, layout.HitEdge, model.target.Kind)
+	inherited, ok := model.geo.EdgeStyle(model.target.ID)
+	require.True(t, ok)
+	require.Equal(t, model.edgeStyle, inherited)
+}
+
+func TestModelCyclesStylesAcrossSelection(t *testing.T) {
+	t.Parallel()
+
+	model, left, middle := newTwoNodeModel(t)
+	right, err := model.geo.NewNodeAt("right", layout.NewPoint(38, 2))
+	require.NoError(t, err)
+	edgeA := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, middle)
+	edgeB := model.geo.ConnectNodes(middle, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, model.geo.SetNodeStyle(left, layout.NodeStyle{
+		Border: layout.BorderRounded,
+	}))
+	require.NoError(t, model.geo.SetEdgeStyle(edgeA, layout.EdgeStyle{
+		PortBArrow: layout.ArrowFilled,
+	}))
+	require.NoError(t, model.rebuild())
+
+	leftHit := layout.Hit{ID: left, Kind: layout.HitNode}
+	middleHit := layout.Hit{ID: middle, Kind: layout.HitNode}
+	model.selectOnly(leftHit)
+	require.True(t, model.geo.Selection().Toggle(middleHit))
+	model.target = middleHit
+	updateModel(t, model, keyPress('b', "b"))
+	require.Equal(
+		t,
+		layout.NodeStyle{Border: layout.BorderNone},
+		mustNodeStyle(t, model, left),
+	)
+	require.Equal(
+		t,
+		layout.NodeStyle{Border: layout.BorderRounded},
+		mustNodeStyle(t, model, middle),
+	)
+	require.True(t, model.geo.Selection().Contains(leftHit))
+	require.True(t, model.geo.Selection().Contains(middleHit))
+	nodes, _ := model.geo.Selection().Counts()
+	require.Equal(t, 2, nodes)
+
+	edgeAHit := layout.Hit{ID: edgeA, Kind: layout.HitEdge}
+	edgeBHit := layout.Hit{ID: edgeB, Kind: layout.HitEdge}
+	model.selectOnly(edgeAHit)
+	require.True(t, model.geo.Selection().Toggle(edgeBHit))
+	require.True(t, model.geo.Selection().Toggle(leftHit))
+	model.target = edgeBHit
+	updateModel(t, model, keyPress('a', "a"))
+	require.Equal(t, layout.EdgeStyle{
+		PortBArrow: layout.ArrowOpen,
+	}, mustEdgeStyle(t, model, edgeA))
+	require.Equal(t, layout.EdgeStyle{
+		PortBArrow: layout.ArrowFilled,
+	}, mustEdgeStyle(t, model, edgeB))
+	require.True(t, model.geo.Selection().Contains(edgeAHit))
+	require.True(t, model.geo.Selection().Contains(edgeBHit))
+	require.True(t, model.geo.Selection().Contains(leftHit))
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'A',
+		Mod:  tea.ModShift,
+	}))
+	require.Equal(t, layout.EdgeStyle{
+		PortAArrow: layout.ArrowFilled,
+		PortBArrow: layout.ArrowOpen,
+	}, mustEdgeStyle(t, model, edgeA))
+	require.Equal(t, layout.EdgeStyle{
+		PortAArrow: layout.ArrowFilled,
+		PortBArrow: layout.ArrowFilled,
+	}, mustEdgeStyle(t, model, edgeB))
+	require.True(t, model.geo.Selection().Contains(edgeAHit))
+	require.True(t, model.geo.Selection().Contains(edgeBHit))
+	require.True(t, model.geo.Selection().Contains(leftHit))
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, layout.EdgeStyle{
+		PortBArrow: layout.ArrowOpen,
+	}, mustEdgeStyle(t, model, edgeA))
+	require.Equal(t, layout.EdgeStyle{
+		PortBArrow: layout.ArrowFilled,
+	}, mustEdgeStyle(t, model, edgeB))
 }
 
 func TestModelReordersLayersWithUndo(t *testing.T) {
@@ -923,6 +1156,32 @@ func TestModelMovesAndDeletesSelectionAsOneInteraction(t *testing.T) {
 	require.True(t, model.geo.EdgeExists(edgeID))
 }
 
+func TestModelArrowMovesSelectionAsOneInteraction(t *testing.T) {
+	t.Parallel()
+
+	model, left, connected, _, edgeID := newComponentModel(t)
+	leftHit := layout.Hit{ID: left, Kind: layout.HitNode}
+	connectedHit := layout.Hit{ID: connected, Kind: layout.HitNode}
+	edgeHit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
+	model.selectOnly(leftHit)
+	require.True(t, model.geo.Selection().Toggle(connectedHit))
+	require.True(t, model.geo.Selection().Toggle(edgeHit))
+	model.target = edgeHit
+	leftOrigin := model.geo.Nodes[left].Rect.Min
+	connectedOrigin := model.geo.Nodes[connected].Rect.Min
+
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	require.Equal(t, leftOrigin.Add(1, 0), model.geo.Nodes[left].Rect.Min)
+	require.Equal(t, connectedOrigin.Add(1, 0), model.geo.Nodes[connected].Rect.Min)
+	require.True(t, model.geo.Selection().Contains(leftHit))
+	require.True(t, model.geo.Selection().Contains(connectedHit))
+	require.True(t, model.geo.Selection().Contains(edgeHit))
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, leftOrigin, model.geo.Nodes[left].Rect.Min)
+	require.Equal(t, connectedOrigin, model.geo.Nodes[connected].Rect.Min)
+}
+
 func TestModelMouseDragCommitsNewNodeLabel(t *testing.T) {
 	t.Parallel()
 
@@ -1129,6 +1388,20 @@ func newTestModel(t testing.TB) (*Model, uint32) {
 	model, err := New(geo)
 	require.NoError(t, err)
 	return model, nodeID
+}
+
+func mustNodeStyle(t testing.TB, model *Model, nodeID uint32) layout.NodeStyle {
+	t.Helper()
+	style, ok := model.geo.NodeStyle(nodeID)
+	require.True(t, ok)
+	return style
+}
+
+func mustEdgeStyle(t testing.TB, model *Model, edgeID uint32) layout.EdgeStyle {
+	t.Helper()
+	style, ok := model.geo.EdgeStyle(edgeID)
+	require.True(t, ok)
+	return style
 }
 
 func requireSavedLabel(t testing.TB, path, want string) {

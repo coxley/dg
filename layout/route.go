@@ -86,7 +86,21 @@ func (l *Layout) PreviewRoute(
 	sourcePort uint32,
 	point Point,
 ) ([]Point, error) {
-	return l.previewRoute(dst, sourcePort, point, math.MaxUint32)
+	return l.previewRoute(dst, sourcePort, point, math.MaxUint32, EdgeStyle{})
+}
+
+// PreviewRouteStyled returns a preview that reserves straight endpoint cells
+// for smart arrows.
+func (l *Layout) PreviewRouteStyled(
+	dst []Point,
+	sourcePort uint32,
+	point Point,
+	style EdgeStyle,
+) ([]Point, error) {
+	if !style.Valid() {
+		return nil, errors.New("invalid edge arrow style")
+	}
+	return l.previewRoute(dst, sourcePort, point, math.MaxUint32, style)
 }
 
 // PreviewRouteWithoutEdge returns a preview that omits edgeID from occupancy
@@ -100,7 +114,25 @@ func (l *Layout) PreviewRouteWithoutEdge(
 	if !l.graph.EdgeExists(edgeID) {
 		return nil, fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
 	}
-	return l.previewRoute(dst, sourcePort, point, edgeID)
+	return l.previewRoute(dst, sourcePort, point, edgeID, EdgeStyle{})
+}
+
+// PreviewRouteWithoutEdgeStyled returns a styled preview that omits edgeID
+// from occupancy.
+func (l *Layout) PreviewRouteWithoutEdgeStyled(
+	dst []Point,
+	sourcePort uint32,
+	point Point,
+	edgeID uint32,
+	style EdgeStyle,
+) ([]Point, error) {
+	if !l.graph.EdgeExists(edgeID) {
+		return nil, fmt.Errorf("%w: %d", ir.ErrEdgeNotFound, edgeID)
+	}
+	if !style.Valid() {
+		return nil, errors.New("invalid edge arrow style")
+	}
+	return l.previewRoute(dst, sourcePort, point, edgeID, style)
 }
 
 type direction uint8
@@ -118,9 +150,11 @@ type routeState struct {
 }
 
 type routeEdge struct {
-	id       uint32
-	ports    ir.Edge
-	hasPorts bool
+	id            uint32
+	ports         ir.Edge
+	hasPorts      bool
+	straightStart bool
+	straightEnd   bool
 }
 
 type routeItem struct {
@@ -239,9 +273,11 @@ type routeScratch struct {
 	paths     [][]Point
 	candidate []Point
 	expanded  []Point
+	relaxed   []Point
+	arrowPort []bool
 }
 
-func (s *routeScratch) reset(edgeCount int) {
+func (s *routeScratch) reset(edgeCount, portCount int) {
 	s.occupancy.reset()
 	if cap(s.paths) < edgeCount {
 		s.paths = slices.Grow(s.paths, edgeCount-len(s.paths))
@@ -251,6 +287,12 @@ func (s *routeScratch) reset(edgeCount int) {
 		s.paths[i] = s.paths[i][:0]
 	}
 	s.candidate = s.candidate[:0]
+	s.relaxed = s.relaxed[:0]
+	s.arrowPort = slices.Grow(
+		s.arrowPort[:0],
+		portCount,
+	)[:portCount]
+	clear(s.arrowPort)
 }
 
 func newRouteOccupancy() routeOccupancy {
@@ -418,6 +460,7 @@ func (l *Layout) previewRoute(
 	sourcePort uint32,
 	point Point,
 	excludedEdge uint32,
+	style EdgeStyle,
 ) ([]Point, error) {
 	if !l.graph.PortExists(sourcePort) {
 		return nil, fmt.Errorf("%w: %d", ir.ErrPortNotFound, sourcePort)
@@ -482,7 +525,9 @@ func (l *Layout) previewRoute(
 				PortA: sourcePort,
 				PortB: destinationPorts[i],
 			},
-			hasPorts: true,
+			hasPorts:      true,
+			straightStart: style.PortAArrow != ArrowNone,
+			straightEnd:   style.PortBArrow != ArrowNone,
 		}
 		candidate, err := l.router.findRouteFor(
 			l,
@@ -542,7 +587,20 @@ func appendExpandedPath(dst, path []Point) ([]Point, error) {
 func (r Router) route(l *Layout) error {
 	g := &l.graph
 	scratch := &l.scratch
-	scratch.reset(len(g.Edges))
+	scratch.reset(len(g.Edges), len(g.Ports))
+	for edgeID, edge := range g.Edges {
+		if !g.EdgeExists(uint32(edgeID)) ||
+			uint64(edgeID) >= uint64(len(l.edgeStyles)) {
+			continue
+		}
+		style := l.edgeStyles[edgeID]
+		if style.PortAArrow != ArrowNone {
+			scratch.arrowPort[edge.PortA] = true
+		}
+		if style.PortBArrow != ArrowNone {
+			scratch.arrowPort[edge.PortB] = true
+		}
+	}
 	occupancy := &scratch.occupancy
 
 	for i, edge := range g.Edges {
@@ -667,6 +725,75 @@ func (r Router) findRouteFor(
 	search *routeSearch,
 	path []Point,
 ) ([]Point, error) {
+	result, err := r.findRouteForClearance(
+		l,
+		route,
+		a,
+		b,
+		occupancy,
+		search,
+		path,
+		true,
+	)
+	if !route.straightStart && !route.straightEnd {
+		return result, err
+	}
+	if err != nil && !errors.Is(err, ErrNoRoute) {
+		return nil, err
+	}
+	if err == nil &&
+		uint64(len(result)-1) == manhattan(a.Anchor, b.Anchor) {
+		return result, nil
+	}
+	relaxed, relaxedErr := r.findRouteForClearance(
+		l,
+		route,
+		a,
+		b,
+		occupancy,
+		search,
+		l.scratch.relaxed[:0],
+		false,
+	)
+	l.scratch.relaxed = relaxed
+	if relaxedErr != nil {
+		if err == nil {
+			return result, nil
+		}
+		return nil, relaxedErr
+	}
+	if err == nil {
+		fullScore, fullCrossings, fullOK := r.scorePathFor(
+			l,
+			route,
+			result,
+			occupancy,
+		)
+		relaxedScore, relaxedCrossings, relaxedOK := r.scorePathFor(
+			l,
+			route,
+			relaxed,
+			occupancy,
+		)
+		if fullOK && (!relaxedOK || compareRouteScore(
+			routeScore{cost: fullScore, crossings: fullCrossings},
+			routeScore{cost: relaxedScore, crossings: relaxedCrossings},
+		) <= 0) {
+			return result, nil
+		}
+	}
+	return append(path[:0], relaxed...), nil
+}
+
+func (r Router) findRouteForClearance(
+	l *Layout,
+	route routeEdge,
+	a, b Port,
+	occupancy *routeOccupancy,
+	search *routeSearch,
+	path []Point,
+	extraClearance bool,
+) ([]Point, error) {
 	startDir, ok := directionBetween(a.Anchor, a.Exit)
 	if !ok {
 		return nil, errors.New("invalid start port geometry")
@@ -686,6 +813,7 @@ func (r Router) findRouteFor(
 	}
 
 	start := routeState{point: a.Exit, dir: startDir}
+	startClearance, hasStartClearance := move(a.Exit, startDir)
 	search.reset()
 	search.scores[start] = routeScore{}
 	search.queue.push(routeItem{
@@ -708,6 +836,9 @@ func (r Router) findRouteFor(
 			break
 		}
 		if item.state.point == b.Exit {
+			if route.straightEnd && item.state.dir != endDir {
+				continue
+			}
 			candidate := itemScore
 			if item.state.dir != endDir {
 				candidate.cost = addCost(candidate.cost, uint64(r.Costs.Bend))
@@ -720,10 +851,33 @@ func (r Router) findRouteFor(
 		}
 
 		for _, dir := range [...]direction{north, east, south, west} {
+			if !routeStartDirectionAllowed(
+				route,
+				item.state,
+				start,
+				startClearance,
+				hasStartClearance,
+				dir,
+				startDir,
+				extraClearance,
+			) {
+				continue
+			}
 			nextPoint, ok := move(item.state.point, dir)
 			if !ok ||
 				!bounds.Contains(nextPoint) ||
 				l.blockedForRoute(route, nextPoint) {
+				continue
+			}
+			if !routeEndDirectionAllowed(
+				route,
+				nextPoint,
+				b.Exit,
+				item.state.dir,
+				dir,
+				endDir,
+				extraClearance,
+			) {
 				continue
 			}
 			step, crossings, ok := r.stepCostFor(
@@ -776,6 +930,33 @@ func (r Router) findRouteFor(
 	reverse(path)
 	path = append(path, b.Anchor)
 	return path, nil
+}
+
+func routeStartDirectionAllowed(
+	route routeEdge,
+	state, start routeState,
+	clearance Point,
+	hasClearance bool,
+	dir, startDir direction,
+	extraClearance bool,
+) bool {
+	if !route.straightStart || dir == startDir {
+		return true
+	}
+	return state != start &&
+		(!extraClearance || !hasClearance || state.point != clearance)
+}
+
+func routeEndDirectionAllowed(
+	route routeEdge,
+	next, exit Point,
+	previousDir, dir, endDir direction,
+	extraClearance bool,
+) bool {
+	if !route.straightEnd || next != exit {
+		return true
+	}
+	return dir == endDir && (!extraClearance || previousDir == endDir)
 }
 
 func (r Router) heuristic(a, b Point, sharing bool) uint64 {
@@ -923,6 +1104,12 @@ func (r Router) scorePathFor(
 	if !ok {
 		return 0, 0, false
 	}
+	if route.straightStart {
+		nextDir, ok := directionBetween(path[1], path[2])
+		if !ok || nextDir != dir {
+			return 0, 0, false
+		}
+	}
 
 	var cost uint64
 	var crossings uint32
@@ -951,6 +1138,9 @@ func (r Router) scorePathFor(
 
 	endDir, ok := directionBetween(path[len(path)-2], path[len(path)-1])
 	if !ok {
+		return 0, 0, false
+	}
+	if route.straightEnd && dir != endDir {
 		return 0, 0, false
 	}
 	if dir != endDir {
@@ -1006,10 +1196,17 @@ func (l *Layout) routeEdge(edgeID uint32) routeEdge {
 	if !l.graph.EdgeExists(edgeID) {
 		return routeEdge{id: edgeID}
 	}
+	edge := l.graph.Edges[edgeID]
+	straightStart := uint64(edge.PortA) < uint64(len(l.scratch.arrowPort)) &&
+		l.scratch.arrowPort[edge.PortA]
+	straightEnd := uint64(edge.PortB) < uint64(len(l.scratch.arrowPort)) &&
+		l.scratch.arrowPort[edge.PortB]
 	return routeEdge{
-		id:       edgeID,
-		ports:    l.graph.Edges[edgeID],
-		hasPorts: true,
+		id:            edgeID,
+		ports:         edge,
+		hasPorts:      true,
+		straightStart: straightStart,
+		straightEnd:   straightEnd,
 	}
 }
 
