@@ -231,13 +231,25 @@ func (l *Layout) NewNode(label string) (uint32, error) {
 // NewNodeAt adds a node at point and returns its index. It returns an error
 // when the label or resulting geometry is invalid.
 func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
+	return l.newNodeAt(label, point, nil)
+}
+
+func (l *Layout) newNodeAt(
+	label string,
+	point Point,
+	ports []ir.Port,
+) (uint32, error) {
 	nodeID := l.graph.NextNodeID()
 	node, err := l.nodeGeometry(nodeID, label, point)
 	if err != nil {
 		return 0, err
 	}
 
-	nodeID = l.graph.NewNode(label)
+	if ports == nil {
+		nodeID = l.graph.NewNode(label)
+	} else {
+		nodeID = l.graph.NewNodeWithPorts(label, ports)
+	}
 	if err := l.resolveNodePorts(nodeID, node.Rect); err != nil {
 		if deleteErr := l.graph.DeleteNode(nodeID); deleteErr != nil {
 			return 0, fmt.Errorf("rollback node %d: %w", nodeID, deleteErr)
@@ -266,6 +278,82 @@ func (l *Layout) NewNodeAt(label string, point Point) (uint32, error) {
 		})
 	}
 	return nodeID, nil
+}
+
+// DuplicateSelection copies selected nodes and edges wholly contained by those
+// nodes. It replaces the selection with the newly created objects.
+func (l *Layout) DuplicateSelection(dx, dy int64) error {
+	selectedNodes := make([]uint32, 0)
+	for nodeID := range l.selection.Nodes() {
+		selectedNodes = append(selectedNodes, nodeID)
+	}
+	if len(selectedNodes) == 0 {
+		return errors.New("selection contains no nodes")
+	}
+
+	portMap := make([]uint32, len(l.graph.Ports))
+	selected := make([]bool, len(l.graph.Nodes))
+	l.selection.Clear()
+	for _, sourceID := range selectedNodes {
+		origin, ok := offsetPoint(l.origins[sourceID], dx, dy)
+		if !ok {
+			return errors.New("duplicate placement outside coordinate space")
+		}
+		source := l.graph.Nodes[sourceID]
+		ports := make([]ir.Port, len(source.Ports))
+		for i, portID := range source.Ports {
+			ports[i] = l.graph.Ports[portID]
+		}
+		nodeID, err := l.newNodeAt(source.Label, origin, ports)
+		if err != nil {
+			return err
+		}
+		selected[sourceID] = true
+		for i, sourcePort := range source.Ports {
+			portMap[sourcePort] = l.graph.Nodes[nodeID].Ports[i]
+		}
+		if size, explicit := l.ExplicitNodeSize(sourceID); explicit {
+			if err := l.SetNodeSize(nodeID, size); err != nil {
+				return err
+			}
+		}
+		if err := l.SetNodeStyle(nodeID, l.nodeStyles[sourceID]); err != nil {
+			return err
+		}
+		l.selection.ensureCapacity()
+		l.selection.Toggle(Hit{ID: nodeID, Kind: HitNode})
+	}
+	for edgeID, edge := range l.graph.Edges {
+		if uint64(edge.PortA) >= uint64(len(portMap)) ||
+			uint64(edge.PortB) >= uint64(len(portMap)) {
+			continue
+		}
+		nodeA := l.graph.Ports[edge.PortA].Node
+		nodeB := l.graph.Ports[edge.PortB].Node
+		if uint64(nodeA) >= uint64(len(selected)) ||
+			uint64(nodeB) >= uint64(len(selected)) ||
+			!selected[nodeA] || !selected[nodeB] {
+			continue
+		}
+		duplicateID, err := l.ConnectPorts(portMap[edge.PortA], portMap[edge.PortB])
+		if err != nil {
+			return err
+		}
+		if err := l.SetEdgeStyle(duplicateID, l.edgeStyles[edgeID]); err != nil {
+			return err
+		}
+		l.selection.ensureCapacity()
+		l.selection.Toggle(Hit{ID: duplicateID, Kind: HitEdge})
+	}
+	return nil
+}
+
+func offsetPoint(point Point, dx, dy int64) (Point, bool) {
+	x, y := int64(point.X)+dx, int64(point.Y)+dy
+	if x < 0 || y < 0 || x > math.MaxUint32 || y > math.MaxUint32 {
+		return Point{}, false
+	}
+	return NewPoint(uint32(x), uint32(y)), true
 }
 
 // SetNodeLabel changes a node's label if the resulting geometry is valid.
@@ -651,6 +739,22 @@ func (l *Layout) Padding() Padding {
 // Router returns the configured router.
 func (l *Layout) Router() Router {
 	return l.router
+}
+
+// SetRouter changes the orthogonal routing configuration.
+func (l *Layout) SetRouter(router Router) {
+	previous := l.router
+	if previous == router {
+		return
+	}
+	l.router = router
+	if l.history != nil {
+		l.history.record(historyChange{
+			kind:         historySetRouter,
+			beforeRouter: previous,
+			afterRouter:  router,
+		})
+	}
 }
 
 // Build routes edges using the current node and port geometry.

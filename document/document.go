@@ -39,7 +39,9 @@ type Node struct {
 
 // NodeStyle stores node rendering choices.
 type NodeStyle struct {
-	Border BorderStyle `json:"border,omitempty"`
+	Border     BorderStyle     `json:"border,omitempty"`
+	Horizontal HorizontalAlign `json:"horizontal,omitempty"`
+	Vertical   VerticalAlign   `json:"vertical,omitempty"`
 }
 
 // BorderStyle identifies a persisted node border.
@@ -48,6 +50,22 @@ type BorderStyle string
 const (
 	BorderRounded BorderStyle = "rounded"
 	BorderNone    BorderStyle = "none"
+)
+
+// HorizontalAlign identifies persisted horizontal label placement.
+type HorizontalAlign string
+
+const (
+	AlignCenter HorizontalAlign = "center"
+	AlignRight  HorizontalAlign = "right"
+)
+
+// VerticalAlign identifies persisted vertical label placement.
+type VerticalAlign string
+
+const (
+	AlignMiddle VerticalAlign = "middle"
+	AlignBottom VerticalAlign = "bottom"
 )
 
 // Size stores fixed outer node dimensions. The zero value enables auto sizing.
@@ -356,7 +374,25 @@ func documentNodeStyle(style layout.NodeStyle) NodeStyle {
 	case layout.BorderNone:
 		border = BorderNone
 	}
-	return NodeStyle{Border: border}
+	var horizontal HorizontalAlign
+	switch style.Horizontal {
+	case layout.AlignCenter:
+		horizontal = AlignCenter
+	case layout.AlignRight:
+		horizontal = AlignRight
+	}
+	var vertical VerticalAlign
+	switch style.Vertical {
+	case layout.AlignMiddle:
+		vertical = AlignMiddle
+	case layout.AlignBottom:
+		vertical = AlignBottom
+	}
+	return NodeStyle{
+		Border:     border,
+		Horizontal: horizontal,
+		Vertical:   vertical,
+	}
 }
 
 func (s NodeStyle) layoutStyle() (layout.NodeStyle, error) {
@@ -371,7 +407,33 @@ func (s NodeStyle) layoutStyle() (layout.NodeStyle, error) {
 	default:
 		return layout.NodeStyle{}, fmt.Errorf("unknown border %q", s.Border)
 	}
-	return layout.NodeStyle{Border: border}, nil
+	var horizontal layout.HorizontalAlign
+	switch s.Horizontal {
+	case "":
+		horizontal = layout.AlignLeft
+	case AlignCenter:
+		horizontal = layout.AlignCenter
+	case AlignRight:
+		horizontal = layout.AlignRight
+	default:
+		return layout.NodeStyle{}, fmt.Errorf("unknown horizontal alignment %q", s.Horizontal)
+	}
+	var vertical layout.VerticalAlign
+	switch s.Vertical {
+	case "":
+		vertical = layout.AlignTop
+	case AlignMiddle:
+		vertical = layout.AlignMiddle
+	case AlignBottom:
+		vertical = layout.AlignBottom
+	default:
+		return layout.NodeStyle{}, fmt.Errorf("unknown vertical alignment %q", s.Vertical)
+	}
+	return layout.NodeStyle{
+		Border:     border,
+		Horizontal: horizontal,
+		Vertical:   vertical,
+	}, nil
 }
 
 func documentEdgeStyle(style layout.EdgeStyle) EdgeStyle {

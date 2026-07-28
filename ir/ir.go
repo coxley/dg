@@ -135,7 +135,19 @@ func (g *Graph) String() string {
 func (g *Graph) NewNode(label string) uint32 {
 	offsets := [...]float32{.5, .25, .75}
 	sides := [...]Side{Top, RightSide, Bottom, LeftSide}
-	portCount := len(offsets) * len(sides)
+	ports := make([]Port, 0, len(offsets)*len(sides))
+	for _, offset := range offsets {
+		for _, side := range sides {
+			ports = append(ports, NewPort(0, side, offset))
+		}
+	}
+	return g.NewNodeWithPorts(label, ports)
+}
+
+// NewNodeWithPorts adds a node with the supplied side and offset definitions.
+// It replaces each port's Node field with the allocated node ID.
+func (g *Graph) NewNodeWithPorts(label string, definitions []Port) uint32 {
+	portCount := len(definitions)
 	nid := g.NextNodeID()
 	var ports []uint32
 	if int(nid) < len(g.Nodes) {
@@ -150,11 +162,10 @@ func (g *Graph) NewNode(label string) uint32 {
 	if missing := portCount - len(g.freePorts); missing > 0 {
 		g.Ports = slices.Grow(g.Ports, missing)
 	}
-	for _, offset := range offsets {
-		for _, side := range sides {
-			portID := g.newPort(NewPort(nid, side, offset))
-			node.Ports = append(node.Ports, portID)
-		}
+	for _, definition := range definitions {
+		definition.Node = nid
+		portID := g.newPort(definition)
+		node.Ports = append(node.Ports, portID)
 	}
 
 	if int(nid) == len(g.Nodes) {

@@ -457,6 +457,8 @@ type historyCacheChange struct {
 	AfterNodeStyle  NodeStyle         `json:"after_node_style,omitzero"`
 	BeforeEdgeStyle EdgeStyle         `json:"before_edge_style,omitzero"`
 	AfterEdgeStyle  EdgeStyle         `json:"after_edge_style,omitzero"`
+	BeforeRouter    Router            `json:"before_router,omitzero"`
+	AfterRouter     Router            `json:"after_router,omitzero"`
 	LayerHit        historyCacheHit   `json:"layer_hit"`
 	BeforeLayer     uint32            `json:"before_layer"`
 	AfterLayer      uint32            `json:"after_layer"`
@@ -704,6 +706,8 @@ func cacheChange(change historyChange) historyCacheChange {
 		AfterNodeStyle:  change.afterNodeStyle,
 		BeforeEdgeStyle: change.beforeEdgeStyle,
 		AfterEdgeStyle:  change.afterEdgeStyle,
+		BeforeRouter:    change.beforeRouter,
+		AfterRouter:     change.afterRouter,
 		LayerHit:        cacheHit(change.layerHit),
 		BeforeLayer:     change.beforeLayer,
 		AfterLayer:      change.afterLayer,
@@ -772,7 +776,7 @@ func (c historyCacheFile) historyEntries() ([]historyEntry, bool) {
 }
 
 func (c historyCacheChange) historyChange() (historyChange, bool) {
-	if c.Kind < historyCreateNode || c.Kind > historySetEdgeStyle {
+	if c.Kind < historyCreateNode || c.Kind > historySetRouter {
 		return historyChange{}, false
 	}
 	if !c.BeforeNodeStyle.Valid() || !c.AfterNodeStyle.Valid() ||
@@ -803,6 +807,8 @@ func (c historyCacheChange) historyChange() (historyChange, bool) {
 		afterNodeStyle:  c.AfterNodeStyle,
 		beforeEdgeStyle: c.BeforeEdgeStyle,
 		afterEdgeStyle:  c.AfterEdgeStyle,
+		beforeRouter:    c.BeforeRouter,
+		afterRouter:     c.AfterRouter,
 		layerHit:        layerHit,
 		beforeLayer:     c.BeforeLayer,
 		afterLayer:      c.AfterLayer,

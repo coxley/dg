@@ -27,6 +27,46 @@ func (s BorderStyle) Next() BorderStyle {
 	return (s + 1) % borderStyleCount
 }
 
+// HorizontalAlign controls label placement across a node's inner bounds.
+type HorizontalAlign uint8
+
+const (
+	AlignLeft HorizontalAlign = iota
+	AlignCenter
+	AlignRight
+	horizontalAlignCount
+)
+
+// Valid reports whether alignment is supported.
+func (a HorizontalAlign) Valid() bool {
+	return a < horizontalAlignCount
+}
+
+// Next returns the next horizontal alignment.
+func (a HorizontalAlign) Next() HorizontalAlign {
+	return (a + 1) % horizontalAlignCount
+}
+
+// VerticalAlign controls label placement down a node's inner bounds.
+type VerticalAlign uint8
+
+const (
+	AlignTop VerticalAlign = iota
+	AlignMiddle
+	AlignBottom
+	verticalAlignCount
+)
+
+// Valid reports whether alignment is supported.
+func (a VerticalAlign) Valid() bool {
+	return a < verticalAlignCount
+}
+
+// Next returns the next vertical alignment.
+func (a VerticalAlign) Next() VerticalAlign {
+	return (a + 1) % verticalAlignCount
+}
+
 // ArrowStyle controls an edge endpoint marker.
 type ArrowStyle uint8
 
@@ -56,12 +96,14 @@ func (s ArrowStyle) Next() ArrowStyle {
 
 // NodeStyle controls node rendering.
 type NodeStyle struct {
-	Border BorderStyle
+	Border     BorderStyle
+	Horizontal HorizontalAlign
+	Vertical   VerticalAlign
 }
 
 // Valid reports whether every node style dimension is supported.
 func (s NodeStyle) Valid() bool {
-	return s.Border.Valid()
+	return s.Border.Valid() && s.Horizontal.Valid() && s.Vertical.Valid()
 }
 
 // EdgeStyle controls endpoint rendering by graph port order.
@@ -90,7 +132,7 @@ func (l *Layout) SetNodeStyle(nodeID uint32, style NodeStyle) error {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
 	}
 	if !style.Valid() {
-		return fmt.Errorf("invalid border style %d", style.Border)
+		return errors.New("invalid node style")
 	}
 	previous := l.nodeStyles[nodeID]
 	if previous == style {

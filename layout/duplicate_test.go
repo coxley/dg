@@ -1,0 +1,88 @@
+package layout
+
+import (
+	"testing"
+
+	"github.com/coxley/dg/ir"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
+	t.Parallel()
+
+	history, err := NewHistory()
+	require.NoError(t, err)
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("left", NewPoint(2, 3))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", NewPoint(12, 3))
+	require.NoError(t, err)
+	external, err := geo.NewNodeAt("external", NewPoint(22, 3))
+	require.NoError(t, err)
+	internalEdge := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	geo.ConnectNodes(right, ir.RightSide, ir.LeftSide, external)
+	require.NoError(t, geo.SetNodeSize(left, Size{Width: 8, Height: 4}))
+	require.NoError(t, geo.SetNodeStyle(left, NodeStyle{
+		Border:     BorderRounded,
+		Horizontal: AlignCenter,
+		Vertical:   AlignMiddle,
+	}))
+	require.NoError(t, geo.SetEdgeStyle(internalEdge, EdgeStyle{
+		PortBArrow: ArrowFilled,
+	}))
+	require.NoError(t, geo.Build())
+	history.Clear()
+
+	geo.Selection().SelectOnly(Hit{ID: left, Kind: HitNode})
+	require.True(t, geo.Selection().Toggle(Hit{ID: right, Kind: HitNode}))
+	transaction := history.Begin()
+	require.NoError(t, geo.DuplicateSelection(4, 5))
+	require.NoError(t, geo.Build())
+	require.NoError(t, transaction.Commit())
+
+	nodes, edges := geo.Selection().Counts()
+	require.Equal(t, 2, nodes)
+	require.Equal(t, 1, edges)
+	var copiedLeft uint32
+	for nodeID := range geo.Selection().Nodes() {
+		if geo.Label(nodeID) == "left" {
+			copiedLeft = nodeID
+		}
+	}
+	require.Equal(t, NewPoint(6, 8), geo.Nodes[copiedLeft].Rect.Min)
+	require.Equal(t, Size{Width: 8, Height: 4}, geo.Nodes[copiedLeft].Rect.Size)
+	style, ok := geo.NodeStyle(copiedLeft)
+	require.True(t, ok)
+	require.Equal(t, NodeStyle{
+		Border:     BorderRounded,
+		Horizontal: AlignCenter,
+		Vertical:   AlignMiddle,
+	}, style)
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Len(t, geo.Graph().Nodes, 5)
+	require.False(t, geo.NodeExists(3))
+	require.False(t, geo.NodeExists(4))
+}
+
+func TestSetRouterIsUndoable(t *testing.T) {
+	t.Parallel()
+
+	history, err := NewHistory()
+	require.NoError(t, err)
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	before := geo.Router()
+	after := before
+	after.Costs.Crossing++
+
+	geo.SetRouter(after)
+	require.Equal(t, after, geo.Router())
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, before, geo.Router())
+}

@@ -29,6 +29,7 @@ const (
 	historySetLayer
 	historySetNodeStyle
 	historySetEdgeStyle
+	historySetRouter
 )
 
 type historyPort struct {
@@ -74,6 +75,8 @@ type historyChange struct {
 	afterNodeStyle  NodeStyle
 	beforeEdgeStyle EdgeStyle
 	afterEdgeStyle  EdgeStyle
+	beforeRouter    Router
+	afterRouter     Router
 	layerHit        Hit
 	beforeLayer     uint32
 	afterLayer      uint32
@@ -296,7 +299,8 @@ func (h *History) coalesce(change historyChange) bool {
 		change.kind != historySetNodeSize &&
 		change.kind != historySetLayer &&
 		change.kind != historySetNodeStyle &&
-		change.kind != historySetEdgeStyle {
+		change.kind != historySetEdgeStyle &&
+		change.kind != historySetRouter {
 		return false
 	}
 	if change.kind == historySetLayer {
@@ -366,6 +370,9 @@ func coalesceChange(previous *historyChange, change historyChange) bool {
 	case historySetEdgeStyle:
 		previous.afterEdgeStyle = change.afterEdgeStyle
 		return previous.beforeEdgeStyle == previous.afterEdgeStyle
+	case historySetRouter:
+		previous.afterRouter = change.afterRouter
+		return previous.beforeRouter == previous.afterRouter
 	default:
 		return false
 	}
@@ -532,6 +539,13 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 			style = change.afterEdgeStyle
 		}
 		return h.layout.SetEdgeStyle(change.id, style)
+	case historySetRouter:
+		router := change.beforeRouter
+		if forward {
+			router = change.afterRouter
+		}
+		h.layout.SetRouter(router)
+		return nil
 	default:
 		return fmt.Errorf("unknown history change %d", change.kind)
 	}
