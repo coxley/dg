@@ -2,8 +2,8 @@
 package preferences
 
 import (
+	"math"
 	"os"
-	"strconv"
 
 	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -27,16 +27,23 @@ type Styles struct {
 }
 
 type formValue struct {
-	step          string
-	sharedStep    string
-	bend          string
-	crossing      string
-	endpoint      string
-	reroutePasses string
+	step          uint32
+	sharedStep    uint32
+	bend          uint32
+	crossing      uint32
+	endpoint      uint32
+	reroutePasses uint8
 	applyToFuture bool
 	saveDirectory string
 	commentPrefix string
 	save          bool
+}
+
+type numericField interface {
+	huh.Field
+	HandleFlash(numinput.FlashExpiredMsg) bool
+	SetStyles(numinput.Styles)
+	Flash() int
 }
 
 // UpdateMsg routes a child form command back to Model.Update.
@@ -49,7 +56,7 @@ type Model struct {
 	value  Value
 	input  formValue
 	form   *huh.Form
-	fields []*numinput.Field
+	fields []numericField
 	width  int
 	height int
 	styles Styles
@@ -141,19 +148,12 @@ func (m *Model) FieldFlash(index int) int {
 
 func (m *Model) sync() {
 	router := m.value.Router
-	parse32 := func(text string, destination *uint32) {
-		if value, err := strconv.ParseUint(text, 10, 32); err == nil {
-			*destination = uint32(value)
-		}
-	}
-	parse32(m.input.step, &router.Costs.Step)
-	parse32(m.input.sharedStep, &router.Costs.SharedStep)
-	parse32(m.input.bend, &router.Costs.Bend)
-	parse32(m.input.crossing, &router.Costs.Crossing)
-	parse32(m.input.endpoint, &router.Costs.EndpointStep)
-	if value, err := strconv.ParseUint(m.input.reroutePasses, 10, 8); err == nil {
-		router.ReroutePasses = uint8(value)
-	}
+	router.Costs.Step = m.input.step
+	router.Costs.SharedStep = m.input.sharedStep
+	router.Costs.Bend = m.input.bend
+	router.Costs.Crossing = m.input.crossing
+	router.Costs.EndpointStep = m.input.endpoint
+	router.ReroutePasses = m.input.reroutePasses
 	m.value = Value{
 		Router:        router,
 		ApplyToFuture: m.input.applyToFuture,
@@ -164,12 +164,12 @@ func (m *Model) sync() {
 
 func formValueFrom(value Value) formValue {
 	return formValue{
-		step:          strconv.FormatUint(uint64(value.Router.Costs.Step), 10),
-		sharedStep:    strconv.FormatUint(uint64(value.Router.Costs.SharedStep), 10),
-		bend:          strconv.FormatUint(uint64(value.Router.Costs.Bend), 10),
-		crossing:      strconv.FormatUint(uint64(value.Router.Costs.Crossing), 10),
-		endpoint:      strconv.FormatUint(uint64(value.Router.Costs.EndpointStep), 10),
-		reroutePasses: strconv.FormatUint(uint64(value.Router.ReroutePasses), 10),
+		step:          value.Router.Costs.Step,
+		sharedStep:    value.Router.Costs.SharedStep,
+		bend:          value.Router.Costs.Bend,
+		crossing:      value.Router.Costs.Crossing,
+		endpoint:      value.Router.Costs.EndpointStep,
+		reroutePasses: value.Router.ReroutePasses,
 		applyToFuture: value.ApplyToFuture,
 		saveDirectory: value.SaveDirectory,
 		commentPrefix: NormalizeCommentPrefix(value.CommentPrefix),
@@ -181,15 +181,15 @@ func newForm(
 	value *formValue,
 	width, height int,
 	styles Styles,
-) (*huh.Form, []*numinput.Field) {
+) (*huh.Form, []numericField) {
 	keymap := keyMap()
-	inputs := []*numinput.Field{
-		numinput.NewField("Step cost", &value.step, 32, styles.NumInput),
-		numinput.NewField("Shared-step cost", &value.sharedStep, 32, styles.NumInput),
-		numinput.NewField("Bend cost", &value.bend, 32, styles.NumInput),
-		numinput.NewField("Crossing cost", &value.crossing, 32, styles.NumInput),
-		numinput.NewField("Endpoint cost", &value.endpoint, 32, styles.NumInput),
-		numinput.NewField("Reroute passes", &value.reroutePasses, 8, styles.NumInput),
+	inputs := []numericField{
+		numinput.NewField("Step cost", &value.step, uint32(math.MaxUint32), styles.NumInput),
+		numinput.NewField("Shared-step cost", &value.sharedStep, uint32(math.MaxUint32), styles.NumInput),
+		numinput.NewField("Bend cost", &value.bend, uint32(math.MaxUint32), styles.NumInput),
+		numinput.NewField("Crossing cost", &value.crossing, uint32(math.MaxUint32), styles.NumInput),
+		numinput.NewField("Endpoint cost", &value.endpoint, uint32(math.MaxUint32), styles.NumInput),
+		numinput.NewField("Reroute passes", &value.reroutePasses, uint8(math.MaxUint8), styles.NumInput),
 	}
 	directory := value.saveDirectory
 	if info, err := os.Stat(directory); err != nil || !info.IsDir() {

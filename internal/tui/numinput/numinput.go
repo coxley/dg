@@ -1,4 +1,4 @@
-// Package numinput implements an unsigned numeric stepper.
+// Package numinput implements a bounded integer stepper.
 package numinput
 
 import (
@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"golang.org/x/exp/constraints"
 )
 
 const flashDuration = 120 * time.Millisecond
@@ -21,15 +22,15 @@ type Styles struct {
 
 // FlashExpiredMsg clears directional feedback for one input generation.
 type FlashExpiredMsg struct {
-	input      *Model
-	generation uint64
+	generationAddress *uint64
+	generation        uint64
 }
 
-// Model owns a bounded unsigned value and its interaction state.
-type Model struct {
+// Model owns a bounded integer value and its interaction state.
+type Model[T constraints.Integer] struct {
 	title      string
-	value      *string
-	bits       int
+	value      *T
+	max        T
 	styles     Styles
 	focused    bool
 	flash      int
@@ -37,22 +38,30 @@ type Model struct {
 }
 
 // New returns a numeric input bound to value.
-func New(title string, value *string, bits int, styles Styles) *Model {
-	return &Model{
+func New[T constraints.Integer](
+	title string,
+	value *T,
+	maxValue T,
+	styles Styles,
+) *Model[T] {
+	var zero T
+	maxValue = max(maxValue, zero)
+	*value = min(max(*value, zero), maxValue)
+	return &Model[T]{
 		title:  title,
 		value:  value,
-		bits:   bits,
+		max:    maxValue,
 		styles: styles,
 	}
 }
 
 // Init implements tea.Model.
-func (*Model) Init() tea.Cmd {
+func (*Model[T]) Init() tea.Cmd {
 	return nil
 }
 
 // Update implements tea.Model.
-func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model[T]) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyPressMsg:
 		switch message.Code {
@@ -68,15 +77,16 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
-func (m *Model) View() tea.View {
+func (m *Model[T]) View() tea.View {
 	return tea.NewView(m.Render())
 }
 
 // Render returns the styled input content for embedding in another model.
-func (m *Model) Render() string {
+func (m *Model[T]) Render() string {
+	value := strconv.FormatUint(uint64(*m.value), 10)
 	title := m.styles.Title.Render(m.title)
 	if !m.focused {
-		return title + "  " + *m.value
+		return title + "  " + value
 	}
 	title = m.styles.FocusedTitle.Render(m.title)
 	left, right := m.styles.Button.Render("⇽"), m.styles.Button.Render("⇾")
@@ -85,16 +95,16 @@ func (m *Model) Render() string {
 	} else if m.flash > 0 {
 		right = m.styles.ActiveButton.Render("⇾")
 	}
-	return title + "  " + left + " " + *m.value + " " + right
+	return title + "  " + left + " " + value + " " + right
 }
 
 // SetStyles replaces the input's visual styles.
-func (m *Model) SetStyles(styles Styles) {
+func (m *Model[T]) SetStyles(styles Styles) {
 	m.styles = styles
 }
 
 // SetFocused controls focused rendering.
-func (m *Model) SetFocused(focused bool) {
+func (m *Model[T]) SetFocused(focused bool) {
 	m.focused = focused
 	if !focused {
 		m.flash = 0
@@ -102,13 +112,13 @@ func (m *Model) SetFocused(focused bool) {
 }
 
 // Flash reports the active direction: -1 for left, 1 for right, or 0.
-func (m *Model) Flash() int {
+func (m *Model[T]) Flash() int {
 	return m.flash
 }
 
 // HandleFlash consumes a matching flash-expiration message.
-func (m *Model) HandleFlash(message FlashExpiredMsg) bool {
-	if message.input != m {
+func (m *Model[T]) HandleFlash(message FlashExpiredMsg) bool {
+	if message.generationAddress != &m.generation {
 		return false
 	}
 	if m.generation == message.generation {
@@ -117,24 +127,24 @@ func (m *Model) HandleFlash(message FlashExpiredMsg) bool {
 	return true
 }
 
-func (m *Model) step(delta int) tea.Cmd {
-	value, _ := strconv.ParseUint(*m.value, 10, m.bits)
-	limit := uint64(1)<<m.bits - 1
+func (m *Model[T]) step(delta int) tea.Cmd {
 	if delta < 0 {
-		if value != 0 {
-			value--
+		if *m.value != 0 {
+			*m.value--
 		}
 		m.flash = -1
 	} else {
-		if value != limit {
-			value++
+		if *m.value != m.max {
+			*m.value++
 		}
 		m.flash = 1
 	}
-	*m.value = strconv.FormatUint(value, 10)
 	m.generation++
 	generation := m.generation
 	return tea.Tick(flashDuration, func(time.Time) tea.Msg {
-		return FlashExpiredMsg{input: m, generation: generation}
+		return FlashExpiredMsg{
+			generationAddress: &m.generation,
+			generation:        generation,
+		}
 	})
 }

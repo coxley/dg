@@ -7,11 +7,12 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"golang.org/x/exp/constraints"
 )
 
 // Field adapts Model for use in a Huh form.
-type Field struct {
-	input    *Model
+type Field[T constraints.Integer] struct {
+	input    *Model[T]
 	width    int
 	height   int
 	position huh.FieldPosition
@@ -20,9 +21,14 @@ type Field struct {
 }
 
 // NewField returns a Huh field backed by an independent numeric model.
-func NewField(title string, value *string, bits int, styles Styles) *Field {
-	return &Field{
-		input: New(title, value, bits, styles),
+func NewField[T constraints.Integer](
+	title string,
+	value *T,
+	maxValue T,
+	styles Styles,
+) *Field[T] {
+	return &Field[T]{
+		input: New(title, value, maxValue, styles),
 		previous: key.NewBinding(
 			key.WithKeys("up", "shift+tab"),
 			key.WithHelp("↑", "previous"),
@@ -35,25 +41,25 @@ func NewField(title string, value *string, bits int, styles Styles) *Field {
 }
 
 // HandleFlash routes delayed feedback to this field's model.
-func (f *Field) HandleFlash(message FlashExpiredMsg) bool {
+func (f *Field[T]) HandleFlash(message FlashExpiredMsg) bool {
 	return f.input.HandleFlash(message)
 }
 
 // SetStyles replaces the field's visual styles.
-func (f *Field) SetStyles(styles Styles) {
+func (f *Field[T]) SetStyles(styles Styles) {
 	f.input.SetStyles(styles)
 }
 
 // Flash reports the active input direction.
-func (f *Field) Flash() int {
+func (f *Field[T]) Flash() int {
 	return f.input.Flash()
 }
 
-func (f *Field) Init() tea.Cmd {
+func (f *Field[T]) Init() tea.Cmd {
 	return f.input.Init()
 }
 
-func (f *Field) Update(message tea.Msg) (huh.Model, tea.Cmd) {
+func (f *Field[T]) Update(message tea.Msg) (huh.Model, tea.Cmd) {
 	keyPress, ok := message.(tea.KeyPressMsg)
 	if !ok {
 		_, command := f.input.Update(message)
@@ -70,74 +76,74 @@ func (f *Field) Update(message tea.Msg) (huh.Model, tea.Cmd) {
 	}
 }
 
-func (f *Field) View() string {
+func (f *Field[T]) View() string {
 	return f.input.Render()
 }
 
-func (f *Field) Focus() tea.Cmd {
+func (f *Field[T]) Focus() tea.Cmd {
 	f.input.SetFocused(true)
 	return nil
 }
 
-func (f *Field) Blur() tea.Cmd {
+func (f *Field[T]) Blur() tea.Cmd {
 	f.input.SetFocused(false)
 	return nil
 }
 
-func (*Field) Error() error {
+func (*Field[T]) Error() error {
 	return nil
 }
 
-func (*Field) Run() error {
+func (*Field[T]) Run() error {
 	return nil
 }
 
-func (f *Field) RunAccessible(writer io.Writer, _ io.Reader) error {
+func (f *Field[T]) RunAccessible(writer io.Writer, _ io.Reader) error {
 	_, err := fmt.Fprintf(writer, "%s: %v\n", f.input.title, f.GetValue())
 	return err
 }
 
-func (*Field) Skip() bool {
+func (*Field[T]) Skip() bool {
 	return false
 }
 
-func (*Field) Zoom() bool {
+func (*Field[T]) Zoom() bool {
 	return false
 }
 
-func (f *Field) KeyBinds() []key.Binding {
+func (f *Field[T]) KeyBinds() []key.Binding {
 	return []key.Binding{f.previous, f.next}
 }
 
-func (f *Field) WithTheme(huh.Theme) huh.Field {
+func (f *Field[T]) WithTheme(huh.Theme) huh.Field {
 	return f
 }
 
-func (f *Field) WithKeyMap(*huh.KeyMap) huh.Field {
+func (f *Field[T]) WithKeyMap(*huh.KeyMap) huh.Field {
 	return f
 }
 
-func (f *Field) WithWidth(width int) huh.Field {
+func (f *Field[T]) WithWidth(width int) huh.Field {
 	f.width = width
 	return f
 }
 
-func (f *Field) WithHeight(height int) huh.Field {
+func (f *Field[T]) WithHeight(height int) huh.Field {
 	f.height = height
 	return f
 }
 
-func (f *Field) WithPosition(position huh.FieldPosition) huh.Field {
+func (f *Field[T]) WithPosition(position huh.FieldPosition) huh.Field {
 	f.position = position
 	f.previous.SetEnabled(!position.IsFirst())
 	f.next.SetEnabled(!position.IsLast())
 	return f
 }
 
-func (f *Field) GetKey() string {
+func (f *Field[T]) GetKey() string {
 	return f.input.title
 }
 
-func (f *Field) GetValue() any {
+func (f *Field[T]) GetValue() any {
 	return *f.input.value
 }
