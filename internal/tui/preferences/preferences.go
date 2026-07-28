@@ -305,8 +305,8 @@ func newForm(
 		inputs[3],
 		inputs[4],
 		inputs[5],
-		directoryField,
 		commentField,
+		directoryField,
 		actions,
 	}
 	form := huh.NewForm(huh.NewGroup(fields...)).
@@ -321,8 +321,8 @@ func newForm(
 	}
 	form.WithHeight(min(height, naturalHeight))
 	return form, inputs, []*rowField{
-		directoryField.rowField,
 		commentField,
+		directoryField.rowField,
 	}, directoryField, actions, naturalHeight
 }
 

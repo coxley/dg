@@ -22,6 +22,8 @@ type Theme struct {
 	SettingsContent lipgloss.Style
 	FormSeparator   lipgloss.Style
 	FormField       lipgloss.Style
+	Button          lipgloss.Style
+	FocusedButton   lipgloss.Style
 }
 
 // DefaultTheme returns the editor's default terminal theme.
@@ -47,6 +49,9 @@ func DefaultTheme(dark bool) Theme {
 		Border(lipgloss.RoundedBorder())
 	modalBody := lipgloss.NewStyle().
 		PaddingTop(1)
+
+	button := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), true).MarginRight(1)
+	focusedButton := button.Border(lipgloss.DoubleBorder(), true)
 	return Theme{
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().
@@ -90,6 +95,8 @@ func DefaultTheme(dark bool) Theme {
 			SetString("\n"),
 		FormField: lipgloss.NewStyle().
 			PaddingLeft(1),
+		Button:        button,
+		FocusedButton: focusedButton,
 	}
 }
 
@@ -119,7 +126,7 @@ func (t Theme) preferenceStyles() preferencesview.Styles {
 		FocusedTitle:   t.NumInput.FocusedTitle,
 		Value:          t.HelpDescription,
 		FocusedValue:   t.HelpKey,
-		Action:         t.HelpDescription.Padding(0, 1),
-		SelectedAction: t.HelpKey.Padding(0, 1),
+		Action:         t.Button,
+		SelectedAction: t.FocusedButton,
 	}
 }

@@ -63,19 +63,15 @@ func (f *actionField) Update(message tea.Msg) (huh.Model, tea.Cmd) {
 }
 
 func (f *actionField) View() string {
-	view := f.content()
-	return strings.Repeat(
-		" ",
-		max(f.width-lipgloss.Width(view), 0),
-	) + view
+	return f.content()
 }
 
 func (f *actionField) content() string {
-	var view strings.Builder
+	views := make([]string, 0, len(actionLabels))
 	for action := ActionSave; action <= ActionCancel; action++ {
-		view.WriteString(f.button(action))
+		views = append(views, f.button(action))
 	}
-	return view.String()
+	return lipgloss.JoinHorizontal(1, views...)
 }
 
 func (f *actionField) Focus() tea.Cmd {
@@ -113,7 +109,7 @@ func (*actionField) GetKey() string  { return "action" }
 func (f *actionField) GetValue() any { return *f.action }
 
 func (f *actionField) hit(x int) {
-	x -= max(f.width-lipgloss.Width(f.content()), 0)
+	x -= max(lipgloss.Width(f.content()), 0)
 	for action := ActionSave; action <= ActionCancel; action++ {
 		width := lipgloss.Width(f.button(action))
 		if x >= 0 && x < width {
