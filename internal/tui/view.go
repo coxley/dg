@@ -15,7 +15,8 @@ import (
 
 const (
 	selectionStart     = "\x1b[48;5;24;38;5;231m"
-	portHighlightStart = "\x1b[48;5;34;38;5;231m"
+	portHighlightStart = "\x1b[38;5;46m"
+	errorStart         = "\x1b[31m"
 	selectionEnd       = "\x1b[0m"
 	toolbarTop         = 1
 	toolbarBoxHeight   = 5
@@ -123,6 +124,11 @@ func appendRunes(dst []byte, value rune, count int) []byte {
 
 func (m *Model) appendStatusText(dst []byte) []byte {
 	if m.status != "" {
+		if m.status == m.statusError {
+			dst = append(dst, errorStart...)
+			dst = append(dst, m.status...)
+			return append(dst, selectionEnd...)
+		}
 		return append(dst, m.status...)
 	}
 	if m.mode == modeEditLabel {

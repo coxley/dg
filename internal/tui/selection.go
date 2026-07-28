@@ -54,7 +54,7 @@ func (m *Model) firstSelectedNode() (layout.Hit, bool) {
 
 func (m *Model) expandSelection() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	if !m.hasSelection() {
@@ -95,28 +95,28 @@ func (m *Model) marqueeArea() selectionArea {
 
 func (m *Model) duplicateSelection(dx, dy int64) {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	if !m.hasSelectedNodes() {
 		hit, ok := m.activeHit()
 		if !ok || hit.Kind != layout.HitNode {
-			m.status = "select at least one node to duplicate"
+			m.setError("select at least one node to duplicate")
 			return
 		}
 		m.selectOnly(hit)
 	}
 	m.beginTransaction()
 	if err := m.geo.DuplicateSelection(dx, dy); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction(), m.render()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction(), m.render()).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if hit, ok := m.firstSelectedNode(); ok {

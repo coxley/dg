@@ -21,8 +21,14 @@ func (m *Model) currentModalOverlay() modalOverlay {
 		return modalOverlay{}
 	}
 	width := min(settingsModalWidth, m.width)
-	if m.modal == modalSave {
+	switch m.modal {
+	case modalSave:
 		width = min(68, m.width)
+	case modalExport:
+		width = min(50, m.width)
+	case modalNotice:
+		width = min(max(28, displayWidth([]byte(m.notice))+4), m.width)
+	case modalNone, modalHelp, modalPreferences:
 	}
 	lines := m.modalLines(width)
 	height := m.diagramHeight()
@@ -53,6 +59,12 @@ func (m *Model) modalLines(width int) []string {
 		return componentModalLines(m.saveForm.View(), width)
 	case modalExport:
 		return componentModalLines(m.exportForm.View(), width)
+	case modalNotice:
+		return []string{
+			"╭" + repeatRune('─', width-2) + "╮",
+			padModalLine(" "+m.notice, width),
+			"╰" + repeatRune('─', width-2) + "╯",
+		}
 	default:
 		return m.settingsModalLines(width)
 	}

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -14,6 +16,7 @@ import (
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
+	"github.com/rivo/uniseg"
 	"github.com/stretchr/testify/require"
 )
 
@@ -535,7 +538,14 @@ func TestPreferenceModalJustifiesTitlesAndValues(t *testing.T) {
 	require.NotEmpty(t, step)
 	require.NotEmpty(t, sharedStep)
 	require.Equal(t, strings.Index(step, "Step cost"), strings.Index(sharedStep, "Shared-step cost"))
-	require.Equal(t, strings.LastIndex(step, "1"), strings.LastIndex(sharedStep, "2"))
+	require.Equal(
+		t,
+		uniseg.StringWidth(step[:strings.Index(step, "10")+len("10")]),
+		uniseg.StringWidth(sharedStep[:strings.LastIndex(sharedStep, "2")+1]),
+		"step=%q shared=%q",
+		step,
+		sharedStep,
+	)
 }
 
 func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
@@ -554,6 +564,64 @@ func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 	require.Equal(t, before, model.geo.Router())
 	require.Equal(t, modalNone, model.modal)
 	require.False(t, model.preferenceEdit)
+}
+
+func TestPreferencesSaveShowsNotice(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
+	model.openPreferences()
+
+	command := model.applyPreferences()
+
+	require.NotNil(t, command)
+	require.Equal(t, modalNotice, model.modal)
+	require.Equal(t, "Preferences saved", model.notice)
+	require.FileExists(t, model.preferences.path)
+}
+
+func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		model, _ := newTestModel(t)
+		command := model.showNotice("done", modalNone)
+		messages := make(chan tea.Msg, 1)
+		go func() {
+			messages <- command()
+		}()
+
+		time.Sleep(250 * time.Millisecond)
+		updateModel(t, model, <-messages)
+		require.Equal(t, modalNone, model.modal)
+		require.Empty(t, model.notice)
+
+		model.showNotice("done", modalNone)
+		updateModel(t, model, keyPress('x', "x"))
+		require.Equal(t, modalNone, model.modal)
+		require.Empty(t, model.notice)
+	})
+}
+
+func TestStatusErrorsRenderRed(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 12})
+	model.setError("broken")
+	require.Contains(t, model.View().Content, errorStart+"broken"+selectionEnd)
+
+	model.status = "ready"
+	require.NotContains(t, model.View().Content, errorStart+"ready")
+}
+
+func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.mode = modeConnect
+
+	require.Contains(t, model.highlightStart(), "[38;")
+	require.NotContains(t, model.highlightStart(), "[48;")
 }
 
 func TestSettingsCommandScopesComponentMessages(t *testing.T) {
@@ -1252,12 +1320,12 @@ func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	dir := t.TempDir()
-	path := filepath.Join(dir, "diagram.json")
+	path := filepath.Join(dir, defaultSaveName)
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	require.Equal(t, modalSave, model.modal)
 	model.saveDirectory = dir
-	model.saveName = "diagram.json"
+	model.saveName = defaultSaveName
 	model.commitSaveForm()
 
 	require.Equal(t, modeNavigate, model.mode)

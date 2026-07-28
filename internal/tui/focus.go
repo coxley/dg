@@ -10,7 +10,7 @@ import (
 
 func (m *Model) focusNode(delta int) {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	current, hasCurrent := m.focusedNode()
@@ -21,7 +21,7 @@ func (m *Model) focusNode(delta int) {
 		}
 	}
 	if len(m.focusNodes) == 0 {
-		m.status = "no nodes"
+		m.setError("no nodes")
 		return
 	}
 	slices.SortFunc(m.focusNodes, func(a, b layout.Hit) int {
@@ -85,19 +85,19 @@ func (m *Model) shiftFocusedNode(hit layout.Hit, dx, dy int) {
 	}
 	m.beginTransaction()
 	if err := m.geo.PlaceNode(hit.ID, origin); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(
+		m.setError(errors.Join(
 			err,
 			m.cancelTransaction(),
 			m.render(),
-		).Error()
+		).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.cursor = m.geo.Nodes[hit.ID].LabelPoint
@@ -115,7 +115,7 @@ func (m *Model) shiftSelection(dx, dy int) {
 	m.beginTransaction()
 	moved, err := m.moveSelectedNodes(int64(dx), int64(dy), cursor)
 	if err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if !moved {
@@ -123,6 +123,6 @@ func (m *Model) shiftSelection(dx, dy int) {
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	}
 }

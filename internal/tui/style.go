@@ -8,12 +8,12 @@ import (
 
 func (m *Model) cycleBorder() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	targets, ok := m.styleTargets(layout.HitNode)
 	if !ok {
-		m.status = "select a node to change its border"
+		m.setError("select a node to change its border")
 		return
 	}
 	inherited, _ := m.geo.NodeStyle(targets.primary.ID)
@@ -36,15 +36,15 @@ func (m *Model) cycleBorder() {
 		err = apply(targets.primary.ID)
 	}
 	if err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.render(); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.nodeStyle = inherited
@@ -59,12 +59,12 @@ func (m *Model) cycleBorder() {
 
 func (m *Model) cycleTextAlignment(vertical bool) {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	targets, ok := m.styleTargets(layout.HitNode)
 	if !ok {
-		m.status = "select a node to align its label"
+		m.setError("select a node to align its label")
 		return
 	}
 	inherited, _ := m.geo.NodeStyle(targets.primary.ID)
@@ -98,11 +98,11 @@ func (m *Model) cycleTextAlignment(vertical bool) {
 		err = m.render()
 	}
 	if err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.nodeStyle = inherited
@@ -117,12 +117,12 @@ func (m *Model) cycleTextAlignment(vertical bool) {
 
 func (m *Model) cycleEdgeArrow(portA bool) {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	targets, ok := m.styleTargets(layout.HitEdge)
 	if !ok {
-		m.status = "select an edge to change its arrows"
+		m.setError("select an edge to change its arrows")
 		return
 	}
 	inherited, _ := m.geo.EdgeStyle(targets.primary.ID)
@@ -153,15 +153,15 @@ func (m *Model) cycleEdgeArrow(portA bool) {
 		err = apply(targets.primary.ID)
 	}
 	if err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.edgeStyle = inherited

@@ -184,15 +184,15 @@ func (m *Model) autoSizeDoubleClickedNode() bool {
 		}
 		m.beginTransaction()
 		if err := m.geo.AutoSizeNode(hit.ID); err != nil {
-			m.status = errors.Join(err, m.cancelTransaction()).Error()
+			m.setError(errors.Join(err, m.cancelTransaction()).Error())
 			return true
 		}
 		if err := m.rebuild(); err != nil {
-			m.status = errors.Join(err, m.cancelTransaction()).Error()
+			m.setError(errors.Join(err, m.cancelTransaction()).Error())
 			return true
 		}
 		if err := m.commitTransaction(); err != nil {
-			m.status = err.Error()
+			m.setError(err.Error())
 			return true
 		}
 		m.selectOnly(hit)
@@ -226,7 +226,7 @@ func (m *Model) updateConnectionClick(point layout.Point) {
 	}
 	if m.reconnecting {
 		if err := m.renderConnectionBase(); err != nil {
-			m.status = err.Error()
+			m.setError(err.Error())
 			return
 		}
 	}
@@ -303,12 +303,12 @@ func (m *Model) updateConnectionMotion(mouse tea.Mouse) bool {
 		m.clearConnection()
 		m.cursor = start
 		if err := m.startConnection(hit); err != nil {
-			m.status = err.Error()
+			m.setError(err.Error())
 			return true
 		}
 		if err := m.renderConnectionBase(); err != nil {
 			m.clearConnection()
-			m.status = err.Error()
+			m.setError(err.Error())
 			return true
 		}
 		m.mode = modeConnect
@@ -386,11 +386,11 @@ func (m *Model) startRectangle(point layout.Point) {
 	m.beginTransaction()
 	nodeID, err := m.geo.NewNodeAt("", point)
 	if err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.geo.SetNodeStyle(nodeID, m.nodeStyle); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	hit := layout.Hit{ID: nodeID, Kind: layout.HitNode}
@@ -406,7 +406,7 @@ func (m *Model) finishRectangle() {
 	m.creatingRectangle = false
 	m.mode = modeNavigate
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.refreshHits()
@@ -418,7 +418,7 @@ func (m *Model) resizeNode(point layout.Point) {
 	nodeID := m.target.ID
 	if !m.geo.NodeExists(nodeID) {
 		m.resizing = false
-		m.status = "selected node no longer exists"
+		m.setError("selected node no longer exists")
 		return
 	}
 	padding := m.geo.Padding()
@@ -490,11 +490,11 @@ func (m *Model) abortResize(resizeErr error) {
 		m.creatingRectangle = false
 		m.mode = modeNavigate
 	}
-	m.status = errors.Join(
+	m.setError(errors.Join(
 		resizeErr,
 		m.cancelTransaction(),
 		m.render(),
-	).Error()
+	).Error())
 	m.refreshHits()
 }
 

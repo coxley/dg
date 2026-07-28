@@ -92,7 +92,7 @@ func (m *Model) insertLabelText(text string) {
 		return
 	}
 	if strings.ContainsRune(text, '\r') {
-		m.status = "labels do not support carriage returns"
+		m.setError("labels do not support carriage returns")
 		return
 	}
 	m.replaceLabelRange(m.editCaret, m.editCaret, []byte(text))
@@ -106,7 +106,7 @@ func (m *Model) replaceLabelRange(start, end int, replacement []byte) {
 
 	previous := m.geo.Label(m.target.ID)
 	if err := m.geo.SetNodeLabel(m.target.ID, string(m.editDraft)); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
@@ -114,7 +114,7 @@ func (m *Model) replaceLabelRange(start, end int, replacement []byte) {
 		if restoreErr == nil {
 			restoreErr = m.rebuild()
 		}
-		m.status = errors.Join(err, restoreErr).Error()
+		m.setError(errors.Join(err, restoreErr).Error())
 		return
 	}
 
@@ -150,7 +150,7 @@ func (m *Model) commitLabelEdit() {
 	m.target = target
 	m.selectTarget()
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	} else {
 		m.status = ""
 	}

@@ -23,13 +23,13 @@ const (
 
 func (m *Model) copySelection() tea.Cmd {
 	if !m.hasSelection() {
-		m.status = "select something to copy"
+		m.setError("select something to copy")
 		m.copyArmed = false
 		return nil
 	}
 	text, err := m.selectionText()
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		m.copyArmed = false
 		return nil
 	}
@@ -39,28 +39,23 @@ func (m *Model) copySelection() tea.Cmd {
 		return nil
 	}
 	if err := m.clipboardWrite(text); err != nil {
-		m.status = "copy selection: " + err.Error()
+		m.setError("copy selection: " + err.Error())
 		m.copyArmed = false
 		return nil
 	}
 	m.copyArmed = true
-	m.status = "Copied to clipboard"
-	return nil
+	m.status = ""
+	return m.showNotice("Copied to clipboard", modalNone)
 }
 
 func (m *Model) openExport(text string) {
 	m.exportText = text
-	m.exportStyle = exportLineSlash
+	m.exportStyle = exportStyleForPrefix(m.preferences.commentPrefix)
 	m.exportForm = huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[exportStyle]().
 				Title("Copy selection as").
-				Options(
-					huh.NewOption("Line comments  //", exportLineSlash),
-					huh.NewOption("Line comments  #", exportLineHash),
-					huh.NewOption("Block comment  /* ... */", exportBlock),
-					huh.NewOption("Markdown code block", exportMarkdown),
-				).
+				Options(exportOptions(m.exportStyle)...).
 				Value(&m.exportStyle),
 		),
 	).
@@ -70,6 +65,43 @@ func (m *Model) openExport(text string) {
 	_ = m.exportForm.Init()
 	m.modal = modalExport
 	m.status = ""
+}
+
+func normalizeCommentPrefix(prefix string) string {
+	switch prefix {
+	case "# ", "/* */":
+		return prefix
+	default:
+		return "// "
+	}
+}
+
+func exportStyleForPrefix(prefix string) exportStyle {
+	switch normalizeCommentPrefix(prefix) {
+	case "# ":
+		return exportLineHash
+	case "/* */":
+		return exportBlock
+	default:
+		return exportLineSlash
+	}
+}
+
+func exportOptions(preferred exportStyle) []huh.Option[exportStyle] {
+	labels := [...]string{
+		"Line comments  //",
+		"Line comments  #",
+		"Block comment  /* ... */",
+	}
+	options := make([]huh.Option[exportStyle], 0, len(labels)+1)
+	options = append(options, huh.NewOption(labels[preferred], preferred))
+	for style, label := range labels {
+		value := exportStyle(style)
+		if value != preferred {
+			options = append(options, huh.NewOption(label, value))
+		}
+	}
+	return append(options, huh.NewOption("Markdown code block", exportMarkdown))
 }
 
 func (m *Model) updateExportForm(message tea.Msg) tea.Cmd {
@@ -82,11 +114,11 @@ func (m *Model) updateExportForm(message tea.Msg) tea.Cmd {
 	m.modal = modalNone
 	m.exportText = ""
 	if err := m.clipboardWrite(text); err != nil {
-		m.status = "copy selection: " + err.Error()
+		m.setError("copy selection: " + err.Error())
 		return nil
 	}
-	m.status = "Copied to clipboard"
-	return nil
+	m.status = ""
+	return m.showNotice("Copied to clipboard", modalNone)
 }
 
 func formatExport(text string, style exportStyle) string {

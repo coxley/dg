@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
@@ -36,6 +37,7 @@ const (
 	modalPreferences
 	modalSave
 	modalExport
+	modalNotice
 )
 
 const (
@@ -134,10 +136,11 @@ type Model struct {
 	viewCursor [2]tea.Cursor
 	nextCursor uint8
 
-	width  int
-	height int
-	status string
-	path   string
+	width       int
+	height      int
+	status      string
+	statusError string
+	path        string
 
 	clipboardWrite func(string) error
 	copyArmed      bool
@@ -147,12 +150,16 @@ type Model struct {
 	saveForm       *huh.Form
 	saveDirectory  string
 	saveName       string
+	notice         string
+	noticeID       uint64
+	noticeReturn   modal
 
-	preferences     preferenceState
-	preferenceEdit  bool
-	preferenceForm  *huh.Form
-	preferenceInput preferenceFormValues
-	settingsTabs    bubbletab.TabModel
+	preferences      preferenceState
+	preferenceEdit   bool
+	preferenceForm   *huh.Form
+	preferenceInput  preferenceFormValues
+	preferenceFields []preferenceField
+	settingsTabs     bubbletab.TabModel
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -229,32 +236,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(message.Height, 0)
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
-		key := message.Key()
-		copyKey := key.Code == 'c' && (key.Mod == 0 || key.Mod == tea.ModCtrl)
-		if !copyKey {
-			m.copyArmed = false
-		}
-		if copyKey && m.modal == modalNone && m.mode == modeNavigate {
-			return m, m.copySelection()
-		}
-		if key.Code == 'c' && key.Mod == tea.ModCtrl {
-			m.interruptInteraction()
-			return m, tea.Quit
-		}
-		m.hasLastClick = false
-		if m.modal != modalNone {
-			return m, m.updateModal(message)
-		} else if key.Code == 's' && key.Mod == tea.ModCtrl {
-			m.requestSave()
-		} else if m.mode == modeEditLabel {
-			m.updateLabel(message)
-		} else {
-			if key.Code == 'q' && key.Mod == 0 {
-				m.interruptInteraction()
-				return m, tea.Quit
-			}
-			m.updateCommand(key)
-		}
+		return m, m.updateKey(message)
 	case tea.PasteMsg:
 		switch {
 		case m.modal == modalSave:
@@ -266,18 +248,22 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 		}
 	case tea.MouseClickMsg:
+		m.copyArmed = false
 		if m.modal == modalNone {
 			m.updateMouseClick(message.Mouse())
 		}
 	case tea.MouseReleaseMsg:
+		m.copyArmed = false
 		if m.modal == modalNone {
 			m.updateMouseRelease(message.Mouse())
 		}
 	case tea.MouseMotionMsg:
+		m.copyArmed = false
 		if m.modal == modalNone {
 			m.updateMouseMotion(message.Mouse())
 		}
 	case tea.MouseWheelMsg:
+		m.copyArmed = false
 		if m.modal == modalNone {
 			m.updateMouseWheel(message.Mouse())
 		}
@@ -293,8 +279,76 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case message.kind == saveComponent && m.modal == modalSave:
 			return m, m.updateSaveForm(message.message)
 		}
+	case noticeExpiredMsg:
+		if m.modal == modalNotice && message.id == m.noticeID {
+			m.modal = m.noticeReturn
+			m.dismissNotice()
+		}
 	}
 	return m, nil
+}
+
+func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
+	key := message.Key()
+	copyKey := key.Code == 'c' && (key.Mod == 0 || key.Mod == tea.ModCtrl)
+	if m.modal == modalNotice {
+		returnModal := m.noticeReturn
+		m.dismissNotice()
+		m.modal = returnModal
+		if !copyKey || returnModal != modalNone {
+			return nil
+		}
+	}
+	if !copyKey {
+		m.copyArmed = false
+	}
+	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
+		return m.copySelection()
+	}
+	if key.Code == 'c' && key.Mod == tea.ModCtrl {
+		m.interruptInteraction()
+		return tea.Quit
+	}
+	m.hasLastClick = false
+	switch {
+	case m.modal != modalNone:
+		return m.updateModal(message)
+	case key.Code == 's' && key.Mod == tea.ModCtrl:
+		m.requestSave()
+	case m.mode == modeEditLabel:
+		m.updateLabel(message)
+	case key.Code == 'q' && key.Mod == 0:
+		m.interruptInteraction()
+		return tea.Quit
+	default:
+		m.updateCommand(key)
+	}
+	return nil
+}
+
+type noticeExpiredMsg struct {
+	id uint64
+}
+
+func (m *Model) showNotice(text string, returnTo modal) tea.Cmd {
+	m.noticeID++
+	id := m.noticeID
+	m.notice = text
+	m.noticeReturn = returnTo
+	m.modal = modalNotice
+	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
+		return noticeExpiredMsg{id: id}
+	})
+}
+
+func (m *Model) dismissNotice() {
+	m.notice = ""
+	m.noticeReturn = modalNone
+}
+
+func (m *Model) setError(text string) {
+	m.status = text
+	m.statusError = text
 }
 
 func (m *Model) updateCommand(key tea.Key) {
@@ -416,7 +470,7 @@ func (m *Model) activateTool(next mode) {
 
 func (m *Model) reorderLayer(all, backward bool) {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	hit, ok := m.selectedLayer()
@@ -424,7 +478,7 @@ func (m *Model) reorderLayer(all, backward bool) {
 		hit, ok = m.activeHit()
 	}
 	if !ok || hit.Kind == layout.HitPort {
-		m.status = "select a node or edge to reorder"
+		m.setError("select a node or edge to reorder")
 		return
 	}
 	var err error
@@ -439,11 +493,11 @@ func (m *Model) reorderLayer(all, backward bool) {
 		err = m.geo.BringForward(hit)
 	}
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if err := m.render(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.selectOnly(hit)
@@ -496,7 +550,7 @@ func (m *Model) move(dx, dy int) {
 func (m *Model) moveNode(dx, dy int) {
 	if m.target.Kind != layout.HitNode || !m.geo.NodeExists(m.target.ID) {
 		m.mode = modeNavigate
-		m.status = "selected node no longer exists"
+		m.setError("selected node no longer exists")
 		return
 	}
 	cursor, ok := movePoint(m.cursor, dx, dy)
@@ -504,7 +558,7 @@ func (m *Model) moveNode(dx, dy int) {
 		return
 	}
 	if _, err := m.moveSelectedNodes(int64(dx), int64(dy), cursor); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	}
 }
 
@@ -519,12 +573,12 @@ func (m *Model) dragNode(nodeID uint32, cursor layout.Point) {
 	dy := int64(cursor.Y) - int64(m.dragOffset.Y) - int64(previous.Y)
 	rebase, err := m.rebaseSelectionMove(dx, dy, cursor)
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	cursor = cursor.Add(rebase.X, rebase.Y)
 	if _, err := m.moveSelectedNodes(dx, dy, cursor); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	}
 }
 
@@ -637,20 +691,20 @@ func (m *Model) beginMove() {
 		return
 	}
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	if !m.hasSelectedNodes() {
 		hit, ok := m.activeHit()
 		if !ok || hit.Kind != layout.HitNode {
-			m.status = "select a node to move"
+			m.setError("select a node to move")
 			return
 		}
 		m.selectOnly(hit)
 	}
 	target, ok := m.firstSelectedNode()
 	if !ok {
-		m.status = "select a node to move"
+		m.setError("select a node to move")
 		return
 	}
 	m.target = target
@@ -662,12 +716,12 @@ func (m *Model) beginMove() {
 
 func (m *Model) beginLabelEdit() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	hit, ok := m.activeHit()
 	if !ok || hit.Kind != layout.HitNode {
-		m.status = "select a node to edit"
+		m.setError("select a node to edit")
 		return
 	}
 	m.beginTransaction()
@@ -676,21 +730,21 @@ func (m *Model) beginLabelEdit() {
 
 func (m *Model) newNode() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	m.beginTransaction()
 	nodeID, err := m.geo.NewNodeAt("", m.cursor)
 	if err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.geo.SetNodeStyle(nodeID, m.nodeStyle); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	m.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode})
@@ -698,7 +752,7 @@ func (m *Model) newNode() {
 
 func (m *Model) beginRectangle() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	m.clearConnection()
@@ -708,7 +762,7 @@ func (m *Model) beginRectangle() {
 
 func (m *Model) beginConnection() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	m.clearConnection()
@@ -719,7 +773,7 @@ func (m *Model) beginConnection() {
 		return
 	}
 	if err := m.startConnection(hit); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.status = ""
@@ -776,26 +830,26 @@ func (m *Model) completeConnectionTo(destination uint32) {
 	}
 	if err != nil {
 		_ = m.cancelTransaction()
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if !m.reconnecting {
 		if err := m.geo.SetEdgeStyle(edgeID, m.edgeStyle); err != nil {
 			_ = m.cancelTransaction()
-			m.status = err.Error()
+			m.setError(err.Error())
 			return
 		}
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(
+		m.setError(errors.Join(
 			err,
 			m.cancelTransaction(),
 			m.render(),
-		).Error()
+		).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.mode = modeNavigate
@@ -809,12 +863,12 @@ func (m *Model) completeConnectionTo(destination uint32) {
 
 func (m *Model) deleteActive() {
 	if m.mode != modeNavigate && m.mode != modeMove {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	if m.mode == modeMove {
 		if err := m.commitTransaction(); err != nil {
-			m.status = err.Error()
+			m.setError(err.Error())
 			return
 		}
 		m.mode = modeNavigate
@@ -823,11 +877,11 @@ func (m *Model) deleteActive() {
 	if !m.hasSelection() {
 		hit, ok := m.activeHit()
 		if !ok {
-			m.status = "nothing selected"
+			m.setError("nothing selected")
 			return
 		}
 		if hit.Kind == layout.HitPort {
-			m.status = "ports cannot be deleted independently"
+			m.setError("ports cannot be deleted independently")
 			return
 		}
 		m.selectOnly(hit)
@@ -850,19 +904,19 @@ func (m *Model) deleteActive() {
 	}
 	if err != nil {
 		_ = m.cancelTransaction()
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(
+		m.setError(errors.Join(
 			err,
 			m.cancelTransaction(),
 			m.render(),
-		).Error()
+		).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.mode = modeNavigate
@@ -886,7 +940,7 @@ func (m *Model) cancelMode() {
 			m.render(),
 		)
 		if err != nil {
-			m.status = err.Error()
+			m.setError(err.Error())
 		} else {
 			m.status = ""
 		}
@@ -937,7 +991,7 @@ func (m *Model) finishMove() {
 	m.rigidMoving = false
 	m.moveHighlight = m.moveHighlight[:0]
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	} else {
 		m.status = ""
 	}
@@ -969,7 +1023,7 @@ func (m *Model) interruptInteraction() {
 
 func (m *Model) undo() {
 	if m.history == nil {
-		m.status = "undo history is unavailable"
+		m.setError("undo history is unavailable")
 		return
 	}
 	changed, err := m.history.Undo()
@@ -978,7 +1032,7 @@ func (m *Model) undo() {
 
 func (m *Model) redo() {
 	if m.history == nil {
-		m.status = "undo history is unavailable"
+		m.setError("undo history is unavailable")
 		return
 	}
 	changed, err := m.history.Redo()
@@ -992,7 +1046,7 @@ func (m *Model) afterHistoryChange(changed bool, err error, unchanged string) {
 	m.clearConnection()
 	m.clearSelection()
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if !changed {
@@ -1000,7 +1054,7 @@ func (m *Model) afterHistoryChange(changed bool, err error, unchanged string) {
 		return
 	}
 	if err := m.render(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.refreshHits()

@@ -51,7 +51,8 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 			"│ node │",
 			"└──────┘",
 		}, "\n"), copied)
-		require.Equal(t, "Copied to clipboard", model.status)
+		require.Equal(t, modalNotice, model.modal)
+		require.Equal(t, "Copied to clipboard", model.notice)
 	}
 }
 
@@ -69,6 +70,18 @@ func TestSecondCopyOpensExportPrompt(t *testing.T) {
 	require.Equal(t, modalExport, model.modal)
 	require.Equal(t, exportLineSlash, model.exportStyle)
 	require.Contains(t, model.View().Content, "Line comments")
+}
+
+func TestExportPromptStartsWithPreferredComments(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.preferences.commentPrefix = "# "
+	model.openExport("diagram")
+
+	require.Equal(t, exportLineHash, model.exportStyle)
+	options := exportOptions(model.exportStyle)
+	require.Equal(t, exportLineHash, options[0].Value)
 }
 
 func TestCopySelectionReportsClipboardFailure(t *testing.T) {

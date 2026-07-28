@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -23,6 +24,7 @@ type preferencesFile struct {
 	Router        layout.Router `json:"router"`
 	ApplyToFuture bool          `json:"apply_to_future"`
 	SaveDirectory string        `json:"save_directory,omitempty"`
+	CommentPrefix string        `json:"comment_prefix,omitempty"`
 }
 
 type preferenceState struct {
@@ -32,6 +34,8 @@ type preferenceState struct {
 	originalApplyToFuture bool
 	saveDirectory         string
 	originalSaveDirectory string
+	commentPrefix         string
+	originalCommentPrefix string
 	path                  string
 }
 
@@ -44,6 +48,13 @@ type preferenceFormValues struct {
 	reroutePasses string
 	applyToFuture bool
 	saveDirectory string
+	commentPrefix string
+}
+
+type preferenceField struct {
+	title string
+	value *string
+	input *huh.Input
 }
 
 type componentKind uint8
@@ -125,12 +136,13 @@ func readPreferences() (preferencesFile, string, error) {
 func (m *Model) loadPreferences() {
 	preferences, path, err := readPreferences()
 	if err != nil {
-		m.status = "load preferences: " + err.Error()
+		m.setError("load preferences: " + err.Error())
 		return
 	}
 	m.preferences.path = path
 	m.preferences.applyToFuture = preferences.ApplyToFuture
 	m.preferences.saveDirectory = preferences.SaveDirectory
+	m.preferences.commentPrefix = normalizeCommentPrefix(preferences.CommentPrefix)
 }
 
 // PreferredRouter returns the persisted router for newly created diagrams.
@@ -141,7 +153,7 @@ func PreferredRouter() (layout.Router, bool) {
 
 func (m *Model) openHelp() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	m.resetSettingsTabs(modalHelp)
@@ -169,6 +181,7 @@ func (m *Model) beginPreferenceEdit() {
 	m.preferences.router = m.preferences.originalRouter
 	m.preferences.originalApplyToFuture = m.preferences.applyToFuture
 	m.preferences.originalSaveDirectory = m.preferences.saveDirectory
+	m.preferences.originalCommentPrefix = m.preferences.commentPrefix
 	m.beginTransaction()
 }
 
@@ -208,6 +221,8 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		return m.updateSaveForm(message)
+	case modalNotice:
+		return nil
 	}
 	if key.Code == tea.KeyTab && (key.Mod == 0 || key.Mod == tea.ModShift) {
 		if m.modal == modalHelp {
@@ -236,26 +251,27 @@ func (m *Model) closeSettingsModal() {
 		m.preferences.router = m.preferences.originalRouter
 		m.preferences.applyToFuture = m.preferences.originalApplyToFuture
 		m.preferences.saveDirectory = m.preferences.originalSaveDirectory
+		m.preferences.commentPrefix = m.preferences.originalCommentPrefix
 		err = errors.Join(err, m.render())
 	}
 	m.preferenceEdit = false
 	m.modal = modalNone
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	}
 }
 
-func (m *Model) applyPreferences() {
+func (m *Model) applyPreferences() tea.Cmd {
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
-		return
+		m.setError(err.Error())
+		return nil
 	}
 	m.preferenceEdit = false
 	if m.preferences.path == "" {
 		path, err := preferencesPath()
 		if err != nil {
-			m.status = err.Error()
-			return
+			m.setError(err.Error())
+			return nil
 		}
 		m.preferences.path = path
 	}
@@ -263,6 +279,7 @@ func (m *Model) applyPreferences() {
 		Router:        m.preferences.router,
 		ApplyToFuture: m.preferences.applyToFuture,
 		SaveDirectory: m.preferences.saveDirectory,
+		CommentPrefix: m.preferences.commentPrefix,
 	}, "", "  ")
 	if err == nil {
 		err = os.MkdirAll(filepath.Dir(m.preferences.path), 0o700)
@@ -270,11 +287,14 @@ func (m *Model) applyPreferences() {
 	if err == nil {
 		err = os.WriteFile(m.preferences.path, append(data, '\n'), 0o600)
 	}
-	m.modal = modalHelp
 	m.resetSettingsTabs(modalHelp)
 	if err != nil {
-		m.status = "save preferences: " + err.Error()
+		m.setError("save preferences: " + err.Error())
+		m.modal = modalHelp
+		return nil
 	}
+	m.status = ""
+	return m.showNotice("Preferences saved", modalHelp)
 }
 
 func (m *Model) resetSettingsTabs(active modal) {
@@ -282,8 +302,9 @@ func (m *Model) resetSettingsTabs(active modal) {
 		m.geo.Router(),
 		m.preferences.applyToFuture,
 		m.preferences.saveDirectory,
+		m.preferences.commentPrefix,
 	)
-	m.preferenceForm = newPreferenceForm(&m.preferenceInput)
+	m.preferenceForm, m.preferenceFields = newPreferenceForm(&m.preferenceInput)
 	tabs := []tabmodel.Tab{
 		*tabmodel.NewTab(
 			tabmodel.WithName("Shortcuts"),
@@ -324,7 +345,10 @@ func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
 	}
 	m.syncPreferenceForm()
 	if m.preferenceForm != nil && m.preferenceForm.State == huh.StateCompleted {
-		m.applyPreferences()
+		return tea.Batch(
+			componentCommand(settingsComponent, command),
+			m.applyPreferences(),
+		)
 	}
 	return componentCommand(settingsComponent, command)
 }
@@ -373,6 +397,7 @@ func preferenceFormValuesFrom(
 	router layout.Router,
 	applyToFuture bool,
 	saveDirectory string,
+	commentPrefix string,
 ) preferenceFormValues {
 	return preferenceFormValues{
 		step:          strconv.FormatUint(uint64(router.Costs.Step), 10),
@@ -383,58 +408,102 @@ func preferenceFormValuesFrom(
 		reroutePasses: strconv.FormatUint(uint64(router.ReroutePasses), 10),
 		applyToFuture: applyToFuture,
 		saveDirectory: saveDirectory,
+		commentPrefix: normalizeCommentPrefix(commentPrefix),
 	}
 }
 
-func newPreferenceForm(values *preferenceFormValues) *huh.Form {
+func newPreferenceForm(
+	values *preferenceFormValues,
+) (*huh.Form, []preferenceField) {
 	keymap := huh.NewDefaultKeyMap()
 	keymap.Input.Prev = key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "previous"))
 	keymap.Input.Next = key.NewBinding(key.WithKeys("down", "enter"), key.WithHelp("↓", "next"))
 	keymap.Confirm.Prev = keymap.Input.Prev
 	keymap.Confirm.Next = keymap.Input.Next
-	fields := []huh.Field{
+	inputs := []preferenceField{
 		preferenceNumberField("Step cost", &values.step, 32),
 		preferenceNumberField("Shared-step cost", &values.sharedStep, 32),
 		preferenceNumberField("Bend cost", &values.bend, 32),
 		preferenceNumberField("Crossing cost", &values.crossing, 32),
 		preferenceNumberField("Endpoint cost", &values.endpoint, 32),
 		preferenceNumberField("Reroute passes", &values.reroutePasses, 8),
-		huh.NewConfirm().
-			Title(preferenceFormTitle("Apply to future diagrams?")).
-			Affirmative("Yes").
-			Negative("No").
+		preferenceTextField("Default save directory", &values.saveDirectory),
+	}
+	fields := []huh.Field{
+		inputs[0].input,
+		inputs[1].input,
+		inputs[2].input,
+		inputs[3].input,
+		inputs[4].input,
+		inputs[5].input,
+		huh.NewSelect[bool]().
+			Options(
+				huh.NewOption(
+					preferenceOption("Apply to future diagrams?", "Yes"),
+					true,
+				),
+				huh.NewOption(
+					preferenceOption("Apply to future diagrams?", "No"),
+					false,
+				),
+			).
 			Inline(true).
 			Value(&values.applyToFuture),
-		huh.NewInput().
-			Title(preferenceFormTitle("Default save directory")).
-			Prompt("").
+		inputs[6].input,
+		huh.NewSelect[string]().
+			Options(
+				huh.NewOption(
+					preferenceOption("Preferred comments", "//"),
+					"// ",
+				),
+				huh.NewOption(
+					preferenceOption("Preferred comments", "#"),
+					"# ",
+				),
+				huh.NewOption(
+					preferenceOption("Preferred comments", "/* */"),
+					"/* */",
+				),
+			).
 			Inline(true).
-			Value(&values.saveDirectory),
+			Value(&values.commentPrefix),
 	}
-	return huh.NewForm(huh.NewGroup(fields...)).
+	form := huh.NewForm(huh.NewGroup(fields...)).
 		WithWidth(settingsModalWidth - 4).
 		WithHeight(len(fields)).
 		WithShowHelp(false).
 		WithKeyMap(keymap).
 		WithTheme(preferenceFormTheme())
+	return form, inputs
 }
 
-func preferenceNumberField(title string, value *string, bits int) *huh.Input {
-	return huh.NewInput().
-		Title(preferenceFormTitle(title)).
-		Prompt("").
+func preferenceNumberField(title string, value *string, bits int) preferenceField {
+	field := preferenceTextField(title, value)
+	field.input.Validate(func(text string) error {
+		if _, err := strconv.ParseUint(text, 10, bits); err != nil {
+			return fmt.Errorf("enter an unsigned %d-bit integer", bits)
+		}
+		return nil
+	})
+	return field
+}
+
+func preferenceTextField(title string, value *string) preferenceField {
+	input := huh.NewInput().
+		Title(title).
+		Prompt(preferencePrompt(title, *value)).
 		Inline(true).
-		Value(value).
-		Validate(func(text string) error {
-			if _, err := strconv.ParseUint(text, 10, bits); err != nil {
-				return fmt.Errorf("enter an unsigned %d-bit integer", bits)
-			}
-			return nil
-		})
+		Value(value)
+	return preferenceField{title: title, value: value, input: input}
 }
 
-func preferenceFormTitle(title string) string {
-	return fmt.Sprintf("%-30s", title)
+func preferencePrompt(title, value string) string {
+	const valueColumnEnd = 74
+	return strings.Repeat("\u00a0", max(valueColumnEnd-len(title)-len(value), 1))
+}
+
+func preferenceOption(title, value string) string {
+	return title + preferencePrompt(title, value) + value
 }
 
 func preferenceFormTheme() huh.Theme {
@@ -452,6 +521,9 @@ func (m *Model) syncPreferenceForm() {
 	if m.preferenceForm == nil {
 		return
 	}
+	for _, field := range m.preferenceFields {
+		field.input.Prompt(preferencePrompt(field.title, *field.value))
+	}
 	router := m.preferences.router
 	parse32 := func(text string, destination *uint32) {
 		if value, err := strconv.ParseUint(text, 10, 32); err == nil {
@@ -468,12 +540,13 @@ func (m *Model) syncPreferenceForm() {
 	}
 	m.preferences.applyToFuture = m.preferenceInput.applyToFuture
 	m.preferences.saveDirectory = m.preferenceInput.saveDirectory
+	m.preferences.commentPrefix = normalizeCommentPrefix(m.preferenceInput.commentPrefix)
 	if router == m.preferences.router {
 		return
 	}
 	m.preferences.router = router
 	m.geo.SetRouter(router)
 	if err := m.rebuild(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 	}
 }

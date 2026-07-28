@@ -9,7 +9,7 @@ import (
 
 func (m *Model) beginDuplicateDrag(point layout.Point, hit layout.Hit) {
 	if hit.Kind != layout.HitNode {
-		m.status = "Alt-drag duplication requires a node"
+		m.setError("Alt-drag duplication requires a node")
 		return
 	}
 	if !m.geo.Selection().Contains(hit) {
@@ -53,7 +53,7 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 		m.duplicateGeo,
 	)
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	m.duplicateFrame = frame
@@ -72,7 +72,7 @@ func (m *Model) startDuplicatePreview(point layout.Point) bool {
 	}
 	if err != nil {
 		m.cancelDuplicateDrag()
-		m.status = err.Error()
+		m.setError(err.Error())
 		return false
 	}
 	m.duplicateGeo = cloned
@@ -99,7 +99,7 @@ func (m *Model) moveDuplicatePreview(point layout.Point) bool {
 		origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
 		next, _ := movePoint64(origin, dx, dy)
 		if err := m.duplicateGeo.PlaceNode(nodeID, next); err != nil {
-			m.status = err.Error()
+			m.setError(err.Error())
 			return false
 		}
 	}
@@ -125,15 +125,15 @@ func (m *Model) finishDuplicateDrag(point layout.Point) {
 	m.cancelDuplicateDrag()
 	m.beginTransaction()
 	if err := m.geo.DuplicateSelection(dx, dy); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
 	}
 	if err := m.rebuild(); err != nil {
-		m.status = errors.Join(err, m.cancelTransaction(), m.render()).Error()
+		m.setError(errors.Join(err, m.cancelTransaction(), m.render()).Error())
 		return
 	}
 	if err := m.commitTransaction(); err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return
 	}
 	if hit, ok := m.firstSelectedNode(); ok {

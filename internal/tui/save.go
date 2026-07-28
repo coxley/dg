@@ -12,9 +12,11 @@ import (
 	"github.com/coxley/dg/document"
 )
 
+const defaultSaveName = "diagram.json"
+
 func (m *Model) requestSave() {
 	if m.mode != modeNavigate {
-		m.status = finishOperation
+		m.setError(finishOperation)
 		return
 	}
 	if m.path == "" {
@@ -29,7 +31,7 @@ func (m *Model) openSaveForm() {
 	if m.saveDirectory == "" {
 		m.saveDirectory = "."
 	}
-	m.saveName = "diagram.json"
+	m.saveName = defaultSaveName
 	m.saveForm = huh.NewForm(
 		huh.NewGroup(
 			huh.NewFilePicker().
@@ -42,7 +44,7 @@ func (m *Model) openSaveForm() {
 				Value(&m.saveDirectory),
 			huh.NewInput().
 				Title("File name").
-				Placeholder("diagram.json").
+				Placeholder(defaultSaveName).
 				Value(&m.saveName).
 				Validate(func(name string) error {
 					if name == "" {
@@ -76,13 +78,13 @@ func (m *Model) updateSaveForm(message tea.Msg) tea.Cmd {
 func (m *Model) commitSaveForm() {
 	name := strings.TrimSpace(m.saveName)
 	if name == "" {
-		m.status = "enter a file name"
+		m.setError("enter a file name")
 		return
 	}
 	path := filepath.Join(m.saveDirectory, name)
 	if info, err := os.Stat(m.saveDirectory); err == nil && !info.IsDir() {
 		path = m.saveDirectory
-		if name != "diagram.json" {
+		if name != defaultSaveName {
 			path = filepath.Join(filepath.Dir(path), name)
 		}
 	}
@@ -102,11 +104,11 @@ func (m *Model) closeSaveForm() {
 func (m *Model) save(path string) bool {
 	data, err := document.Marshal(m.geo)
 	if err != nil {
-		m.status = err.Error()
+		m.setError(err.Error())
 		return false
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
-		m.status = fmt.Sprintf("save diagram: %v", err)
+		m.setError(fmt.Sprintf("save diagram: %v", err))
 		return false
 	}
 	m.path = path
@@ -114,6 +116,7 @@ func (m *Model) save(path string) bool {
 	if m.history != nil {
 		if err := m.history.Store(path); err != nil {
 			m.status += fmt.Sprintf(" (undo history: %v)", err)
+			m.statusError = m.status
 		}
 	}
 	return true
