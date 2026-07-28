@@ -139,8 +139,13 @@ func (m *Model) settingsBody(width int) string {
 	m.help.SetWidth(width)
 	help := m.help.View(m.keys)
 	preferenceHeight := 0
+	bodyHeight := 0
 	if m.preferenceForm != nil {
 		m.preferenceForm.SetWidth(width)
+		if m.dialog.Overlay().Height != 0 {
+			bodyHeight = m.dialog.BodyHeight()
+		}
+		m.preferenceForm.SetHeight(bodyHeight)
 		preferenceHeight = m.preferenceForm.NaturalHeight()
 	}
 
@@ -157,7 +162,9 @@ func (m *Model) settingsBody(width int) string {
 	largerHeight := max(lipgloss.Height(help), preferenceHeight)
 	frameHeight := m.theme.Modal.Container.GetVerticalFrameSize() +
 		m.theme.Modal.Body.GetVerticalFrameSize() + 1
-	if largerHeight+frameHeight+toolbarTop+m.nav.Height() <= m.height {
+	if bodyHeight > 0 {
+		height = bodyHeight
+	} else if largerHeight+frameHeight+toolbarTop+m.nav.Height() <= m.height {
 		height = largerHeight
 	}
 	return m.theme.SettingsContent.

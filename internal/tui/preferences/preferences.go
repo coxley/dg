@@ -182,11 +182,18 @@ func (m *Model) DirectoryOpen() bool {
 
 // SetHeight replaces the available form height.
 func (m *Model) SetHeight(height int) {
+	height = max(height, 0)
+	if m.height == height {
+		return
+	}
 	m.height = height
 	if height <= 0 {
 		height = m.naturalHeight
 	}
-	m.form.WithHeight(min(height, m.naturalHeight))
+	m.actions.setTopPadding(max(height-m.naturalHeight, 0))
+	m.form.WithHeight(height)
+	form, _ := m.form.Update(refreshMsg{})
+	m.form = form.(*huh.Form)
 }
 
 // SetWidth replaces the available form width.
@@ -317,11 +324,18 @@ func newForm(
 		WithKeyMap(keymap).
 		WithTheme(styles.Form)
 	_ = form.Init()
-	naturalHeight := lipgloss.Height(form.View())
+	view := form.View()
+	naturalHeight := lipgloss.Height(view)
+	if _, top, ok := blockOrigin(view, actions.content()); ok {
+		naturalHeight = top + lipgloss.Height(actions.content())
+	}
 	if height <= 0 {
 		height = naturalHeight
 	}
-	form.WithHeight(min(height, naturalHeight))
+	actions.setTopPadding(max(height-naturalHeight, 0))
+	form.WithHeight(height)
+	updated, _ := form.Update(refreshMsg{})
+	form = updated.(*huh.Form)
 	return form, inputs, []*rowField{
 		commentField,
 		directoryField.rowField,
@@ -367,7 +381,7 @@ type ScrollMsg struct {
 type refreshMsg struct{}
 
 func (m *Model) click(x, y int) {
-	left, top, ok := blockOrigin(m.form.View(), m.actions.View())
+	left, top, ok := blockOrigin(m.form.View(), m.actions.content())
 	if !ok {
 		return
 	}
@@ -406,6 +420,9 @@ func (m *Model) updateCollapsedDirectory(message tea.KeyPressMsg) (bool, tea.Cmd
 func blockOrigin(view, block string) (left, top int, ok bool) {
 	lines := strings.Split(ansi.Strip(view), "\n")
 	blockLines := strings.Split(ansi.Strip(block), "\n")
+	if len(blockLines) == 0 || blockLines[0] == "" {
+		return 0, 0, false
+	}
 	for top := 0; top+len(blockLines) <= len(lines); top++ {
 		start := strings.Index(lines[top], blockLines[0])
 		for start >= 0 {

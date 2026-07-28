@@ -274,7 +274,7 @@ func TestActionsAlignWithFormLeftEdge(t *testing.T) {
 	styles.SelectedAction = styles.SelectedAction.Border(lipgloss.DoubleBorder())
 	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, styles)
 	view := ansi.Strip(model.View().Content)
-	left, _, ok := blockOrigin(view, model.actions.View())
+	left, _, ok := blockOrigin(view, model.actions.content())
 	require.True(t, ok)
 
 	for _, line := range strings.Split(view, "\n") {
@@ -284,6 +284,23 @@ func TestActionsAlignWithFormLeftEdge(t *testing.T) {
 		}
 	}
 	require.Fail(t, "step cost row not rendered")
+}
+
+func TestActionsAlignWithFormBottomEdge(t *testing.T) {
+	t.Parallel()
+
+	styles := testStyles()
+	styles.Action = styles.Action.Border(lipgloss.NormalBorder())
+	styles.SelectedAction = styles.SelectedAction.Border(lipgloss.DoubleBorder())
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 24, styles)
+	view := model.View().Content
+	_, top, ok := blockOrigin(view, model.actions.content())
+	require.True(t, ok)
+	require.Equal(
+		t,
+		lipgloss.Height(view)-lipgloss.Height(model.actions.content()),
+		top,
+	)
 }
 
 func focusField(t *testing.T, model *Model, target huh.Field) {

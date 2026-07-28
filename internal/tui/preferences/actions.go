@@ -12,11 +12,12 @@ import (
 )
 
 type actionField struct {
-	action    *Action
-	submitted *bool
-	styles    Styles
-	focused   bool
-	selected  Action
+	action     *Action
+	submitted  *bool
+	styles     Styles
+	focused    bool
+	selected   Action
+	topPadding int
 }
 
 func newActionField(
@@ -62,7 +63,7 @@ func (f *actionField) Update(message tea.Msg) (huh.Model, tea.Cmd) {
 }
 
 func (f *actionField) View() string {
-	return f.content()
+	return strings.Repeat("\n", f.topPadding) + f.content()
 }
 
 func (f *actionField) content() string {
@@ -143,4 +144,8 @@ func (f *actionField) submit(action Action) {
 	f.selected = action
 	*f.action = action
 	*f.submitted = true
+}
+
+func (f *actionField) setTopPadding(rows int) {
+	f.topPadding = max(rows, 0)
 }

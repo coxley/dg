@@ -269,7 +269,7 @@ func (m *Model) resetSettingsTabs(active modal) {
 		settingsModalWidth-
 			m.theme.Modal.Container.GetHorizontalFrameSize()-
 			m.theme.Modal.Body.GetHorizontalFrameSize(),
-		m.preferenceFormHeight(),
+		0,
 		m.theme.preferenceStyles(),
 	)
 	m.modal = active
@@ -351,16 +351,13 @@ func (m *Model) syncPreferenceForm() {
 	}
 }
 
-func (m *Model) preferenceFormHeight() int {
-	const modalFrameRows = 4
-	if m.height == 0 {
-		return 0
-	}
-	return max(m.diagramHeight()-modalFrameRows, 1)
-}
-
 func (m *Model) resizePreferenceForm() {
-	if m.preferenceForm != nil {
-		m.preferenceForm.SetHeight(m.preferenceFormHeight())
+	if m.preferenceForm == nil {
+		return
 	}
+	height := 0
+	if m.dialog.Overlay().Height != 0 {
+		height = m.dialog.BodyHeight()
+	}
+	m.preferenceForm.SetHeight(height)
 }

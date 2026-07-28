@@ -18,6 +18,8 @@ optional tabs.
 - Modal placement reserves `avoidTop` rows for higher-priority floating UI.
 - Left-drag moves from empty cells. Right-drag resizes from the nearest corner.
 - Resize preserves the pointer-to-corner offset and clamps to the terminal.
+- Resized content must fit the reported body dimensions so the outer border
+  remains present in the composed terminal frame.
 
 ## Verification
 

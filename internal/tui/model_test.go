@@ -780,6 +780,23 @@ func TestSettingsModalCanResize(t *testing.T) {
 	after := model.currentModalOverlay()
 	require.Equal(t, before.Width+4, after.Width)
 	require.Equal(t, before.Height+2, after.Height)
+	lines := strings.Split(ansi.Strip(after.Content), "\n")
+	require.Len(t, lines, after.Height)
+	require.True(t, strings.HasPrefix(lines[len(lines)-1], "└"))
+	require.True(t, strings.HasSuffix(lines[len(lines)-1], "┘"))
+	screen := strings.Split(ansi.Strip(model.View().Content), "\n")
+	after = model.currentModalOverlay()
+	bottom := screen[after.Top+after.Height-1]
+	require.Equal(t, "└", ansi.Cut(bottom, after.Left, after.Left+1))
+	require.Equal(
+		t,
+		"┘",
+		ansi.Cut(
+			bottom,
+			after.Left+after.Width-1,
+			after.Left+after.Width,
+		),
+	)
 
 	updateModel(t, model, tea.MouseReleaseMsg(mouse))
 	require.False(t, model.dialog.Resizing())
