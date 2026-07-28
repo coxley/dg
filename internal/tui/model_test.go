@@ -1039,6 +1039,35 @@ func TestModelViewTracksWindowWithoutCursor(t *testing.T) {
 	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].LabelPoint))
 }
 
+func TestToolbarOwnsScreenRowAndCentersTools(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 60, Height: 10})
+	view := model.View()
+	firstLine, _, _ := strings.Cut(view.Content, "\n")
+	plain := strings.ReplaceAll(firstLine, selectionStart, "")
+	plain = strings.ReplaceAll(plain, selectionEnd, "")
+	require.True(t, strings.HasPrefix(plain, strings.Repeat(" ", 16)))
+	require.Contains(t, plain, " Cursor  Rectangle  Line ")
+
+	_, ok := model.documentPoint(3, 0)
+	require.False(t, ok)
+	point, ok := model.documentPoint(3, 1)
+	require.True(t, ok)
+	require.Equal(t, layout.NewPoint(3, 0), point)
+
+	start := (model.width - len(" Cursor ") - len(" Rectangle ") - len(" Line ")) / 2
+	got, command := model.Update(tea.MouseClickMsg{
+		X:      start + len(" Cursor "),
+		Y:      0,
+		Button: tea.MouseLeft,
+	})
+	require.Same(t, model, got)
+	require.Nil(t, command)
+	require.Equal(t, modeRectangle, model.mode)
+}
+
 func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 	t.Parallel()
 
@@ -1049,7 +1078,7 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 
 	require.NotNil(t, view.Cursor)
 	require.Equal(t, int(model.cursor.X-model.viewport.X), view.Cursor.X)
-	require.Equal(t, int(model.cursor.Y-model.viewport.Y), view.Cursor.Y)
+	require.Equal(t, int(model.cursor.Y-model.viewport.Y)+1, view.Cursor.Y)
 	require.NotSame(t, view.Cursor, model.View().Cursor)
 }
 
@@ -1184,7 +1213,7 @@ func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 15})
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      0,
-		Y:      1,
+		Y:      0,
 		Button: tea.MouseLeft,
 	})
 	require.True(t, model.selecting)
@@ -1193,7 +1222,7 @@ func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
 		Y:      6,
 		Button: tea.MouseLeft,
 	})
-	require.True(t, model.highlightedPoint(layout.NewPoint(0, 1)))
+	require.True(t, model.highlightedPoint(layout.NewPoint(0, 0)))
 	require.True(t, model.highlightedPoint(layout.NewPoint(6, 3)))
 	require.True(t, model.highlightedPoint(layout.NewPoint(12, 6)))
 	require.False(t, model.highlightedPoint(layout.NewPoint(13, 3)))
@@ -1622,6 +1651,26 @@ func frameRuneAt(t testing.TB, frame render.Frame, point layout.Point) rune {
 func updateModel(t testing.TB, model *Model, message tea.Msg) {
 	t.Helper()
 
+	switch message := message.(type) {
+	case tea.MouseClickMsg:
+		message.Y++
+		got, command := model.Update(message)
+		require.Same(t, model, got)
+		require.Nil(t, command)
+		return
+	case tea.MouseMotionMsg:
+		message.Y++
+		got, command := model.Update(message)
+		require.Same(t, model, got)
+		require.Nil(t, command)
+		return
+	case tea.MouseReleaseMsg:
+		message.Y++
+		got, command := model.Update(message)
+		require.Same(t, model, got)
+		require.Nil(t, command)
+		return
+	}
 	got, command := model.Update(message)
 	require.Same(t, model, got)
 	require.Nil(t, command)

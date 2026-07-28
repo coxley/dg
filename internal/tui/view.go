@@ -30,15 +30,11 @@ func (m *Model) View() tea.View {
 		frame, rows = m.duplicateFrame, m.duplicateRows
 	}
 	m.viewBuffer = m.appendToolbar(m.viewBuffer[:0])
-	bodyOrigin := m.viewport
-	if bodyOrigin.Y != math.MaxUint32 {
-		bodyOrigin.Y++
-	}
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer,
 		frame,
 		rows,
-		bodyOrigin,
+		m.viewport,
 		m.width,
 		m.diagramHeight(),
 	)
@@ -57,7 +53,7 @@ func (m *Model) View() tea.View {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
 			cursor.X = x
-			cursor.Y = y
+			cursor.Y = y + 1
 			view.Cursor = cursor
 		}
 	default:
@@ -78,7 +74,13 @@ func (m *Model) appendToolbar(dst []byte) []byte {
 		{" Rectangle ", modeRectangle},
 		{" Line ", modeConnect},
 	}
-	used := 0
+	toolbarWidth := 0
+	for _, tool := range tools {
+		toolbarWidth += len(tool.label)
+	}
+	left := max((m.width-toolbarWidth)/2, 0)
+	dst = appendSpaces(dst, left)
+	used := left
 	for _, tool := range tools {
 		text := tool.label
 		if m.mode == tool.mode {

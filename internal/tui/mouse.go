@@ -108,13 +108,15 @@ func (m *Model) updateToolbarClick(mouse tea.Mouse) bool {
 	if mouse.Button != tea.MouseLeft || m.modal != modalNone {
 		return false
 	}
+	toolbarWidth := len(" Cursor ") + len(" Rectangle ") + len(" Line ")
+	x := mouse.X - max((m.width-toolbarWidth)/2, 0)
 	switch {
-	case mouse.X >= 0 && mouse.X < len(" Cursor "):
+	case x >= 0 && x < len(" Cursor "):
 		m.cancelMode()
-	case mouse.X < len(" Cursor ")+len(" Rectangle "):
+	case x < len(" Cursor ")+len(" Rectangle "):
 		m.cancelMode()
 		m.beginRectangle()
-	case mouse.X < len(" Cursor ")+len(" Rectangle ")+len(" Line "):
+	case x < toolbarWidth:
 		m.cancelMode()
 		m.beginConnection()
 	default:
@@ -527,11 +529,11 @@ func (m *Model) updateMouseWheel(mouse tea.Mouse) {
 }
 
 func (m *Model) documentPoint(x, y int) (layout.Point, bool) {
-	if x < 0 || y < 0 || x >= m.width || y >= m.diagramHeight() {
+	if x < 0 || y <= 0 || x >= m.width || y > m.diagramHeight() {
 		return layout.Point{}, false
 	}
 	documentX := uint64(m.viewport.X) + uint64(x)
-	documentY := uint64(m.viewport.Y) + uint64(y)
+	documentY := uint64(m.viewport.Y) + uint64(y-1)
 	if documentX > math.MaxUint32 || documentY > math.MaxUint32 {
 		return layout.Point{}, false
 	}
