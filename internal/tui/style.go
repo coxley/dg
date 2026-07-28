@@ -57,6 +57,64 @@ func (m *Model) cycleBorder() {
 	m.status = ""
 }
 
+func (m *Model) cycleTextAlignment(vertical bool) {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
+	targets, ok := m.styleTargets(layout.HitNode)
+	if !ok {
+		m.status = "select a node to align its label"
+		return
+	}
+	inherited, _ := m.geo.NodeStyle(targets.primary.ID)
+	if vertical {
+		inherited.Vertical = inherited.Vertical.Next()
+	} else {
+		inherited.Horizontal = inherited.Horizontal.Next()
+	}
+
+	m.beginTransaction()
+	apply := func(nodeID uint32) error {
+		style, _ := m.geo.NodeStyle(nodeID)
+		if vertical {
+			style.Vertical = style.Vertical.Next()
+		} else {
+			style.Horizontal = style.Horizontal.Next()
+		}
+		return m.geo.SetNodeStyle(nodeID, style)
+	}
+	var err error
+	if targets.selection {
+		for nodeID := range m.geo.Selection().Nodes() {
+			if err = apply(nodeID); err != nil {
+				break
+			}
+		}
+	} else {
+		err = apply(targets.primary.ID)
+	}
+	if err == nil {
+		err = m.render()
+	}
+	if err != nil {
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		return
+	}
+	if err := m.commitTransaction(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	m.nodeStyle = inherited
+	if !targets.selection {
+		m.target = targets.primary
+		m.selectOnly(targets.primary)
+	}
+	m.refreshHits()
+	m.selectTarget()
+	m.status = ""
+}
+
 func (m *Model) cycleEdgeArrow(portA bool) {
 	if m.mode != modeNavigate {
 		m.status = finishOperation

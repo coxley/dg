@@ -75,7 +75,11 @@ func exampleLayout() (*layout.Layout, error) {
 }
 
 func exampleLayoutWithHistory(history *layout.History) (*layout.Layout, error) {
-	geo, err := layout.New(layout.WithHistory(history))
+	options := []layout.Option{layout.WithHistory(history)}
+	if router, ok := tui.PreferredRouter(); ok {
+		options = append(options, layout.WithRouter(router))
+	}
+	geo, err := layout.New(options...)
 	if err != nil {
 		return nil, err
 	}

@@ -14,7 +14,10 @@ import (
 
 type mode uint8
 
-type resizeCorner uint8
+type (
+	resizeCorner uint8
+	modal        uint8
+)
 
 const (
 	modeNavigate mode = iota
@@ -23,6 +26,13 @@ const (
 	modeConnect
 	modeRectangle
 	modeSavePath
+)
+
+const (
+	modalNone modal = iota
+	modalHelp
+	modalPreferences
+	modalSave
 )
 
 const (
@@ -83,6 +93,7 @@ type Model struct {
 	creatingRectangle bool
 
 	mode             mode
+	modal            modal
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
@@ -118,6 +129,9 @@ type Model struct {
 
 	saveHint string
 
+	preferences   preferenceState
+	preferenceRow int
+
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
 
@@ -125,6 +139,7 @@ type Model struct {
 	transactionOpen bool
 
 	moveOrigins         []layout.Point
+	focusNodes          []layout.Hit
 	selecting           bool
 	selectionStartPoint layout.Point
 	selectionEndPoint   layout.Point
@@ -170,6 +185,7 @@ func Run(geo *layout.Layout, path string) error {
 	if err != nil {
 		return err
 	}
+	model.loadPreferences()
 	defer model.interruptInteraction()
 	_, err = tea.NewProgram(model).Run()
 	return err
@@ -192,8 +208,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.hasLastClick = false
-		if m.mode == modeSavePath {
-			m.updateSavePath(message)
+		if m.modal != modalNone {
+			m.updateModal(message)
 		} else if key.Code == 's' && key.Mod == tea.ModCtrl {
 			m.requestSave()
 		} else if m.mode == modeEditLabel {
@@ -206,27 +222,27 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateCommand(key)
 		}
 	case tea.PasteMsg:
-		switch m.mode {
-		case modeEditLabel:
-			m.insertLabelText(message.Content)
-		case modeSavePath:
+		switch {
+		case m.modal == modalSave:
 			m.insertSavePathText(message.Content)
+		case m.mode == modeEditLabel:
+			m.insertLabelText(message.Content)
 		default:
 		}
 	case tea.MouseClickMsg:
-		if m.mode != modeSavePath {
+		if m.modal == modalNone {
 			m.updateMouseClick(message.Mouse())
 		}
 	case tea.MouseReleaseMsg:
-		if m.mode != modeSavePath {
+		if m.modal == modalNone {
 			m.updateMouseRelease(message.Mouse())
 		}
 	case tea.MouseMotionMsg:
-		if m.mode != modeSavePath {
+		if m.modal == modalNone {
 			m.updateMouseMotion(message.Mouse())
 		}
 	case tea.MouseWheelMsg:
-		if m.mode != modeSavePath {
+		if m.modal == modalNone {
 			m.updateMouseWheel(message.Mouse())
 		}
 	case tea.BlurMsg:
@@ -271,6 +287,8 @@ func (m *Model) updateCommand(key tea.Key) {
 			m.reorderLayer(true, false)
 		case 'a', 'A':
 			m.cycleEdgeArrow(true)
+		case 't', 'T':
+			m.cycleTextAlignment(true)
 		}
 		return
 	}
@@ -282,6 +300,8 @@ func (m *Model) updateCommand(key tea.Key) {
 
 func (m *Model) updateNavigationCommand(code rune) {
 	switch code {
+	case '?':
+		m.openHelp()
 	case tea.KeyUp:
 		m.move(0, -1)
 	case tea.KeyRight:
@@ -318,11 +338,15 @@ func (m *Model) updateNavigationCommand(code rune) {
 		m.cycleBorder()
 	case 'a':
 		m.cycleEdgeArrow(false)
+	case 't':
+		m.cycleTextAlignment(false)
 	case 'l':
 		if m.mode != modeConnect {
 			m.beginConnection()
 		}
-	case 'd', tea.KeyDelete:
+	case 'd':
+		m.duplicateSelectionDefault()
+	case tea.KeyBackspace, tea.KeyDelete:
 		m.deleteActive()
 	case tea.KeyEscape:
 		m.cancelMode()

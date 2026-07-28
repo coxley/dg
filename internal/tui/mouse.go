@@ -11,6 +11,9 @@ import (
 const reconnectDragRadius = 3
 
 func (m *Model) updateMouseClick(mouse tea.Mouse) {
+	if mouse.Y == 0 && m.updateToolbarClick(mouse) {
+		return
+	}
 	point, ok := m.documentPoint(mouse.X, mouse.Y)
 	if !ok {
 		return
@@ -95,6 +98,25 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.dragOffset = layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y)
 	m.beginTransaction()
 	m.dragging = true
+}
+
+func (m *Model) updateToolbarClick(mouse tea.Mouse) bool {
+	if mouse.Button != tea.MouseLeft || m.modal != modalNone {
+		return false
+	}
+	switch {
+	case mouse.X >= 0 && mouse.X < len(" Cursor "):
+		m.cancelMode()
+	case mouse.X < len(" Cursor ")+len(" Rectangle "):
+		m.cancelMode()
+		m.beginRectangle()
+	case mouse.X < len(" Cursor ")+len(" Rectangle ")+len(" Line "):
+		m.cancelMode()
+		m.beginConnection()
+	default:
+		return false
+	}
+	return true
 }
 
 func (m *Model) beginResize(point layout.Point) {

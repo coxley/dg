@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
+	"slices"
 
 	"github.com/coxley/dg/layout"
 )
@@ -12,38 +14,52 @@ func (m *Model) focusNode(delta int) {
 		return
 	}
 	current, hasCurrent := m.focusedNode()
-	var first, previous, last, chosen layout.Hit
-	seenCurrent := false
+	m.focusNodes = m.focusNodes[:0]
 	for hit := range m.geo.DrawOrder() {
-		if hit.Kind != layout.HitNode {
-			continue
+		if hit.Kind == layout.HitNode {
+			m.focusNodes = append(m.focusNodes, hit)
 		}
-		if first == (layout.Hit{}) {
-			first = hit
-		}
-		if delta > 0 && seenCurrent && chosen == (layout.Hit{}) {
-			chosen = hit
-		}
-		if hasCurrent && hit == current {
-			seenCurrent = true
-			if delta < 0 {
-				chosen = previous
-			}
-		}
-		previous = hit
-		last = hit
 	}
-	if first == (layout.Hit{}) {
+	if len(m.focusNodes) == 0 {
 		m.status = "no nodes"
 		return
 	}
-	if !seenCurrent || chosen == (layout.Hit{}) {
-		if delta < 0 {
-			chosen = last
-		} else {
-			chosen = first
+	slices.SortFunc(m.focusNodes, func(a, b layout.Hit) int {
+		pa := m.geo.Nodes[a.ID].Rect.Min
+		pb := m.geo.Nodes[b.ID].Rect.Min
+		if order := cmp.Compare(pa.Y, pb.Y); order != 0 {
+			return order
 		}
+		if order := cmp.Compare(pa.X, pb.X); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	index := -1
+	if hasCurrent {
+		index, _ = slices.BinarySearchFunc(
+			m.focusNodes,
+			current,
+			func(hit, current layout.Hit) int {
+				if hit == current {
+					return 0
+				}
+				pa := m.geo.Nodes[hit.ID].Rect.Min
+				pb := m.geo.Nodes[current.ID].Rect.Min
+				if order := cmp.Compare(pa.Y, pb.Y); order != 0 {
+					return order
+				}
+				if order := cmp.Compare(pa.X, pb.X); order != 0 {
+					return order
+				}
+				return cmp.Compare(hit.ID, current.ID)
+			},
+		)
+	} else if delta < 0 {
+		index = 0
 	}
+	index = (index + delta + len(m.focusNodes)) % len(m.focusNodes)
+	chosen := m.focusNodes[index]
 	m.target = chosen
 	m.selectOnly(chosen)
 	m.cursor = m.geo.Nodes[chosen.ID].LabelPoint

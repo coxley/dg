@@ -296,6 +296,74 @@ func TestModelCyclesStylesAcrossSelection(t *testing.T) {
 	}, mustEdgeStyle(t, model, edgeB))
 }
 
+func TestModelCyclesTextAlignmentAcrossSelection(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	leftHit := layout.Hit{ID: left, Kind: layout.HitNode}
+	rightHit := layout.Hit{ID: right, Kind: layout.HitNode}
+	model.selectOnly(leftHit)
+	require.True(t, model.geo.Selection().Toggle(rightHit))
+
+	updateModel(t, model, keyPress('t', "t"))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'T',
+		Mod:  tea.ModShift,
+	}))
+
+	for _, nodeID := range []uint32{left, right} {
+		style := mustNodeStyle(t, model, nodeID)
+		require.Equal(t, layout.AlignCenter, style.Horizontal)
+		require.Equal(t, layout.AlignMiddle, style.Vertical)
+	}
+	require.True(t, model.geo.Selection().Contains(leftHit))
+	require.True(t, model.geo.Selection().Contains(rightHit))
+}
+
+func TestModelDuplicatesSelectedNodesAndInternalEdges(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, model.rebuild())
+	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{
+		ID:   right,
+		Kind: layout.HitNode,
+	}))
+
+	updateModel(t, model, keyPress('d', "d"))
+
+	require.Empty(t, model.status)
+	nodes, edges := model.geo.Selection().Counts()
+	require.Equal(t, 2, nodes)
+	require.Equal(t, 1, edges)
+	require.True(t, model.geo.EdgeExists(edgeID))
+	updateModel(t, model, keyPress('u', "u"))
+	require.Len(t, model.geo.Graph().Nodes, 4)
+	require.False(t, model.geo.NodeExists(2))
+	require.False(t, model.geo.NodeExists(3))
+}
+
+func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 20})
+	updateModel(t, model, keyPress('?', "?"))
+	require.Equal(t, modalHelp, model.modal)
+	require.Contains(t, model.View().Content, "Shortcuts")
+
+	updateModel(t, model, keyPress('p', "p"))
+	require.Equal(t, modalPreferences, model.modal)
+	before := model.geo.Router()
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
+	updateModel(t, model, keyPress(tea.KeyEscape, ""))
+	require.Equal(t, before, model.geo.Router())
+	require.Equal(t, modalHelp, model.modal)
+}
+
 func TestModelReordersLayersWithUndo(t *testing.T) {
 	t.Parallel()
 
@@ -881,7 +949,7 @@ func TestModelDeletesNode(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
-	updateModel(t, model, keyPress('d', "d"))
+	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
 
 	require.False(t, model.geo.NodeExists(nodeID))
 	require.Empty(t, model.frame.Text)
@@ -927,10 +995,10 @@ func TestModelViewShowsSavePathPrompt(t *testing.T) {
 	updateModel(t, model, tea.PasteMsg{Content: "diagram.json"})
 	view := model.View()
 
-	require.Contains(t, view.Content, "save path: diagram.json")
+	require.Contains(t, view.Content, "Path: diagram.json")
 	require.NotNil(t, view.Cursor)
-	require.Equal(t, len("save path: diagram.json"), view.Cursor.X)
-	require.Equal(t, model.diagramHeight(), view.Cursor.Y)
+	require.Positive(t, view.Cursor.X)
+	require.Equal(t, 2, view.Cursor.Y)
 }
 
 func TestModelSavePathShortcuts(t *testing.T) {
@@ -1049,7 +1117,7 @@ func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 15})
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      0,
-		Y:      0,
+		Y:      1,
 		Button: tea.MouseLeft,
 	})
 	require.True(t, model.selecting)
@@ -1058,7 +1126,7 @@ func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
 		Y:      6,
 		Button: tea.MouseLeft,
 	})
-	require.True(t, model.highlightedPoint(layout.NewPoint(0, 0)))
+	require.True(t, model.highlightedPoint(layout.NewPoint(0, 1)))
 	require.True(t, model.highlightedPoint(layout.NewPoint(6, 3)))
 	require.True(t, model.highlightedPoint(layout.NewPoint(12, 6)))
 	require.False(t, model.highlightedPoint(layout.NewPoint(13, 3)))
@@ -1144,7 +1212,7 @@ func TestModelMovesAndDeletesSelectionAsOneInteraction(t *testing.T) {
 
 	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
-	updateModel(t, model, keyPress('d', "d"))
+	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
 	require.False(t, model.geo.NodeExists(left))
 	require.False(t, model.geo.NodeExists(connected))
 	require.True(t, model.geo.NodeExists(isolated))

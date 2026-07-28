@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/coxley/dg/layout"
+import (
+	"errors"
+
+	"github.com/coxley/dg/layout"
+)
 
 type selectionArea struct {
 	min layout.Point
@@ -87,4 +91,64 @@ func (m *Model) finishAreaSelection() {
 
 func (m *Model) marqueeArea() selectionArea {
 	return newSelectionArea(m.selectionStartPoint, m.selectionEndPoint)
+}
+
+func (m *Model) duplicateSelection(dx, dy int64) {
+	if m.mode != modeNavigate {
+		m.status = finishOperation
+		return
+	}
+	if !m.hasSelectedNodes() {
+		hit, ok := m.activeHit()
+		if !ok || hit.Kind != layout.HitNode {
+			m.status = "select at least one node to duplicate"
+			return
+		}
+		m.selectOnly(hit)
+	}
+	m.beginTransaction()
+	if err := m.geo.DuplicateSelection(dx, dy); err != nil {
+		m.status = errors.Join(err, m.cancelTransaction()).Error()
+		return
+	}
+	if err := m.rebuild(); err != nil {
+		m.status = errors.Join(err, m.cancelTransaction(), m.render()).Error()
+		return
+	}
+	if err := m.commitTransaction(); err != nil {
+		m.status = err.Error()
+		return
+	}
+	if hit, ok := m.firstSelectedNode(); ok {
+		m.target = hit
+		m.cursor = m.geo.Nodes[hit.ID].LabelPoint
+	}
+	m.refreshHits()
+	m.selectTarget()
+	m.ensureCursorVisible()
+	m.status = ""
+}
+
+func (m *Model) duplicateSelectionDefault() {
+	var (
+		minX  uint32
+		maxX  uint32
+		found bool
+	)
+	for nodeID := range m.geo.Selection().Nodes() {
+		rect := m.geo.Nodes[nodeID].Rect
+		if !found {
+			minX = rect.Min.X
+			found = true
+		}
+		minX = min(minX, rect.Min.X)
+		maxX = max(maxX, rect.Max().X)
+	}
+	if !found {
+		if hit, ok := m.activeHit(); ok && hit.Kind == layout.HitNode {
+			rect := m.geo.Nodes[hit.ID].Rect
+			minX, maxX = rect.Min.X, rect.Max().X
+		}
+	}
+	m.duplicateSelection(int64(maxX-minX)+2, 0)
 }

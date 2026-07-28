@@ -18,9 +18,14 @@ func (m *Model) requestSave() {
 	}
 	if m.path == "" {
 		m.mode = modeSavePath
-		m.editBuffer = m.editBuffer[:0]
+		m.modal = modalSave
+		m.editBuffer = append(m.editBuffer[:0], m.preferences.saveDirectory...)
+		if len(m.editBuffer) != 0 &&
+			m.editBuffer[len(m.editBuffer)-1] != filepath.Separator {
+			m.editBuffer = append(m.editBuffer, byte(filepath.Separator))
+		}
 		m.editDraft = m.editDraft[:0]
-		m.editCaret = 0
+		m.editCaret = len(m.editBuffer)
 		m.status = ""
 		m.saveHint = ""
 		return
@@ -128,6 +133,7 @@ func (m *Model) commitSavePath() {
 
 func (m *Model) finishSavePath() {
 	m.mode = modeNavigate
+	m.modal = modalNone
 	m.editBuffer = m.editBuffer[:0]
 	m.editDraft = m.editDraft[:0]
 	m.editCaret = 0

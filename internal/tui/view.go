@@ -20,24 +20,28 @@ const (
 )
 
 func (m *Model) View() tea.View {
+	if m.modal != modalNone {
+		return m.modalView()
+	}
 	frame, rows := m.frame, m.frameRows
 	if m.reconnecting && m.connectDragging {
 		frame, rows = m.connectFrame, m.connectFrameRows
 	}
+	m.viewBuffer = m.appendToolbar(m.viewBuffer[:0])
+	bodyOrigin := m.viewport
+	if bodyOrigin.Y != math.MaxUint32 {
+		bodyOrigin.Y++
+	}
 	m.viewBuffer = m.appendViewport(
-		m.viewBuffer[:0],
+		m.viewBuffer,
 		frame,
 		rows,
-		m.viewport,
+		bodyOrigin,
 		m.width,
 		m.diagramHeight(),
 	)
 	if m.height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
-		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
-	}
-	if m.height >= 2 {
-		m.statusText = append(m.statusText[:0], m.helpLine()...)
 		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
 	}
 
@@ -54,18 +58,38 @@ func (m *Model) View() tea.View {
 			cursor.Y = y
 			view.Cursor = cursor
 		}
-	case modeSavePath:
-		x := len("save path: ") + displayWidth(m.editBuffer[:m.editCaret])
-		if m.height >= 2 && x < m.width {
-			cursor := &m.viewCursor[m.nextCursor]
-			m.nextCursor ^= 1
-			cursor.X = x
-			cursor.Y = m.diagramHeight()
-			view.Cursor = cursor
-		}
 	default:
 	}
 	return view
+}
+
+func (m *Model) appendToolbar(dst []byte) []byte {
+	const (
+		active = "\x1b[48;5;24;38;5;231m"
+		reset  = "\x1b[0m"
+	)
+	tools := [...]struct {
+		label string
+		mode  mode
+	}{
+		{" Cursor ", modeNavigate},
+		{" Rectangle ", modeRectangle},
+		{" Line ", modeConnect},
+	}
+	used := 0
+	for _, tool := range tools {
+		text := tool.label
+		if m.mode == tool.mode {
+			dst = append(dst, active...)
+			dst = append(dst, text...)
+			dst = append(dst, reset...)
+		} else {
+			dst = append(dst, text...)
+		}
+		used += len(text)
+	}
+	dst = appendSpaces(dst, m.width-used)
+	return append(dst, '\n')
 }
 
 func (m *Model) appendStatusText(dst []byte) []byte {
@@ -132,7 +156,7 @@ func (m *Model) helpLine() string {
 		}
 		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
 	default:
-		return "tab focus • arrows move focused node • ctrl-tab cycle hits • n label • r rectangle • e edit • l line • b border • a/A arrows • d delete • [/] layer • u/ctrl-z undo • ctrl-r/y redo • ctrl+s save"
+		return "? help • tab focus • arrows move • r rectangle • l line • e edit"
 	}
 }
 
