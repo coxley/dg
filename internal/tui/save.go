@@ -59,9 +59,10 @@ func (m *Model) openSaveForm() {
 	).
 		WithWidth(64).
 		WithHeight(14).
-		WithShowHelp(true)
+		WithShowHelp(true).
+		WithTheme(m.theme.formTheme())
 	_ = m.saveForm.Init()
-	m.modal = modalSave
+	m.openModal(modalSave)
 	m.status = ""
 }
 

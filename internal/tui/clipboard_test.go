@@ -34,17 +34,21 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 
 	for _, key := range []tea.Key{
 		{Code: 'c', Text: "c", Mod: tea.ModCtrl},
-		{Code: 'c', Text: "c"},
+		{Code: 'c', Text: "c", Mod: tea.ModSuper},
 	} {
 		model, nodeID := newTestModel(t)
 		model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 		var copied string
-		model.clipboardWrite = func(text string) error {
+		model.clipboardMode = clipboardFallback
+		model.clipboardFallback = func(text string) error {
 			copied = text
 			return nil
 		}
 
-		updateModelCommand(t, model, tea.KeyPressMsg(key))
+		command := updateModelCommand(t, model, tea.KeyPressMsg(key))
+		require.NotNil(t, command)
+		message := command()
+		command = updateModelCommand(t, model, message)
 
 		require.Equal(t, strings.Join([]string{
 			"┌──────┐",
@@ -53,6 +57,7 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 		}, "\n"), copied)
 		require.Equal(t, modalNotice, model.modal)
 		require.Equal(t, "Copied to clipboard", model.notice)
+		require.NotNil(t, command)
 	}
 }
 
@@ -61,11 +66,19 @@ func TestSecondCopyOpensExportPrompt(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.clipboardWrite = func(string) error { return nil }
+	model.clipboardMode = clipboardFallback
+	model.clipboardFallback = func(string) error { return nil }
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	updateModelCommand(t, model, keyPress('c', "c"))
-	updateModelCommand(t, model, keyPress('c', "c"))
+	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	}))
+	updateModelCommand(t, model, command())
+	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	}))
 
 	require.Equal(t, modalExport, model.modal)
 	require.Equal(t, exportLineSlash, model.exportStyle)
@@ -89,12 +102,59 @@ func TestCopySelectionReportsClipboardFailure(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.clipboardWrite = func(string) error { return errors.New("unavailable") }
+	model.clipboardMode = clipboardFallback
+	model.clipboardFallback = func(string) error { return errors.New("unavailable") }
 
-	updateModelCommand(t, model, keyPress('c', "c"))
+	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	}))
+	updateModel(t, model, command())
 
 	require.Equal(t, "copy selection: unavailable", model.status)
 	require.False(t, model.copyArmed)
+}
+
+func TestClipboardProbeSelectsTerminalOrFallback(t *testing.T) {
+	t.Parallel()
+
+	t.Run("terminal response", func(t *testing.T) {
+		t.Parallel()
+
+		model, _ := newTestModel(t)
+		model.clipboardPending = "diagram"
+		command := model.handleClipboardResponse()
+
+		require.Equal(t, clipboardTerminal, model.clipboardMode)
+		require.Empty(t, model.clipboardPending)
+		require.Equal(t, modalNotice, model.modal)
+		require.NotNil(t, command)
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		t.Parallel()
+
+		model, _ := newTestModel(t)
+		model.clipboardPending = "diagram"
+		model.clipboardProbe = 2
+		var copied string
+		model.clipboardFallback = func(text string) error {
+			copied = text
+			return nil
+		}
+
+		require.Nil(t, model.handleClipboardTimeout(
+			clipboardProbeExpiredMsg{generation: 1},
+		))
+		command := model.handleClipboardTimeout(
+			clipboardProbeExpiredMsg{generation: 2},
+		)
+		require.Equal(t, clipboardFallback, model.clipboardMode)
+		require.NotNil(t, command)
+		require.NotNil(t, updateModelCommand(t, model, command()))
+		require.Equal(t, "diagram", copied)
+		require.Equal(t, modalNotice, model.modal)
+	})
 }
 
 func TestFormatExport(t *testing.T) {

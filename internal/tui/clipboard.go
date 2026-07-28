@@ -4,13 +4,50 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/coxley/dg/layout"
 	"github.com/rivo/uniseg"
+	"golang.design/x/clipboard"
 )
+
+const clipboardProbeTimeout = 100 * time.Millisecond
+
+type clipboardMode uint8
+
+const (
+	clipboardUnknown clipboardMode = iota
+	clipboardTerminal
+	clipboardFallback
+)
+
+type clipboardProbeExpiredMsg struct {
+	generation uint64
+}
+
+type clipboardFallbackMsg struct {
+	err error
+}
+
+var (
+	clipboardInitOnce sync.Once
+	errClipboardInit  error
+)
+
+func writeFallbackClipboard(text string) error {
+	clipboardInitOnce.Do(func() {
+		errClipboardInit = clipboard.Init()
+	})
+	if errClipboardInit != nil {
+		return errClipboardInit
+	}
+	clipboard.Write(clipboard.FmtText, []byte(text))
+	return nil
+}
 
 type exportStyle uint8
 
@@ -38,14 +75,9 @@ func (m *Model) copySelection() tea.Cmd {
 		m.copyArmed = false
 		return nil
 	}
-	if err := m.clipboardWrite(text); err != nil {
-		m.setError("copy selection: " + err.Error())
-		m.copyArmed = false
-		return nil
-	}
 	m.copyArmed = true
 	m.status = ""
-	return m.showNotice("Copied to clipboard", modalNone)
+	return m.writeClipboard(text)
 }
 
 func (m *Model) openExport(text string) {
@@ -61,9 +93,10 @@ func (m *Model) openExport(text string) {
 	).
 		WithWidth(46).
 		WithHeight(7).
-		WithShowHelp(true)
+		WithShowHelp(true).
+		WithTheme(m.theme.formTheme())
 	_ = m.exportForm.Init()
-	m.modal = modalExport
+	m.openModal(modalExport)
 	m.status = ""
 }
 
@@ -113,11 +146,71 @@ func (m *Model) updateExportForm(message tea.Msg) tea.Cmd {
 	text := formatExport(m.exportText, m.exportStyle)
 	m.modal = modalNone
 	m.exportText = ""
-	if err := m.clipboardWrite(text); err != nil {
-		m.setError("copy selection: " + err.Error())
+	m.status = ""
+	return m.writeClipboard(text)
+}
+
+func (m *Model) writeClipboard(text string) tea.Cmd {
+	switch m.clipboardMode {
+	case clipboardTerminal:
+		return tea.Batch(
+			tea.SetClipboard(text),
+			m.showNotice("Copied to clipboard", modalNone),
+		)
+	case clipboardFallback:
+		return m.writeFallbackClipboard(text)
+	case clipboardUnknown:
+		m.clipboardPending = text
+		m.clipboardProbe++
+		generation := m.clipboardProbe
+		return tea.Batch(
+			func() tea.Msg { return tea.ReadClipboard() },
+			tea.Tick(clipboardProbeTimeout, func(time.Time) tea.Msg {
+				return clipboardProbeExpiredMsg{generation: generation}
+			}),
+		)
+	default:
 		return nil
 	}
-	m.status = ""
+}
+
+func (m *Model) handleClipboardResponse() tea.Cmd {
+	if m.clipboardMode != clipboardUnknown || m.clipboardPending == "" {
+		return nil
+	}
+	text := m.clipboardPending
+	m.clipboardPending = ""
+	m.clipboardMode = clipboardTerminal
+	return tea.Batch(
+		tea.SetClipboard(text),
+		m.showNotice("Copied to clipboard", modalNone),
+	)
+}
+
+func (m *Model) handleClipboardTimeout(message clipboardProbeExpiredMsg) tea.Cmd {
+	if m.clipboardMode != clipboardUnknown ||
+		m.clipboardPending == "" ||
+		message.generation != m.clipboardProbe {
+		return nil
+	}
+	text := m.clipboardPending
+	m.clipboardPending = ""
+	m.clipboardMode = clipboardFallback
+	return m.writeFallbackClipboard(text)
+}
+
+func (m *Model) writeFallbackClipboard(text string) tea.Cmd {
+	return func() tea.Msg {
+		return clipboardFallbackMsg{err: m.clipboardFallback(text)}
+	}
+}
+
+func (m *Model) handleClipboardFallback(message clipboardFallbackMsg) tea.Cmd {
+	if message.err != nil {
+		m.setError("copy selection: " + message.err.Error())
+		m.copyArmed = false
+		return nil
+	}
 	return m.showNotice("Copied to clipboard", modalNone)
 }
 

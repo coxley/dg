@@ -5,24 +5,22 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
 	"github.com/rivo/uniseg"
 )
 
 const (
-	selectionStart     = "\x1b[48;5;24;38;5;231m"
-	portHighlightStart = "\x1b[38;5;46m"
-	errorStart         = "\x1b[31m"
-	selectionEnd       = "\x1b[0m"
-	toolbarTop         = 1
-	toolbarBoxHeight   = 5
-	toolbarToolRow     = toolbarTop + 2
-	toolbarToolsWidth  = len(" Cursor ") + len(" Rectangle ") + len(" Line ")
-	toolbarBoxWidth    = toolbarToolsWidth + 4
+	toolbarTop        = 1
+	toolbarBoxHeight  = 5
+	toolbarToolRow    = toolbarTop + 2
+	toolbarToolsWidth = len(" Cursor ") + len(" Rectangle ") + len(" Line ")
+	toolbarBoxWidth   = toolbarToolsWidth + 4
 )
 
 func (m *Model) View() tea.View {
@@ -32,7 +30,7 @@ func (m *Model) View() tea.View {
 	} else if m.duplicateDragging {
 		frame, rows = m.duplicateFrame, m.duplicateRows
 	}
-	overlay := m.currentModalOverlay()
+	toolbar := m.currentToolbarLines()
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
 		frame,
@@ -40,20 +38,32 @@ func (m *Model) View() tea.View {
 		m.viewport,
 		m.width,
 		m.diagramHeight(),
-		overlay,
+		toolbar,
 	)
 	if m.height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
 		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
 	}
 
-	view := tea.NewView(string(m.viewBuffer))
+	content := strings.TrimSuffix(string(m.viewBuffer), "\n")
+	overlay := m.currentModalOverlay()
+	if len(overlay.lines) != 0 {
+		content = lipgloss.NewCompositor(
+			lipgloss.NewLayer(content),
+			lipgloss.NewLayer(strings.Join(overlay.lines, "\n")).
+				ID("modal").
+				X(overlay.left).
+				Y(overlay.top).
+				Z(1),
+		).Render()
+	}
+	view := tea.NewView(content + "\n")
 	view.AltScreen = true
-	view.MouseMode = tea.MouseModeCellMotion
+	view.MouseMode = tea.MouseModeAllMotion
 	view.WindowTitle = "dg"
+	view.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
+	view.KeyboardEnhancements.ReportAlternateKeys = true
 	switch {
-	case m.modal == modalHelp || m.modal == modalPreferences:
-		view.OnMouse = m.settingsMouseHandler(overlay)
 	case m.modal != modalNone:
 	case m.mode == modeEditLabel:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
@@ -67,15 +77,7 @@ func (m *Model) View() tea.View {
 	return view
 }
 
-func (m *Model) appendToolbarOverlay(dst []byte, screenY int) []byte {
-	const (
-		active = "\x1b[48;5;24;38;5;231m"
-		reset  = "\x1b[0m"
-	)
-	row := screenY - toolbarTop
-	if row < 0 || row >= toolbarBoxHeight {
-		return dst
-	}
+func (m *Model) toolbarView() string {
 	tools := [...]struct {
 		label string
 		mode  mode
@@ -84,52 +86,44 @@ func (m *Model) appendToolbarOverlay(dst []byte, screenY int) []byte {
 		{" Rectangle ", modeRectangle},
 		{" Line ", modeConnect},
 	}
-	toolbarWidth := 0
-	for _, tool := range tools {
-		toolbarWidth += len(tool.label)
-	}
-	switch row {
-	case 0:
-		dst = utf8.AppendRune(dst, '╭')
-		dst = appendRunes(dst, '─', toolbarWidth+2)
-		return utf8.AppendRune(dst, '╮')
-	case 1, 3:
-		dst = utf8.AppendRune(dst, '│')
-		dst = appendSpaces(dst, toolbarWidth+2)
-		return utf8.AppendRune(dst, '│')
-	case 4:
-		dst = utf8.AppendRune(dst, '╰')
-		dst = appendRunes(dst, '─', toolbarWidth+2)
-		return utf8.AppendRune(dst, '╯')
-	}
-
-	dst = append(dst, "│ "...)
+	var content strings.Builder
+	content.Grow(toolbarToolsWidth)
 	for _, tool := range tools {
 		text := tool.label
-		if m.mode == tool.mode {
-			dst = append(dst, active...)
-			dst = append(dst, text...)
-			dst = append(dst, reset...)
-		} else {
-			dst = append(dst, text...)
+		switch {
+		case m.mode == tool.mode:
+			text = m.theme.ToolbarActive.Render(text)
+		case m.hasToolbarHover && m.toolbarHover == tool.mode:
+			text = m.theme.ToolbarHover.Render(text)
 		}
+		content.WriteString(text)
 	}
-	return append(dst, " │"...)
+	return m.theme.Toolbar.Render(content.String())
 }
 
-func appendRunes(dst []byte, value rune, count int) []byte {
-	for range max(count, 0) {
-		dst = utf8.AppendRune(dst, value)
+func (m *Model) currentToolbarLines() []string {
+	if m.toolbarLines != nil &&
+		m.toolbarMode == m.mode &&
+		m.toolbarHasHover == m.hasToolbarHover &&
+		(!m.hasToolbarHover || m.toolbarHoverMode == m.toolbarHover) {
+		return m.toolbarLines
 	}
-	return dst
+	m.toolbarMode = m.mode
+	m.toolbarHasHover = m.hasToolbarHover
+	m.toolbarHoverMode = m.toolbarHover
+	m.toolbarLines = strings.Split(m.toolbarView(), "\n")
+	return m.toolbarLines
+}
+
+type styledRunKey struct {
+	text string
+	port bool
 }
 
 func (m *Model) appendStatusText(dst []byte) []byte {
 	if m.status != "" {
 		if m.status == m.statusError {
-			dst = append(dst, errorStart...)
-			dst = append(dst, m.status...)
-			return append(dst, selectionEnd...)
+			return append(dst, m.theme.Error.Render(m.status)...)
 		}
 		return append(dst, m.status...)
 	}
@@ -200,7 +194,7 @@ func (m *Model) appendViewport(
 	rows []rowSpan,
 	origin layout.Point,
 	width, height int,
-	overlay modalOverlay,
+	toolbar []string,
 ) []byte {
 	for screenY := range height {
 		documentY := uint64(origin.Y) + uint64(screenY)
@@ -215,7 +209,7 @@ func (m *Model) appendViewport(
 				documentY,
 				width,
 				screenY,
-				overlay,
+				toolbar,
 			)
 			continue
 		}
@@ -232,7 +226,7 @@ func (m *Model) appendViewport(
 			documentY,
 			width,
 			screenY,
-			overlay,
+			toolbar,
 		)
 	}
 	return dst
@@ -242,66 +236,70 @@ func (m *Model) appendViewportLine(
 	dst, row []byte,
 	rowOrigin, viewportOrigin uint32,
 	documentY uint64,
-	width, screenY int,
-	overlay modalOverlay,
+	width int,
+	screenY int,
+	toolbar []string,
 ) []byte {
-	if modalLine, ok := overlay.line(screenY); ok {
+	toolbarRow := screenY - toolbarTop
+	if width >= toolbarBoxWidth &&
+		toolbarRow >= 0 &&
+		toolbarRow < len(toolbar) {
+		left := (width - toolbarBoxWidth) / 2
 		dst = appendViewportSegment(
 			dst,
 			row,
 			rowOrigin,
 			uint64(viewportOrigin),
 			documentY,
-			overlay.left,
+			left,
 			m,
 		)
-		dst = append(dst, modalLine...)
+		dst = append(dst, toolbar[toolbarRow]...)
+		right := width - left - toolbarBoxWidth
 		dst = appendViewportSegment(
 			dst,
 			row,
 			rowOrigin,
-			uint64(viewportOrigin)+uint64(overlay.left+overlay.width),
+			uint64(viewportOrigin)+uint64(left+toolbarBoxWidth),
 			documentY,
-			width-overlay.left-overlay.width,
+			right,
 			m,
 		)
 		return append(dst, '\n')
 	}
-	if width < toolbarBoxWidth ||
-		screenY < toolbarTop ||
-		screenY >= toolbarTop+toolbarBoxHeight {
-		dst = appendViewportSegment(
-			dst,
-			row,
-			rowOrigin,
-			uint64(viewportOrigin),
-			documentY,
-			width,
-			m,
-		)
-		return append(dst, '\n')
-	}
-	left := (width - toolbarBoxWidth) / 2
 	dst = appendViewportSegment(
 		dst,
 		row,
 		rowOrigin,
 		uint64(viewportOrigin),
 		documentY,
-		left,
-		m,
-	)
-	dst = m.appendToolbarOverlay(dst, screenY)
-	dst = appendViewportSegment(
-		dst,
-		row,
-		rowOrigin,
-		uint64(viewportOrigin)+uint64(left+toolbarBoxWidth),
-		documentY,
-		width-left-toolbarBoxWidth,
+		width,
 		m,
 	)
 	return append(dst, '\n')
+}
+
+func (m *Model) appendStyledRun(dst, text []byte, selected bool) []byte {
+	if !selected {
+		return append(dst, text...)
+	}
+	port := m.mode == modeConnect
+	key := styledRunKey{
+		text: string(text),
+		port: port,
+	}
+	rendered, ok := m.styledRuns[key]
+	if !ok {
+		rendered = m.highlightStyle().Render(key.text)
+		m.styledRuns[key] = rendered
+	}
+	return append(dst, rendered...)
+}
+
+func (m *Model) styleTail(dst []byte, start int) []byte {
+	tail := dst[start:]
+	dst = dst[:start]
+	return m.appendStyledRun(dst, tail, true)
 }
 
 func appendViewportSegment(
@@ -344,7 +342,7 @@ func appendViewportRow(
 	documentX := uint64(rowOrigin)
 	screenX := 0
 	state := -1
-	styled := false
+	styledStart := -1
 
 	for len(row) != 0 && screenX < width {
 		cluster, rest, clusterWidth, nextState := uniseg.FirstGraphemeCluster(row, state)
@@ -370,59 +368,58 @@ func appendViewportRow(
 		visibleEnd := min(clusterEnd, viewportEnd)
 		targetX := int(visibleStart - viewportStart)
 		if gap := targetX - screenX; gap != 0 {
-			dst, styled = appendHighlightedSpaces(
+			if styledStart >= 0 {
+				dst = model.styleTail(dst, styledStart)
+				styledStart = -1
+			}
+			dst = appendHighlightedSpaces(
 				dst,
 				gap,
 				viewportStart+uint64(screenX),
 				uint64(documentY),
 				model,
-				styled,
 			)
 		}
 		screenX = targetX
 
-		selected := model != nil &&
-			model.highlightedRange(
-				documentY,
-				uint32(visibleStart),
-				uint32(visibleEnd),
-			)
-		if selected && !styled {
-			dst = append(dst, model.highlightStart()...)
-			styled = true
-		} else if !selected && styled {
-			dst = append(dst, selectionEnd...)
-			styled = false
-		}
+		var visible []byte
 		preview, hasPreview := previewGlyph(
 			model,
 			visibleStart,
 			uint64(documentY),
 		)
 		if hasPreview && clusterWidth == 1 {
-			dst = utf8.AppendRune(dst, preview)
+			visible = utf8.AppendRune(visible, preview)
 		} else if visibleStart == clusterStart && visibleEnd == clusterEnd {
-			dst = append(dst, cluster...)
+			visible = cluster
 		} else {
-			dst = appendSpaces(dst, int(visibleEnd-visibleStart))
+			visible = appendSpaces(visible, int(visibleEnd-visibleStart))
 		}
+		selected := model != nil &&
+			model.highlightedRange(
+				documentY,
+				uint32(visibleStart),
+				uint32(visibleEnd),
+			)
+		if selected && styledStart < 0 {
+			styledStart = len(dst)
+		} else if !selected && styledStart >= 0 {
+			dst = model.styleTail(dst, styledStart)
+			styledStart = -1
+		}
+		dst = append(dst, visible...)
 		screenX += int(visibleEnd - visibleStart)
 	}
-	if styled {
-		dst = append(dst, selectionEnd...)
-		styled = false
+	if styledStart >= 0 {
+		dst = model.styleTail(dst, styledStart)
 	}
-	dst, styled = appendHighlightedSpaces(
+	dst = appendHighlightedSpaces(
 		dst,
 		width-screenX,
 		viewportStart+uint64(screenX),
 		uint64(documentY),
 		model,
-		styled,
 	)
-	if styled {
-		dst = append(dst, selectionEnd...)
-	}
 	return dst
 }
 
@@ -630,18 +627,13 @@ func appendViewportSpaces(
 	startX, y uint64,
 	model *Model,
 ) []byte {
-	dst, styled := appendHighlightedSpaces(
+	return appendHighlightedSpaces(
 		dst,
 		count,
 		startX,
 		y,
 		model,
-		false,
 	)
-	if styled {
-		dst = append(dst, selectionEnd...)
-	}
-	return dst
 }
 
 func appendHighlightedSpaces(
@@ -649,45 +641,43 @@ func appendHighlightedSpaces(
 	count int,
 	startX, y uint64,
 	model *Model,
-	styled bool,
-) ([]byte, bool) {
+) []byte {
 	if model == nil ||
 		!model.selecting &&
 			(model.mode != modeConnect || !model.connectStarted) {
-		if styled {
-			dst = append(dst, selectionEnd...)
-		}
-		return appendSpaces(dst, count), false
+		return appendSpaces(dst, count)
 	}
+	styledStart := -1
 	for offset := range max(count, 0) {
 		x := startX + uint64(offset)
-		selected := model != nil &&
-			x <= math.MaxUint32 &&
-			y <= math.MaxUint32 &&
-			model.highlightedPoint(
-				layout.NewPoint(uint32(x), uint32(y)),
-			)
-		if selected && !styled {
-			dst = append(dst, model.highlightStart()...)
-			styled = true
-		} else if !selected && styled {
-			dst = append(dst, selectionEnd...)
-			styled = false
-		}
+		var text []byte
 		if preview, ok := previewGlyph(model, x, y); ok {
-			dst = utf8.AppendRune(dst, preview)
+			text = utf8.AppendRune(text, preview)
 		} else {
-			dst = append(dst, ' ')
+			text = append(text, ' ')
 		}
+		selected := x <= math.MaxUint32 &&
+			y <= math.MaxUint32 &&
+			model.highlightedPoint(layout.NewPoint(uint32(x), uint32(y)))
+		if selected && styledStart < 0 {
+			styledStart = len(dst)
+		} else if !selected && styledStart >= 0 {
+			dst = model.styleTail(dst, styledStart)
+			styledStart = -1
+		}
+		dst = append(dst, text...)
 	}
-	return dst, styled
+	if styledStart >= 0 {
+		dst = model.styleTail(dst, styledStart)
+	}
+	return dst
 }
 
-func (m *Model) highlightStart() string {
+func (m *Model) highlightStyle() lipgloss.Style {
 	if m != nil && m.mode == modeConnect {
-		return portHighlightStart
+		return m.theme.Port
 	}
-	return selectionStart
+	return m.theme.Selection
 }
 
 func previewGlyph(model *Model, x, y uint64) (rune, bool) {

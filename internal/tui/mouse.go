@@ -126,6 +126,25 @@ func (m *Model) updateToolbarClick(mouse tea.Mouse) bool {
 	return true
 }
 
+func (m *Model) updateToolbarHover(mouse tea.Mouse) {
+	m.hasToolbarHover = false
+	if mouse.Y != toolbarToolRow || !m.toolbarContains(mouse.X, mouse.Y) {
+		return
+	}
+	x := mouse.X - max((m.width-toolbarBoxWidth)/2, 0) - 2
+	switch {
+	case x >= 0 && x < len(" Cursor "):
+		m.toolbarHover = modeNavigate
+	case x < len(" Cursor ")+len(" Rectangle "):
+		m.toolbarHover = modeRectangle
+	case x < toolbarToolsWidth:
+		m.toolbarHover = modeConnect
+	default:
+		return
+	}
+	m.hasToolbarHover = true
+}
+
 func (m *Model) toolbarContains(x, y int) bool {
 	if m.width < toolbarBoxWidth ||
 		y < toolbarTop ||

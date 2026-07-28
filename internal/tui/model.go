@@ -8,12 +8,11 @@ import (
 	"slices"
 	"time"
 
+	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"github.com/atotto/clipboard"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
-	bubbletab "github.com/mJehanno/bubble-tab"
 )
 
 type mode uint8
@@ -77,6 +76,7 @@ type rowSpan struct {
 type Model struct {
 	geo     *layout.Layout
 	history *layout.History
+	theme   Theme
 
 	cursor            layout.Point
 	viewport          layout.Point
@@ -100,9 +100,17 @@ type Model struct {
 	duplicateStart    layout.Point
 	duplicatePoint    layout.Point
 	duplicateGeo      *layout.Layout
+	toolbarHover      mode
+	hasToolbarHover   bool
 
 	mode             mode
 	modal            modal
+	modalLeft        int
+	modalTop         int
+	modalPositioned  bool
+	modalDragging    bool
+	modalDragOffsetX int
+	modalDragOffsetY int
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
@@ -131,6 +139,11 @@ type Model struct {
 	duplicateRows      []rowSpan
 	viewBuffer         []byte
 	statusText         []byte
+	styledRuns         map[styledRunKey]string
+	toolbarLines       []string
+	toolbarMode        mode
+	toolbarHoverMode   mode
+	toolbarHasHover    bool
 
 	// Bubble Tea compares consecutive cursor pointers, so each View writes the
 	// cursor value that the previous View does not reference.
@@ -143,24 +156,28 @@ type Model struct {
 	statusError string
 	path        string
 
-	clipboardWrite func(string) error
-	copyArmed      bool
-	exportForm     *huh.Form
-	exportText     string
-	exportStyle    exportStyle
-	saveForm       *huh.Form
-	saveDirectory  string
-	saveName       string
-	notice         string
-	noticeID       uint64
-	noticeReturn   modal
+	clipboardFallback func(string) error
+	clipboardMode     clipboardMode
+	clipboardPending  string
+	clipboardProbe    uint64
+	copyArmed         bool
+	exportForm        *huh.Form
+	exportText        string
+	exportStyle       exportStyle
+	saveForm          *huh.Form
+	saveDirectory     string
+	saveName          string
+	notice            string
+	noticeID          uint64
+	noticeReturn      modal
 
 	preferences      preferenceState
 	preferenceEdit   bool
 	preferenceForm   *huh.Form
 	preferenceInput  preferenceFormValues
-	preferenceFields []preferenceField
-	settingsTabs     bubbletab.TabModel
+	preferenceFields []*stepperField
+	help             help.Model
+	keys             keyMap
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -185,11 +202,17 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		return nil, errors.New("nil layout")
 	}
 	m := &Model{
-		geo:            geo,
-		history:        geo.History(),
-		path:           path,
-		clipboardWrite: clipboard.WriteAll,
+		geo:               geo,
+		history:           geo.History(),
+		path:              path,
+		theme:             DefaultTheme(true),
+		help:              help.New(),
+		keys:              newKeyMap(),
+		clipboardFallback: writeFallbackClipboard,
+		styledRuns:        make(map[styledRunKey]string),
 	}
+	m.help.ShowAll = true
+	m.help.Styles = m.theme.helpStyles(true)
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -227,11 +250,28 @@ func Run(geo *layout.Layout, path string) error {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return nil
+	return func() tea.Msg {
+		return tea.RequestBackgroundColor()
+	}
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
+	case tea.BackgroundColorMsg:
+		m.theme = DefaultTheme(message.IsDark())
+		m.help.Styles = m.theme.helpStyles(message.IsDark())
+		clear(m.styledRuns)
+		m.toolbarLines = nil
+		if m.preferenceForm != nil {
+			m.preferenceForm.WithTheme(m.theme.formTheme())
+			for _, field := range m.preferenceFields {
+				field.theme = m.theme
+			}
+		}
+	case tea.KeyboardEnhancementsMsg:
+		m.keys.setKeyboardEnhancements(true)
+	case tea.ClipboardMsg:
+		return m, m.handleClipboardResponse()
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 0)
 		m.height = max(message.Height, 0)
@@ -251,43 +291,60 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseClickMsg:
 		m.copyArmed = false
-		if m.modal == modalNone {
-			m.updateMouseClick(message.Mouse())
+		if m.modal != modalNone {
+			return m, m.updateModalMouseClick(message.Mouse())
 		}
+		m.updateMouseClick(message.Mouse())
 	case tea.MouseReleaseMsg:
 		m.copyArmed = false
-		if m.modal == modalNone {
-			m.updateMouseRelease(message.Mouse())
+		if m.modal != modalNone {
+			m.modalDragging = false
+			return m, nil
 		}
+		m.updateMouseRelease(message.Mouse())
 	case tea.MouseMotionMsg:
 		m.copyArmed = false
-		if m.modal == modalNone {
-			m.updateMouseMotion(message.Mouse())
+		if m.modal != modalNone {
+			return m, m.updateModalMouseMotion(message.Mouse())
 		}
+		m.updateToolbarHover(message.Mouse())
+		m.updateMouseMotion(message.Mouse())
 	case tea.MouseWheelMsg:
 		m.copyArmed = false
 		return m, m.updateMouseWheelMessage(message)
 	case tea.BlurMsg:
 		m.interruptInteraction()
 	case componentMsg:
-		switch {
-		case message.kind == settingsComponent &&
-			(m.modal == modalHelp || m.modal == modalPreferences):
-			return m, m.updateSettingsTabs(message.message)
-		case message.kind == exportComponent && m.modal == modalExport:
-			return m, m.updateExportForm(message.message)
-		case message.kind == saveComponent && m.modal == modalSave:
-			return m, m.updateSaveForm(message.message)
-		}
-	case settingsTabMouseMsg:
-		return m, m.updateSettingsTabMouse(message)
+		return m, m.updateComponent(message)
 	case noticeExpiredMsg:
 		if m.modal == modalNotice && message.id == m.noticeID {
 			m.modal = m.noticeReturn
 			m.dismissNotice()
 		}
+	case clipboardProbeExpiredMsg:
+		return m, m.handleClipboardTimeout(message)
+	case clipboardFallbackMsg:
+		return m, m.handleClipboardFallback(message)
 	}
 	return m, nil
+}
+
+func (m *Model) updateComponent(message componentMsg) tea.Cmd {
+	if flash, ok := message.message.(stepperFlashMsg); ok {
+		flash.field.clearFlash(flash.generation)
+		return nil
+	}
+	switch {
+	case message.kind == settingsComponent &&
+		(m.modal == modalHelp || m.modal == modalPreferences):
+		return m.updateSettingsTabs(message.message)
+	case message.kind == exportComponent && m.modal == modalExport:
+		return m.updateExportForm(message.message)
+	case message.kind == saveComponent && m.modal == modalSave:
+		return m.updateSaveForm(message.message)
+	default:
+		return nil
+	}
 }
 
 func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
@@ -301,20 +358,10 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) updateSettingsTabMouse(message settingsTabMouseMsg) tea.Cmd {
-	if m.modal != modalHelp && m.modal != modalPreferences {
-		return nil
-	}
-	if message.tab == modalPreferences {
-		m.beginPreferenceEdit()
-	}
-	m.modal = message.tab
-	return m.updateSettingsTabs(message.message)
-}
-
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
-	copyKey := key.Code == 'c' && (key.Mod == 0 || key.Mod == tea.ModCtrl)
+	copyKey := key.Code == 'c' &&
+		(key.Mod == tea.ModCtrl || key.Mod == tea.ModSuper)
 	if m.modal == modalNotice {
 		returnModal := m.noticeReturn
 		m.dismissNotice()
@@ -328,10 +375,6 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	}
 	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
 		return m.copySelection()
-	}
-	if key.Code == 'c' && key.Mod == tea.ModCtrl {
-		m.interruptInteraction()
-		return tea.Quit
 	}
 	m.hasLastClick = false
 	switch {
@@ -359,7 +402,7 @@ func (m *Model) showNotice(text string, returnTo modal) tea.Cmd {
 	id := m.noticeID
 	m.notice = text
 	m.noticeReturn = returnTo
-	m.modal = modalNotice
+	m.openModal(modalNotice)
 	return tea.Tick(noticeDuration, func(time.Time) tea.Msg {
 		return noticeExpiredMsg{id: id}
 	})

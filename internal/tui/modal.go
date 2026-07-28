@@ -1,11 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
+	"charm.land/lipgloss/v2"
 )
 
 const (
@@ -43,20 +42,17 @@ func (m *Model) currentModalOverlay() modalOverlay {
 	if belowToolbar+len(lines) <= height {
 		top = max(top, belowToolbar)
 	}
+	left := max((m.width-width)/2, 0)
+	if m.modalPositioned {
+		left = min(max(m.modalLeft, 0), max(m.width-width, 0))
+		top = min(max(m.modalTop, 0), max(height-len(lines), 0))
+	}
 	return modalOverlay{
 		lines: lines,
-		left:  max((m.width-width)/2, 0),
+		left:  left,
 		top:   top,
 		width: width,
 	}
-}
-
-func (o modalOverlay) line(screenY int) (string, bool) {
-	row := screenY - o.top
-	if row < 0 || row >= len(o.lines) {
-		return "", false
-	}
-	return o.lines[row], true
 }
 
 func (o modalOverlay) contains(x, y int) bool {
@@ -64,133 +60,136 @@ func (o modalOverlay) contains(x, y int) bool {
 		y >= o.top && y < o.top+len(o.lines)
 }
 
-func (m *Model) settingsMouseHandler(
-	overlay modalOverlay,
-) func(tea.MouseMsg) tea.Cmd {
-	handler := m.settingsTabs.View().OnMouse
-	if handler == nil {
+func (m *Model) openModal(next modal) {
+	m.modal = next
+	m.modalPositioned = false
+	m.modalDragging = false
+}
+
+func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
+	overlay := m.currentModalOverlay()
+	if !overlay.contains(mouse.X, mouse.Y) {
+		m.closeModal()
 		return nil
 	}
-	contentX, contentY := overlay.left+1, overlay.top+1
-	shortcutsWidth := ansi.StringWidth(
-		settingsTabStyles().ActiveHeader.Render("Shortcuts"),
-	)
-	return func(message tea.MouseMsg) tea.Cmd {
-		click, ok := message.(tea.MouseClickMsg)
-		if !ok {
-			return nil
-		}
-		mouse := click.Mouse()
-		mouse.X -= contentX
-		mouse.Y -= contentY
-		command := handler(tea.MouseClickMsg(mouse))
-		if command == nil {
-			return nil
-		}
-		tab := modalHelp
-		if mouse.X >= shortcutsWidth {
-			tab = modalPreferences
-		}
-		return func() tea.Msg {
-			return settingsTabMouseMsg{
-				tab:     tab,
-				message: command(),
-			}
-		}
+	if mouse.Button != tea.MouseLeft {
+		return nil
 	}
+	if mouse.Y == overlay.top {
+		m.modalDragging = true
+		m.modalDragOffsetX = mouse.X - overlay.left
+		m.modalDragOffsetY = mouse.Y - overlay.top
+		return nil
+	}
+	if (m.modal == modalHelp || m.modal == modalPreferences) &&
+		mouse.Y == overlay.top+1 {
+		x := mouse.X - overlay.left - 1
+		shortcutsWidth := lipgloss.Width(m.settingsTab("Shortcuts", modalHelp))
+		if x >= shortcutsWidth {
+			m.openPreferences()
+		} else if x >= 0 {
+			m.modal = modalHelp
+		}
+		return nil
+	}
+	switch m.modal {
+	case modalPreferences:
+		return m.updateSettingsTabs(tea.MouseClickMsg(mouse))
+	case modalSave:
+		return m.updateSaveForm(tea.MouseClickMsg(mouse))
+	case modalExport:
+		return m.updateExportForm(tea.MouseClickMsg(mouse))
+	case modalNone, modalHelp, modalNotice:
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
+	if m.modalDragging {
+		m.modalLeft = mouse.X - m.modalDragOffsetX
+		m.modalTop = mouse.Y - m.modalDragOffsetY
+		m.modalPositioned = true
+		return nil
+	}
+	switch m.modal {
+	case modalPreferences:
+		return m.updateSettingsTabs(tea.MouseMotionMsg(mouse))
+	case modalSave:
+		return m.updateSaveForm(tea.MouseMotionMsg(mouse))
+	case modalExport:
+		return m.updateExportForm(tea.MouseMotionMsg(mouse))
+	case modalNone, modalHelp, modalNotice:
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) closeModal() {
+	switch m.modal {
+	case modalHelp, modalPreferences:
+		m.closeSettingsModal()
+	case modalSave:
+		m.closeSaveForm()
+	case modalExport:
+		m.modal = modalNone
+		m.exportText = ""
+	case modalNotice:
+		m.modal = m.noticeReturn
+		m.dismissNotice()
+	case modalNone:
+	}
+	m.modalDragging = false
 }
 
 func (m *Model) modalLines(width int) []string {
 	switch m.modal {
 	case modalSave:
-		return componentModalLines(m.saveForm.View(), width)
+		return m.componentModalLines(m.saveForm.View(), width)
 	case modalExport:
-		return componentModalLines(m.exportForm.View(), width)
+		return m.componentModalLines(m.exportForm.View(), width)
 	case modalNotice:
-		return []string{
-			"╭" + repeatRune('─', width-2) + "╮",
-			padModalLine(" "+m.notice, width),
-			"╰" + repeatRune('─', width-2) + "╯",
-		}
+		style := m.theme.Modal.Border(lipgloss.RoundedBorder())
+		return strings.Split(style.Width(max(width-2, 0)).Render(" "+m.notice), "\n")
 	default:
 		return m.settingsModalLines(width)
 	}
 }
 
 func (m *Model) settingsModalLines(width int) []string {
-	return componentModalLines(m.settingsTabs.View().Content, width)
+	return m.componentModalLines(m.settingsView(width-2), width)
 }
 
-func componentModalLines(content string, width int) []string {
-	rows := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
-	lines := make([]string, 0, len(rows)+2)
-	lines = append(lines, "┌"+repeatRune('─', width-2)+"┐")
-	for _, row := range rows {
-		lines = append(lines, padANSIModalLine(row, width))
+func (m *Model) settingsView(width int) string {
+	m.help.SetWidth(width)
+	body := m.help.View(m.keys)
+	if m.modal == modalPreferences {
+		body = m.preferenceForm.View()
 	}
-	lines = append(lines, "└"+repeatRune('─', width-2)+"┘")
-	return lines
-}
-
-func shortcutContent() string {
-	rows := [][6]string{
-		{"?", "Help", "Backspace", "Delete", "d", "Duplicate"},
-		{"r", "Rectangle", "e", "Edit label", "l", "Line"},
-		{"b", "Border", "-", "Dashed", "a / A", "Arrows"},
-		{"Tab/Shift-Tab", "Focus", "Arrows", "Move", "Ctrl-A", "Expand"},
-		{"[ / ]", "Layer", "{ / }", "Back/front", "Ctrl-S", "Save"},
-		{"u / Ctrl-Z", "Undo", "Ctrl-R/Ctrl-Y", "Redo", "Alt-drag", "Duplicate"},
-		{"Ctrl-click", "Add/remove", "Esc / q", "Close", "t / T", "Text align"},
-	}
-	lines := make([]string, 0, len(rows)+1)
-	for _, row := range rows {
-		lines = append(lines, shortcutRow(row))
-	}
-	lines = append(lines, "Tab / Shift-Tab switch tabs    Esc close")
-	return strings.Join(lines, "\n")
-}
-
-func shortcutRow(values [6]string) string {
-	const (
-		keyWidth         = 13
-		descriptionWidth = 10
+	tabs := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		m.settingsTab("Shortcuts", modalHelp),
+		m.settingsTab("Preferences", modalPreferences),
 	)
-	text := fmt.Sprintf(
-		" %-*s  %-*s  %-*s  %-*s  %-*s  %-*s",
-		keyWidth, values[0],
-		descriptionWidth, values[1],
-		keyWidth, values[2],
-		descriptionWidth, values[3],
-		keyWidth, values[4],
-		descriptionWidth, values[5],
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		tabs,
+		lipgloss.NewStyle().PaddingTop(1).MaxWidth(width).Render(body),
 	)
-	return text
 }
 
-func padModalLine(text string, width int) string {
-	content := max(width-2, 0)
-	textWidth := displayWidth([]byte(text))
-	if textWidth > content {
-		runes := []rune(text)
-		for len(runes) != 0 && displayWidth([]byte(string(runes))) > content {
-			runes = runes[:len(runes)-1]
-		}
-		text = string(runes)
-		textWidth = displayWidth([]byte(text))
+func (m *Model) settingsTab(label string, tab modal) string {
+	style := m.theme.Tab
+	if m.modal == tab {
+		style = m.theme.TabActive
 	}
-	return "│" + text + repeatRune(' ', content-textWidth) + "│"
+	return style.Render(label)
 }
 
-func padANSIModalLine(text string, width int) string {
-	content := max(width-2, 0)
-	text = ansi.Truncate(text, content, "")
-	return "│" + text + repeatRune(' ', content-ansi.StringWidth(text)) + "│"
-}
-
-func repeatRune(value rune, count int) string {
-	result := make([]rune, max(count, 0))
-	for i := range result {
-		result[i] = value
-	}
-	return string(result)
+func (m *Model) componentModalLines(content string, width int) []string {
+	rendered := m.theme.Modal.
+		Width(max(width-2, 0)).
+		MaxWidth(width).
+		Render(strings.TrimSuffix(content, "\n"))
+	return strings.Split(rendered, "\n")
 }

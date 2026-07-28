@@ -3,21 +3,15 @@ package tui
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/coxley/dg/layout"
-	bubbletab "github.com/mJehanno/bubble-tab"
-	tabmodel "github.com/mJehanno/bubble-tab/pkg/model"
-	tabtheme "github.com/mJehanno/bubble-tab/pkg/theme"
 )
 
 type preferencesFile struct {
@@ -49,12 +43,7 @@ type preferenceFormValues struct {
 	applyToFuture bool
 	saveDirectory string
 	commentPrefix string
-}
-
-type preferenceField struct {
-	title string
-	value *string
-	input *huh.Input
+	save          bool
 }
 
 type componentKind uint8
@@ -68,43 +57,6 @@ const (
 type componentMsg struct {
 	kind    componentKind
 	message tea.Msg
-}
-
-type settingsTabMouseMsg struct {
-	tab     modal
-	message tea.Msg
-}
-
-type staticTabBody string
-
-func (staticTabBody) Init() tea.Cmd {
-	return nil
-}
-
-func (body staticTabBody) Update(tea.Msg) (tea.Model, tea.Cmd) {
-	return body, nil
-}
-
-func (body staticTabBody) View() tea.View {
-	return tea.NewView(string(body))
-}
-
-type formTabBody struct {
-	form *huh.Form
-}
-
-func (body formTabBody) Init() tea.Cmd {
-	return body.form.Init()
-}
-
-func (body formTabBody) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	form, command := body.form.Update(message)
-	body.form = form.(*huh.Form)
-	return body, command
-}
-
-func (body formTabBody) View() tea.View {
-	return tea.NewView(body.form.View())
 }
 
 func preferencesPath() (string, error) {
@@ -162,19 +114,22 @@ func (m *Model) openHelp() {
 		return
 	}
 	m.resetSettingsTabs(modalHelp)
-	m.modal = modalHelp
+	m.openModal(modalHelp)
 	m.preferenceEdit = false
 	m.status = ""
 }
 
 func (m *Model) openPreferences() {
-	if m.preferenceForm == nil {
+	fromHelp := m.modal == modalHelp
+	if !m.preferenceEdit {
 		m.resetSettingsTabs(modalPreferences)
 	} else {
 		m.selectSettingsTab(modalPreferences)
 	}
 	m.beginPreferenceEdit()
-	m.modal = modalPreferences
+	if !fromHelp {
+		m.openModal(modalPreferences)
+	}
 }
 
 func (m *Model) beginPreferenceEdit() {
@@ -240,6 +195,7 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 		} else {
 			m.modal = modalHelp
 		}
+		return nil
 	} else if m.modal == modalHelp && key.Code == '1' && key.Mod == 0 {
 		m.modal = modalHelp
 	} else if m.modal == modalHelp && key.Code == '2' && key.Mod == 0 {
@@ -321,47 +277,27 @@ func (m *Model) resetSettingsTabs(active modal) {
 	m.preferenceForm, m.preferenceFields = newPreferenceForm(
 		&m.preferenceInput,
 		m.preferenceFormHeight(),
+		m.theme,
 	)
-	tabs := []tabmodel.Tab{
-		*tabmodel.NewTab(
-			tabmodel.WithName("Shortcuts"),
-			tabmodel.WithBody(staticTabBody(shortcutContent())),
-		),
-		*tabmodel.NewTab(
-			tabmodel.WithName("Preferences"),
-			tabmodel.WithBody(formTabBody{form: m.preferenceForm}),
-		),
-	}
-	m.settingsTabs = *bubbletab.New(
-		bubbletab.WithTabs(tabs),
-		bubbletab.WithCurrent(settingsTabIndex(active)),
-		bubbletab.WithStyles(settingsTabStyles()),
-		bubbletab.WithMouseMode(tea.MouseModeNone),
-	)
-	_ = m.settingsTabs.Init()
+	m.modal = active
 }
 
 func (m *Model) selectSettingsTab(tab modal) {
-	code := rune('1' + settingsTabIndex(tab))
-	updated, _ := m.settingsTabs.Update(
-		tea.KeyPressMsg(tea.Key{Code: code, Text: string(code)}),
-	)
-	m.settingsTabs = updated.(bubbletab.TabModel)
+	m.modal = tab
 }
 
 func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
-	var command tea.Cmd
-	if key, ok := message.(tea.KeyPressMsg); ok &&
-		m.modal == modalPreferences &&
-		key.Code >= '0' && key.Code <= '9' {
-		_, command = m.preferenceForm.Update(message)
-	} else {
-		updated, cmd := m.settingsTabs.Update(message)
-		m.settingsTabs = updated.(bubbletab.TabModel)
-		command = cmd
+	if m.modal != modalPreferences {
+		return nil
 	}
+	form, command := m.preferenceForm.Update(message)
+	m.preferenceForm = form.(*huh.Form)
 	m.syncPreferenceForm()
 	if m.preferenceForm != nil && m.preferenceForm.State == huh.StateCompleted {
+		if !m.preferenceInput.save {
+			m.closeSettingsModal()
+			return componentCommand(settingsComponent, command)
+		}
 		return tea.Batch(
 			componentCommand(settingsComponent, command),
 			m.applyPreferences(),
@@ -402,27 +338,6 @@ func componentCommand(kind componentKind, command tea.Cmd) tea.Cmd {
 	}
 }
 
-func settingsTabIndex(tab modal) int {
-	if tab == modalPreferences {
-		return 1
-	}
-	return 0
-}
-
-func settingsTabStyles() tabtheme.Styles {
-	active := lipgloss.NewStyle().Bold(true).Underline(true).Padding(0, 1)
-	inactive := lipgloss.NewStyle().Faint(true).Padding(0, 1)
-	body := lipgloss.NewStyle().PaddingTop(1)
-	return tabtheme.Styles{
-		ActiveHeader:   active,
-		InactiveHeader: inactive,
-		DisabledHeader: inactive,
-		ActiveBody:     body,
-		InactiveBody:   body,
-		DisabledBody:   body,
-	}
-}
-
 func preferenceFormValuesFrom(
 	router layout.Router,
 	applyToFuture bool,
@@ -439,30 +354,35 @@ func preferenceFormValuesFrom(
 		applyToFuture: applyToFuture,
 		saveDirectory: saveDirectory,
 		commentPrefix: normalizeCommentPrefix(commentPrefix),
+		save:          true,
 	}
 }
 
 func newPreferenceForm(
 	values *preferenceFormValues,
 	height int,
-) (*huh.Form, []preferenceField) {
+	theme Theme,
+) (*huh.Form, []*stepperField) {
 	keymap := preferenceKeyMap()
-	inputs := []preferenceField{
-		preferenceNumberField("Step cost", &values.step, 32),
-		preferenceNumberField("Shared-step cost", &values.sharedStep, 32),
-		preferenceNumberField("Bend cost", &values.bend, 32),
-		preferenceNumberField("Crossing cost", &values.crossing, 32),
-		preferenceNumberField("Endpoint cost", &values.endpoint, 32),
-		preferenceNumberField("Reroute passes", &values.reroutePasses, 8),
-		preferenceTextField("Default save directory", &values.saveDirectory),
+	steppers := []*stepperField{
+		newStepperField("Step cost", &values.step, 32, theme),
+		newStepperField("Shared-step cost", &values.sharedStep, 32, theme),
+		newStepperField("Bend cost", &values.bend, 32, theme),
+		newStepperField("Crossing cost", &values.crossing, 32, theme),
+		newStepperField("Endpoint cost", &values.endpoint, 32, theme),
+		newStepperField("Reroute passes", &values.reroutePasses, 8, theme),
+	}
+	directory := values.saveDirectory
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		directory, _ = os.UserHomeDir()
 	}
 	fields := []huh.Field{
-		inputs[0].input,
-		inputs[1].input,
-		inputs[2].input,
-		inputs[3].input,
-		inputs[4].input,
-		inputs[5].input,
+		steppers[0],
+		steppers[1],
+		steppers[2],
+		steppers[3],
+		steppers[4],
+		steppers[5],
 		huh.NewSelect[bool]().
 			Options(
 				huh.NewOption(
@@ -476,7 +396,14 @@ func newPreferenceForm(
 			).
 			Inline(true).
 			Value(&values.applyToFuture),
-		inputs[6].input,
+		huh.NewFilePicker().
+			Title("Default save directory").
+			DirAllowed(true).
+			FileAllowed(false).
+			ShowHidden(true).
+			CurrentDirectory(directory).
+			Picking(true).
+			Value(&values.saveDirectory),
 		huh.NewSelect[string]().
 			Options(
 				huh.NewOption(
@@ -494,20 +421,31 @@ func newPreferenceForm(
 			).
 			Inline(true).
 			Value(&values.commentPrefix),
+		huh.NewConfirm().
+			Affirmative("Save").
+			Negative("Cancel").
+			Value(&values.save),
 	}
 	form := huh.NewForm(huh.NewGroup(fields...)).
 		WithWidth(preferenceModalWidth - 4).
 		WithHeight(height).
 		WithShowHelp(false).
 		WithKeyMap(keymap).
-		WithTheme(preferenceFormTheme())
-	return form, inputs
+		WithTheme(theme.formTheme())
+	_ = form.Init()
+	return form, steppers
 }
 
 func preferenceKeyMap() *huh.KeyMap {
 	keymap := huh.NewDefaultKeyMap()
-	keymap.Input.Prev = key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "previous"))
-	keymap.Input.Next = key.NewBinding(key.WithKeys("down", "enter"), key.WithHelp("↓", "next"))
+	keymap.Input.Prev = key.NewBinding(
+		key.WithKeys("up", "shift+tab"),
+		key.WithHelp("↑", "previous"),
+	)
+	keymap.Input.Next = key.NewBinding(
+		key.WithKeys("down", "enter", "tab"),
+		key.WithHelp("↓", "next"),
+	)
 	keymap.Confirm.Prev = keymap.Input.Prev
 	keymap.Confirm.Next = keymap.Input.Next
 	keymap.Select.Prev = keymap.Input.Prev
@@ -517,52 +455,13 @@ func preferenceKeyMap() *huh.KeyMap {
 	return keymap
 }
 
-func preferenceNumberField(title string, value *string, bits int) preferenceField {
-	field := preferenceTextField(title, value)
-	field.input.Validate(func(text string) error {
-		if _, err := strconv.ParseUint(text, 10, bits); err != nil {
-			return fmt.Errorf("enter an unsigned %d-bit integer", bits)
-		}
-		return nil
-	})
-	return field
-}
-
-func preferenceTextField(title string, value *string) preferenceField {
-	input := huh.NewInput().
-		Title(title).
-		Prompt(preferencePrompt(title, *value)).
-		Inline(true).
-		Value(value)
-	return preferenceField{title: title, value: value, input: input}
-}
-
-func preferencePrompt(title, value string) string {
-	const valueColumnEnd = 58
-	return strings.Repeat(" ", max(valueColumnEnd-len(title)-len(value), 1))
-}
-
 func preferenceOption(title, value string) string {
-	return title + preferencePrompt(title, value) + value
-}
-
-func preferenceFormTheme() huh.Theme {
-	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
-		styles := huh.ThemeCharm(isDark)
-		styles.FieldSeparator = lipgloss.NewStyle().SetString("\n")
-		styles.Focused.Base = lipgloss.NewStyle()
-		styles.Blurred.Base = lipgloss.NewStyle()
-		styles.Focused.Title = styles.Focused.Title.Bold(true)
-		return styles
-	})
+	return title + "  " + value
 }
 
 func (m *Model) syncPreferenceForm() {
 	if m.preferenceForm == nil {
 		return
-	}
-	for _, field := range m.preferenceFields {
-		field.input.Prompt(preferencePrompt(field.title, *field.value))
 	}
 	router := m.preferences.router
 	parse32 := func(text string, destination *uint32) {
