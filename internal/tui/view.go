@@ -17,8 +17,11 @@ const (
 	selectionStart     = "\x1b[48;5;24;38;5;231m"
 	portHighlightStart = "\x1b[48;5;34;38;5;231m"
 	selectionEnd       = "\x1b[0m"
-	toolbarHeight      = 5
-	toolbarToolRow     = 2
+	toolbarTop         = 1
+	toolbarBoxHeight   = 5
+	toolbarToolRow     = toolbarTop + 2
+	toolbarToolsWidth  = len(" Cursor ") + len(" Rectangle ") + len(" Line ")
+	toolbarBoxWidth    = toolbarToolsWidth + 4
 )
 
 func (m *Model) View() tea.View {
@@ -31,9 +34,8 @@ func (m *Model) View() tea.View {
 	} else if m.duplicateDragging {
 		frame, rows = m.duplicateFrame, m.duplicateRows
 	}
-	m.viewBuffer = m.appendToolbar(m.viewBuffer[:0])
 	m.viewBuffer = m.appendViewport(
-		m.viewBuffer,
+		m.viewBuffer[:0],
 		frame,
 		rows,
 		m.viewport,
@@ -55,7 +57,7 @@ func (m *Model) View() tea.View {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
 			cursor.X = x
-			cursor.Y = y + toolbarHeight
+			cursor.Y = y
 			view.Cursor = cursor
 		}
 	default:
@@ -63,11 +65,15 @@ func (m *Model) View() tea.View {
 	return view
 }
 
-func (m *Model) appendToolbar(dst []byte) []byte {
+func (m *Model) appendToolbarOverlay(dst []byte, screenY int) []byte {
 	const (
 		active = "\x1b[48;5;24;38;5;231m"
 		reset  = "\x1b[0m"
 	)
+	row := screenY - toolbarTop
+	if row < 0 || row >= toolbarBoxHeight {
+		return dst
+	}
 	tools := [...]struct {
 		label string
 		mode  mode
@@ -80,32 +86,22 @@ func (m *Model) appendToolbar(dst []byte) []byte {
 	for _, tool := range tools {
 		toolbarWidth += len(tool.label)
 	}
-	boxWidth := toolbarWidth + 4
-	left := max((m.width-boxWidth)/2, 0)
-	if m.width < boxWidth {
-		for _, line := range []string{
-			"╭" + repeatRune('─', boxWidth-2) + "╮",
-			"│" + repeatRune(' ', boxWidth-2) + "│",
-			"│ Cursor  Rectangle  Line │",
-			"│" + repeatRune(' ', boxWidth-2) + "│",
-			"╰" + repeatRune('─', boxWidth-2) + "╯",
-		} {
-			dst = appendStatusLine(dst, []byte(line), m.width)
-		}
-		return dst
+	switch row {
+	case 0:
+		dst = utf8.AppendRune(dst, '╭')
+		dst = appendRunes(dst, '─', toolbarWidth+2)
+		return utf8.AppendRune(dst, '╮')
+	case 1, 3:
+		dst = utf8.AppendRune(dst, '│')
+		dst = appendSpaces(dst, toolbarWidth+2)
+		return utf8.AppendRune(dst, '│')
+	case 4:
+		dst = utf8.AppendRune(dst, '╰')
+		dst = appendRunes(dst, '─', toolbarWidth+2)
+		return utf8.AppendRune(dst, '╯')
 	}
-	appendPlainRow := func(text string) {
-		dst = appendSpaces(dst, left)
-		dst = append(dst, text...)
-		dst = appendSpaces(dst, m.width-left-boxWidth)
-		dst = append(dst, '\n')
-	}
-	appendPlainRow("╭" + repeatRune('─', boxWidth-2) + "╮")
-	appendPlainRow("│" + repeatRune(' ', boxWidth-2) + "│")
 
-	dst = appendSpaces(dst, left)
 	dst = append(dst, "│ "...)
-	used := left + 2
 	for _, tool := range tools {
 		text := tool.label
 		if m.mode == tool.mode {
@@ -115,14 +111,14 @@ func (m *Model) appendToolbar(dst []byte) []byte {
 		} else {
 			dst = append(dst, text...)
 		}
-		used += len(text)
 	}
-	dst = append(dst, " │"...)
-	used += 2
-	dst = appendSpaces(dst, m.width-used)
-	dst = append(dst, '\n')
-	appendPlainRow("│" + repeatRune(' ', boxWidth-2) + "│")
-	appendPlainRow("╰" + repeatRune('─', boxWidth-2) + "╯")
+	return append(dst, " │"...)
+}
+
+func appendRunes(dst []byte, value rune, count int) []byte {
+	for range max(count, 0) {
+		dst = utf8.AppendRune(dst, value)
+	}
 	return dst
 }
 
@@ -204,43 +200,108 @@ func (m *Model) appendViewport(
 ) []byte {
 	for screenY := range height {
 		documentY := uint64(origin.Y) + uint64(screenY)
+		var row []byte
 		if documentY < uint64(frame.Bounds.Min.Y) ||
 			documentY >= uint64(frame.Bounds.Max().Y) {
-			dst = appendViewportSpaces(
+			dst = m.appendViewportLine(
 				dst,
-				width,
-				uint64(origin.X),
+				nil,
+				frame.Bounds.Min.X,
+				origin.X,
 				documentY,
-				m,
+				width,
+				screenY,
 			)
-			dst = append(dst, '\n')
 			continue
 		}
-		row := int(documentY - uint64(frame.Bounds.Min.Y))
-		if row >= len(rows) {
-			dst = appendViewportSpaces(
-				dst,
-				width,
-				uint64(origin.X),
-				documentY,
-				m,
-			)
-			dst = append(dst, '\n')
-			continue
+		rowID := int(documentY - uint64(frame.Bounds.Min.Y))
+		if rowID < len(rows) {
+			span := rows[rowID]
+			row = frame.Text[span.start:span.end]
 		}
-		span := rows[row]
-		dst = appendViewportRow(
+		dst = m.appendViewportLine(
 			dst,
-			frame.Text[span.start:span.end],
+			row,
 			frame.Bounds.Min.X,
 			origin.X,
-			uint32(documentY),
+			documentY,
+			width,
+			screenY,
+		)
+	}
+	return dst
+}
+
+func (m *Model) appendViewportLine(
+	dst, row []byte,
+	rowOrigin, viewportOrigin uint32,
+	documentY uint64,
+	width, screenY int,
+) []byte {
+	if width < toolbarBoxWidth ||
+		screenY < toolbarTop ||
+		screenY >= toolbarTop+toolbarBoxHeight {
+		dst = appendViewportSegment(
+			dst,
+			row,
+			rowOrigin,
+			uint64(viewportOrigin),
+			documentY,
 			width,
 			m,
 		)
-		dst = append(dst, '\n')
+		return append(dst, '\n')
 	}
-	return dst
+	left := (width - toolbarBoxWidth) / 2
+	dst = appendViewportSegment(
+		dst,
+		row,
+		rowOrigin,
+		uint64(viewportOrigin),
+		documentY,
+		left,
+		m,
+	)
+	dst = m.appendToolbarOverlay(dst, screenY)
+	dst = appendViewportSegment(
+		dst,
+		row,
+		rowOrigin,
+		uint64(viewportOrigin)+uint64(left+toolbarBoxWidth),
+		documentY,
+		width-left-toolbarBoxWidth,
+		m,
+	)
+	return append(dst, '\n')
+}
+
+func appendViewportSegment(
+	dst, row []byte,
+	rowOrigin uint32,
+	viewportOrigin, documentY uint64,
+	width int,
+	model *Model,
+) []byte {
+	if len(row) == 0 ||
+		viewportOrigin > math.MaxUint32 ||
+		documentY > math.MaxUint32 {
+		return appendViewportSpaces(
+			dst,
+			width,
+			viewportOrigin,
+			documentY,
+			model,
+		)
+	}
+	return appendViewportRow(
+		dst,
+		row,
+		rowOrigin,
+		uint32(viewportOrigin),
+		uint32(documentY),
+		width,
+		model,
+	)
 }
 
 func appendViewportRow(

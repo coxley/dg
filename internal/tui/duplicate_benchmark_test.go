@@ -41,13 +41,13 @@ func BenchmarkModelAltDrag(b *testing.B) {
 	messages := [...]tea.MouseMotionMsg{
 		{
 			X:      int(start.X) + 31,
-			Y:      int(start.Y) + 11 + toolbarHeight,
+			Y:      int(start.Y) + 11,
 			Button: tea.MouseLeft,
 			Mod:    tea.ModAlt,
 		},
 		{
 			X:      int(start.X) + 30,
-			Y:      int(start.Y) + 10 + toolbarHeight,
+			Y:      int(start.Y) + 10,
 			Button: tea.MouseLeft,
 			Mod:    tea.ModAlt,
 		},

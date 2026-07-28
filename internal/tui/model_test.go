@@ -175,13 +175,13 @@ func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
 	updateModel(t, model, keyPress('r', "r"))
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      35,
-		Y:      2,
+		Y:      7,
 		Button: tea.MouseLeft,
 	})
 	created := model.target.ID
 	updateModel(t, model, tea.MouseReleaseMsg{
 		X:      42,
-		Y:      4,
+		Y:      9,
 		Button: tea.MouseLeft,
 	})
 	style, ok := model.geo.NodeStyle(created)
@@ -771,6 +771,9 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 
 	model, left, right := newTwoNodeModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 15})
+	require.NoError(t, model.geo.PlaceNode(left, model.geo.Nodes[left].Rect.Min.Add(0, 6)))
+	require.NoError(t, model.geo.PlaceNode(right, model.geo.Nodes[right].Rect.Min.Add(0, 6)))
+	require.NoError(t, model.rebuild())
 	sourceID := portExiting(t, model, left, 1)
 	destinationID := portExiting(t, model, right, -1)
 	source := model.geo.Ports[sourceID]
@@ -1090,30 +1093,27 @@ func TestModelViewTracksWindowWithoutCursor(t *testing.T) {
 	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].LabelPoint))
 }
 
-func TestToolbarOwnsScreenRowAndCentersTools(t *testing.T) {
+func TestToolbarFloatsOverCanvasAndCentersTools(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 60, Height: 10})
 	view := model.View()
 	lines := strings.Split(view.Content, "\n")
-	require.True(t, strings.HasPrefix(lines[0], strings.Repeat(" ", 15)+"╭"))
-	require.Contains(t, lines[0], "╭───────────────────────────╮")
-	require.Contains(t, lines[1], "│                           │")
-	tools := strings.ReplaceAll(lines[2], selectionStart, "")
+	require.NotContains(t, lines[0], "╭")
+	require.Contains(t, lines[1], "╭───────────────────────────╮")
+	require.Contains(t, lines[2], "│                           │")
+	tools := strings.ReplaceAll(lines[3], selectionStart, "")
 	tools = strings.ReplaceAll(tools, selectionEnd, "")
 	require.Contains(t, tools, "│  Cursor  Rectangle  Line  │")
-	require.Contains(t, lines[3], "│                           │")
-	require.Contains(t, lines[4], "╰───────────────────────────╯")
+	require.Contains(t, lines[4], "│                           │")
+	require.Contains(t, lines[5], "╰───────────────────────────╯")
 
-	_, ok := model.documentPoint(3, toolbarHeight-1)
-	require.False(t, ok)
-	point, ok := model.documentPoint(3, toolbarHeight)
+	point, ok := model.documentPoint(3, 0)
 	require.True(t, ok)
 	require.Equal(t, layout.NewPoint(3, 0), point)
 
-	toolbarWidth := len(" Cursor ") + len(" Rectangle ") + len(" Line ")
-	start := (model.width-(toolbarWidth+4))/2 + 2
+	start := (model.width-toolbarBoxWidth)/2 + 2
 	got, command := model.Update(tea.MouseClickMsg{
 		X:      start + len(" Cursor "),
 		Y:      toolbarToolRow,
@@ -1134,7 +1134,7 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 
 	require.NotNil(t, view.Cursor)
 	require.Equal(t, int(model.cursor.X-model.viewport.X), view.Cursor.X)
-	require.Equal(t, int(model.cursor.Y-model.viewport.Y)+toolbarHeight, view.Cursor.Y)
+	require.Equal(t, int(model.cursor.Y-model.viewport.Y), view.Cursor.Y)
 	require.NotSame(t, view.Cursor, model.View().Cursor)
 }
 
@@ -1317,6 +1317,9 @@ func TestModelControlClickTogglesObjects(t *testing.T) {
 
 	model, left, right := newTwoNodeModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 15})
+	require.NoError(t, model.geo.PlaceNode(left, model.geo.Nodes[left].Rect.Min.Add(0, 6)))
+	require.NoError(t, model.geo.PlaceNode(right, model.geo.Nodes[right].Rect.Min.Add(0, 6)))
+	require.NoError(t, model.rebuild())
 	for _, nodeID := range []uint32{left, right} {
 		point := model.geo.Nodes[nodeID].LabelPoint
 		updateModel(t, model, tea.MouseClickMsg{
@@ -1442,6 +1445,8 @@ func TestModelMouseCyclesHitsAndScrolls(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(2, 8)))
+	require.NoError(t, model.rebuild())
 	portID := portExiting(t, model, nodeID, 1)
 	point := model.geo.Ports[portID].Anchor
 	mouse := tea.Mouse{
@@ -1500,6 +1505,8 @@ func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(2, 8)))
+	require.NoError(t, model.rebuild())
 	before := model.geo.Nodes[nodeID].Rect.Size
 	handle := resizeCornerPoint(model.geo.Nodes[nodeID].Rect, resizeEast|resizeSouth)
 	mouse := tea.Mouse{
@@ -1709,19 +1716,16 @@ func updateModel(t testing.TB, model *Model, message tea.Msg) {
 
 	switch message := message.(type) {
 	case tea.MouseClickMsg:
-		message.Y += toolbarHeight
 		got, command := model.Update(message)
 		require.Same(t, model, got)
 		require.Nil(t, command)
 		return
 	case tea.MouseMotionMsg:
-		message.Y += toolbarHeight
 		got, command := model.Update(message)
 		require.Same(t, model, got)
 		require.Nil(t, command)
 		return
 	case tea.MouseReleaseMsg:
-		message.Y += toolbarHeight
 		got, command := model.Update(message)
 		require.Same(t, model, got)
 		require.Nil(t, command)
