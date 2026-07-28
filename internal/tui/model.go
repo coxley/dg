@@ -380,7 +380,7 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
-	copyKey := keybinding.Matches(message, m.keys.copy)
+	copyKey := isCopyKey(message)
 	helpKey := keybinding.Matches(message, m.keys.help)
 	if m.modal == modalNotice {
 		returnModal := m.noticeReturn

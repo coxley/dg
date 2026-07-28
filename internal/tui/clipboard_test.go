@@ -62,26 +62,47 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 	require.Equal(t, "Copied to clipboard", model.notice)
 }
 
-func TestSecondCopyOpensExportPrompt(t *testing.T) {
+func TestSecondCopyOpensExportPromptForControlAndSuper(t *testing.T) {
 	t.Parallel()
 
-	model, nodeID := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
-	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.clipboard.UseFallback(func(string) error {
-		require.Fail(t, "second copy must not write")
-		return nil
-	})
+	keys := map[string]tea.KeyPressMsg{
+		"control": {Code: 'c', Mod: tea.ModCtrl},
+		"super":   {Code: 'c', Text: "c", Mod: tea.ModSuper},
+	}
+	for firstName, first := range keys {
+		for secondName, second := range keys {
+			t.Run(firstName+" then "+secondName, func(t *testing.T) {
+				t.Parallel()
 
-	copyKey := tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModSuper})
-	require.NotNil(t, updateModelCommand(t, model, copyKey))
-	command := updateModelCommand(t, model, copyKey)
-	require.NotNil(t, command)
-	updateModel(t, model, command())
+				model, nodeID := newTestModel(t)
+				updateModel(t, model, tea.WindowSizeMsg{
+					Width:  80,
+					Height: 24,
+				})
+				model.geo.Selection().SelectOnly(layout.Hit{
+					ID:   nodeID,
+					Kind: layout.HitNode,
+				})
+				model.clipboard.UseFallback(func(string) error {
+					require.Fail(t, "second copy must not write")
+					return nil
+				})
 
-	require.Equal(t, modalExport, model.modal)
-	require.Equal(t, clipboardview.LineSlash, model.clipboard.Style())
-	require.Contains(t, model.View().Content, "Line comments")
+				require.NotNil(t, updateModelCommand(t, model, first))
+				command := updateModelCommand(t, model, second)
+				require.NotNil(t, command)
+				updateModel(t, model, command())
+
+				require.Equal(t, modalExport, model.modal)
+				require.Equal(
+					t,
+					clipboardview.LineSlash,
+					model.clipboard.Style(),
+				)
+				require.Contains(t, model.View().Content, "Line comments")
+			})
+		}
+	}
 }
 
 func TestCopySelectionReportsClipboardFailure(t *testing.T) {

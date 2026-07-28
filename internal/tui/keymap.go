@@ -2,6 +2,7 @@ package tui
 
 import (
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
 type keyMap struct {
@@ -108,4 +109,14 @@ func (k *keyMap) setKeyboardEnhancements(enabled bool) {
 		return
 	}
 	k.copy.SetHelp("ctrl+c", "copy")
+}
+
+// isCopyKey uses Keystroke because printable enhanced-key text hides modifiers in String.
+func isCopyKey(message tea.KeyPressMsg) bool {
+	switch message.Keystroke() {
+	case "ctrl+c", "super+c":
+		return true
+	default:
+		return false
+	}
 }
