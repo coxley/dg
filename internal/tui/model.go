@@ -114,16 +114,17 @@ type Model struct {
 	lastClick     layout.Point
 	hasLastClick  bool
 
-	frame            render.Frame
-	connectFrame     render.Frame
-	duplicateFrame   render.Frame
-	encoder          render.Encoder
-	duplicateEncoder render.Encoder
-	frameRows        []rowSpan
-	connectFrameRows []rowSpan
-	duplicateRows    []rowSpan
-	viewBuffer       []byte
-	statusText       []byte
+	frame              render.Frame
+	connectFrame       render.Frame
+	duplicateFrame     render.Frame
+	encoder            render.Encoder
+	duplicateEncoder   render.Encoder
+	duplicateHighlight []bool
+	frameRows          []rowSpan
+	connectFrameRows   []rowSpan
+	duplicateRows      []rowSpan
+	viewBuffer         []byte
+	statusText         []byte
 
 	// Bubble Tea compares consecutive cursor pointers, so each View writes the
 	// cursor value that the previous View does not reference.
@@ -488,15 +489,10 @@ func (m *Model) moveSelectedNodes(
 		}
 		m.moveOrigins[nodeID] = origin
 	}
-	for nodeID := range m.geo.Selection().Nodes() {
-		origin := m.moveOrigins[nodeID]
-		x, _ := moveCoordinate64(origin.X, dx)
-		y, _ := moveCoordinate64(origin.Y, dy)
-		if err := m.geo.PlaceNode(nodeID, layout.NewPoint(x, y)); err != nil {
-			return false, errors.Join(err, m.restoreMovedNodes())
-		}
+	if err := m.geo.MoveSelection(dx, dy); err != nil {
+		return false, errors.Join(err, m.restoreMovedNodes())
 	}
-	if err := m.rebuild(); err != nil {
+	if err := m.rebuildSelection(); err != nil {
 		return false, errors.Join(err, m.restoreMovedNodes())
 	}
 	m.cursor = cursor
@@ -899,6 +895,13 @@ func (m *Model) clearConnection() {
 func (m *Model) rebuild() error {
 	if err := m.geo.Build(); err != nil {
 		return fmt.Errorf("build layout: %w", err)
+	}
+	return m.render()
+}
+
+func (m *Model) rebuildSelection() error {
+	if err := m.geo.BuildSelection(); err != nil {
+		return fmt.Errorf("build selection: %w", err)
 	}
 	return m.render()
 }

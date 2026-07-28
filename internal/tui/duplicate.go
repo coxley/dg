@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
@@ -48,7 +49,6 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 		}
 	}
 	m.duplicatePoint = point
-	buildErr := m.duplicateGeo.Build()
 	frame, err := m.duplicateEncoder.EncodeFrame(
 		m.duplicateFrame.Text[:0],
 		m.duplicateGeo,
@@ -59,13 +59,10 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 	}
 	m.duplicateFrame = frame
 	m.duplicateRows = indexFrameRows(m.duplicateRows, frame.Text)
+	m.refreshDuplicateHighlight()
 	m.cursor = point
 	m.ensureCursorVisible()
-	if buildErr != nil {
-		m.status = buildErr.Error()
-	} else {
-		m.status = ""
-	}
+	m.status = ""
 }
 
 func (m *Model) startDuplicatePreview(point layout.Point) bool {
@@ -88,13 +85,33 @@ func (m *Model) moveDuplicatePreview(point layout.Point) bool {
 	dx, dy := pointDelta(m.duplicatePoint, point)
 	for nodeID := range m.duplicateGeo.Selection().Nodes() {
 		origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
-		next, ok := movePoint64(origin, dx, dy)
-		if !ok {
+		if _, ok := movePoint64(origin, dx, dy); !ok {
 			return false
 		}
+	}
+	for edgeID := range m.duplicateGeo.Selection().Edges() {
+		for _, point := range m.duplicateGeo.Edges[edgeID].Points {
+			if _, ok := movePoint64(point, dx, dy); !ok {
+				return false
+			}
+		}
+	}
+	for nodeID := range m.duplicateGeo.Selection().Nodes() {
+		origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
+		next, _ := movePoint64(origin, dx, dy)
 		if err := m.duplicateGeo.PlaceNode(nodeID, next); err != nil {
 			m.status = err.Error()
 			return false
+		}
+	}
+	for edgeID := range m.duplicateGeo.Selection().Edges() {
+		points := m.duplicateGeo.Edges[edgeID].Points
+		for i, point := range points {
+			next, ok := movePoint64(point, dx, dy)
+			if !ok {
+				return false
+			}
+			points[i] = next
 		}
 	}
 	return true
@@ -137,6 +154,76 @@ func (m *Model) cancelDuplicateDrag() {
 	m.duplicateFrame.Bounds = layout.Rect{}
 	m.duplicateFrame.Text = m.duplicateFrame.Text[:0]
 	m.duplicateRows = m.duplicateRows[:0]
+	m.duplicateHighlight = m.duplicateHighlight[:0]
+}
+
+func (m *Model) refreshDuplicateHighlight() {
+	bounds := m.duplicateFrame.Bounds
+	cellCount := int(bounds.Size.Width) * int(bounds.Size.Height)
+	m.duplicateHighlight = slices.Grow(
+		m.duplicateHighlight[:0],
+		cellCount,
+	)[:cellCount]
+	clear(m.duplicateHighlight)
+	for nodeID := range m.duplicateGeo.Selection().Nodes() {
+		rect := m.duplicateGeo.Nodes[nodeID].Rect
+		limit := rect.Max()
+		for x := rect.Min.X; x < limit.X; x++ {
+			m.markDuplicateHighlight(layout.NewPoint(x, rect.Min.Y))
+			m.markDuplicateHighlight(layout.NewPoint(x, limit.Y-1))
+		}
+		for y := rect.Min.Y; y < limit.Y; y++ {
+			m.markDuplicateHighlight(layout.NewPoint(rect.Min.X, y))
+			m.markDuplicateHighlight(layout.NewPoint(limit.X-1, y))
+		}
+	}
+	for edgeID := range m.duplicateGeo.Selection().Edges() {
+		points := m.duplicateGeo.Edges[edgeID].Points
+		for i := 1; i < len(points); i++ {
+			m.markDuplicateSegment(points[i-1], points[i])
+		}
+	}
+}
+
+func (m *Model) markDuplicateSegment(a, b layout.Point) {
+	switch {
+	case a.X == b.X:
+		end := max(a.Y, b.Y)
+		for y := min(a.Y, b.Y); ; y++ {
+			m.markDuplicateHighlight(layout.NewPoint(a.X, y))
+			if y == end {
+				break
+			}
+		}
+	case a.Y == b.Y:
+		end := max(a.X, b.X)
+		for x := min(a.X, b.X); ; x++ {
+			m.markDuplicateHighlight(layout.NewPoint(x, a.Y))
+			if x == end {
+				break
+			}
+		}
+	}
+}
+
+func (m *Model) markDuplicateHighlight(point layout.Point) {
+	bounds := m.duplicateFrame.Bounds
+	if !bounds.Contains(point) {
+		return
+	}
+	x := int(point.X - bounds.Min.X)
+	y := int(point.Y - bounds.Min.Y)
+	m.duplicateHighlight[y*int(bounds.Size.Width)+x] = true
+}
+
+func (m *Model) duplicateHighlighted(point layout.Point) bool {
+	bounds := m.duplicateFrame.Bounds
+	if !bounds.Contains(point) {
+		return false
+	}
+	x := int(point.X - bounds.Min.X)
+	y := int(point.Y - bounds.Min.Y)
+	return m.duplicateHighlight[y*int(bounds.Size.Width)+x]
 }
 
 func pointDelta(from, to layout.Point) (int64, int64) {

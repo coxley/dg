@@ -190,6 +190,7 @@ func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
 
 	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	edgeHit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
 	model.selectOnly(edgeHit)
 	model.target = edgeHit
@@ -410,6 +411,56 @@ func TestModelAltClickWithoutDragDoesNotDuplicate(t *testing.T) {
 
 	require.False(t, model.duplicatePending)
 	require.Len(t, model.geo.Graph().Nodes, 1)
+}
+
+func TestModelAltDragTranslatesPreviewRoutes(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, model.rebuild())
+	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{
+		ID:   right,
+		Kind: layout.HitNode,
+	}))
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{
+		ID:   edgeID,
+		Kind: layout.HitEdge,
+	}))
+	start := model.geo.Nodes[left].LabelPoint
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(start.X),
+		Y:      int(start.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(start.X) + 30,
+		Y:      int(start.Y) + 10,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	var previewEdge uint32
+	ok := false
+	for id := range model.duplicateGeo.Selection().Edges() {
+		previewEdge, ok = id, true
+		break
+	}
+	require.True(t, ok)
+	before := append([]layout.Point(nil), model.duplicateGeo.Edges[previewEdge].Points...)
+
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(start.X) + 31,
+		Y:      int(start.Y) + 12,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+
+	for i, point := range before {
+		require.Equal(t, point.Add(1, 2), model.duplicateGeo.Edges[previewEdge].Points[i])
+	}
 }
 
 func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {

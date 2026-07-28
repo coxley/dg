@@ -639,6 +639,87 @@ func (r Router) route(l *Layout) error {
 	return nil
 }
 
+func (r Router) routeSelection(l *Layout) error {
+	g := &l.graph
+	scratch := &l.scratch
+	scratch.reset(len(g.Edges), len(g.Ports))
+	for edgeID, edge := range g.Edges {
+		id := uint32(edgeID)
+		if !g.EdgeExists(id) {
+			continue
+		}
+		style := l.edgeStyles[edgeID]
+		if style.PortAArrow != ArrowNone {
+			scratch.arrowPort[edge.PortA] = true
+		}
+		if style.PortBArrow != ArrowNone {
+			scratch.arrowPort[edge.PortB] = true
+		}
+		scratch.paths[edgeID] = append(
+			scratch.paths[edgeID][:0],
+			l.Edges[edgeID].Points...,
+		)
+		if !l.edgeSelectedForRouting(id) {
+			scratch.occupancy.add(id, scratch.paths[edgeID])
+		}
+	}
+
+	for edgeID, edge := range g.Edges {
+		id := uint32(edgeID)
+		if !g.EdgeExists(id) || !l.edgeSelectedForRouting(id) {
+			continue
+		}
+		if l.edgeEndpointsSelected(edge) && len(scratch.paths[edgeID]) >= 2 {
+			_, _, valid := r.scorePath(
+				l,
+				id,
+				scratch.paths[edgeID],
+				&scratch.occupancy,
+			)
+			if valid {
+				scratch.occupancy.add(id, scratch.paths[edgeID])
+				continue
+			}
+		}
+		path, err := r.findRoute(
+			l,
+			id,
+			l.Ports[edge.PortA],
+			l.Ports[edge.PortB],
+			&scratch.occupancy,
+			&scratch.search,
+			scratch.paths[edgeID],
+		)
+		if err != nil {
+			return fmt.Errorf("edge %d: %w", edgeID, err)
+		}
+		scratch.paths[edgeID] = path
+		scratch.occupancy.add(id, path)
+	}
+	for edgeID := range g.Edges {
+		id := uint32(edgeID)
+		if !g.EdgeExists(id) || !l.edgeSelectedForRouting(id) {
+			continue
+		}
+		l.Edges[edgeID].Points = compact(
+			l.Edges[edgeID].Points[:0],
+			scratch.paths[edgeID],
+		)
+	}
+	return nil
+}
+
+func (l *Layout) edgeSelectedForRouting(edgeID uint32) bool {
+	if l.selection.Contains(Hit{ID: edgeID, Kind: HitEdge}) {
+		return true
+	}
+	edge := l.graph.Edges[edgeID]
+	nodeA := l.graph.Ports[edge.PortA].Node
+	nodeB := l.graph.Ports[edge.PortB].Node
+	return l.selection.Contains(Hit{ID: nodeA, Kind: HitNode}) ||
+		l.selection.Contains(Hit{ID: nodeB, Kind: HitNode})
+}
+
 func (r Router) rerouteCrossings(
 	l *Layout,
 ) (bool, error) {

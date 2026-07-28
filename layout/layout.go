@@ -342,6 +342,18 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		if err := l.SetEdgeStyle(duplicateID, l.edgeStyles[edgeID]); err != nil {
 			return err
 		}
+		points := slices.Grow(
+			l.Edges[duplicateID].Points[:0],
+			len(l.Edges[edgeID].Points),
+		)
+		for _, point := range l.Edges[edgeID].Points {
+			translated, ok := offsetPoint(point, dx, dy)
+			if !ok {
+				return errors.New("duplicate route outside coordinate space")
+			}
+			points = append(points, translated)
+		}
+		l.Edges[duplicateID].Points = points
 		l.selection.ensureCapacity()
 		l.selection.Toggle(Hit{ID: duplicateID, Kind: HitEdge})
 	}
@@ -465,6 +477,51 @@ func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 		})
 	}
 	return nil
+}
+
+// MoveSelection translates selected nodes and routes whose endpoints are both
+// selected. BuildSelection can then validate translated routes and reroute only
+// edges whose geometry no longer works.
+func (l *Layout) MoveSelection(dx, dy int64) error {
+	for nodeID := range l.selection.Nodes() {
+		if _, ok := offsetPoint(l.origins[nodeID], dx, dy); !ok {
+			return errors.New("selection placement outside coordinate space")
+		}
+	}
+	for edgeID, edge := range l.graph.Edges {
+		id := uint32(edgeID)
+		if !l.graph.EdgeExists(id) || !l.edgeEndpointsSelected(edge) {
+			continue
+		}
+		for _, point := range l.Edges[id].Points {
+			if _, ok := offsetPoint(point, dx, dy); !ok {
+				return errors.New("selection route outside coordinate space")
+			}
+		}
+	}
+	for nodeID := range l.selection.Nodes() {
+		point, _ := offsetPoint(l.origins[nodeID], dx, dy)
+		if err := l.PlaceNode(nodeID, point); err != nil {
+			return err
+		}
+	}
+	for edgeID, edge := range l.graph.Edges {
+		id := uint32(edgeID)
+		if !l.graph.EdgeExists(id) || !l.edgeEndpointsSelected(edge) {
+			continue
+		}
+		for i, point := range l.Edges[id].Points {
+			l.Edges[id].Points[i], _ = offsetPoint(point, dx, dy)
+		}
+	}
+	return nil
+}
+
+func (l *Layout) edgeEndpointsSelected(edge ir.Edge) bool {
+	nodeA := l.graph.Ports[edge.PortA].Node
+	nodeB := l.graph.Ports[edge.PortB].Node
+	return l.selection.Contains(Hit{ID: nodeA, Kind: HitNode}) &&
+		l.selection.Contains(Hit{ID: nodeB, Kind: HitNode})
 }
 
 // ConnectNodes connects side-constrained center ports and returns the edge index.
@@ -810,6 +867,15 @@ func (l *Layout) Clone() (*Layout, error) {
 func (l *Layout) Build() error {
 	if err := l.router.route(l); err != nil {
 		return fmt.Errorf("route edges: %w", err)
+	}
+	return nil
+}
+
+// BuildSelection reroutes selected edges and edges incident to selected nodes
+// against existing unrelated routes. It changes no route when routing fails.
+func (l *Layout) BuildSelection() error {
+	if err := l.router.routeSelection(l); err != nil {
+		return fmt.Errorf("route selected edges: %w", err)
 	}
 	return nil
 }

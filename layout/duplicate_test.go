@@ -32,12 +32,19 @@ func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
 		PortBArrow: ArrowFilled,
 	}))
 	require.NoError(t, geo.Build())
+	beforeRoute := append([]Point(nil), geo.Edges[internalEdge].Points...)
 	history.Clear()
 
 	geo.Selection().SelectOnly(Hit{ID: left, Kind: HitNode})
 	require.True(t, geo.Selection().Toggle(Hit{ID: right, Kind: HitNode}))
 	transaction := history.Begin()
 	require.NoError(t, geo.DuplicateSelection(4, 5))
+	for edgeID := range geo.Selection().Edges() {
+		require.Len(t, geo.Edges[edgeID].Points, len(beforeRoute))
+		for i, point := range beforeRoute {
+			require.Equal(t, point.Add(4, 5), geo.Edges[edgeID].Points[i])
+		}
+	}
 	require.NoError(t, geo.Build())
 	require.NoError(t, transaction.Commit())
 
@@ -105,4 +112,54 @@ func TestCloneIsIndependentAndPreservesSelection(t *testing.T) {
 
 	require.Equal(t, NewPoint(3, 4), geo.Nodes[nodeID].Rect.Min)
 	require.Equal(t, NewPoint(9, 10), cloned.Nodes[nodeID].Rect.Min)
+}
+
+func TestBuildSelectionPreservesUnrelatedRoutes(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	a, err := geo.NewNodeAt("a", NewPoint(2, 2))
+	require.NoError(t, err)
+	b, err := geo.NewNodeAt("b", NewPoint(14, 2))
+	require.NoError(t, err)
+	c, err := geo.NewNodeAt("c", NewPoint(2, 12))
+	require.NoError(t, err)
+	d, err := geo.NewNodeAt("d", NewPoint(14, 12))
+	require.NoError(t, err)
+	affected := geo.ConnectNodes(a, ir.RightSide, ir.LeftSide, b)
+	unrelated := geo.ConnectNodes(c, ir.RightSide, ir.LeftSide, d)
+	require.NoError(t, geo.Build())
+	beforeAffected := append([]Point(nil), geo.Edges[affected].Points...)
+	beforeUnrelated := append([]Point(nil), geo.Edges[unrelated].Points...)
+
+	geo.Selection().SelectOnly(Hit{ID: a, Kind: HitNode})
+	require.NoError(t, geo.PlaceNode(a, NewPoint(2, 6)))
+	require.NoError(t, geo.BuildSelection())
+
+	require.NotEqual(t, beforeAffected, geo.Edges[affected].Points)
+	require.Equal(t, beforeUnrelated, geo.Edges[unrelated].Points)
+}
+
+func TestMoveSelectionPreservesValidInternalRoutes(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	a, err := geo.NewNodeAt("a", NewPoint(2, 2))
+	require.NoError(t, err)
+	b, err := geo.NewNodeAt("b", NewPoint(14, 2))
+	require.NoError(t, err)
+	edgeID := geo.ConnectNodes(a, ir.RightSide, ir.LeftSide, b)
+	require.NoError(t, geo.Build())
+	before := append([]Point(nil), geo.Edges[edgeID].Points...)
+	geo.Selection().SelectOnly(Hit{ID: a, Kind: HitNode})
+	require.True(t, geo.Selection().Toggle(Hit{ID: b, Kind: HitNode}))
+
+	require.NoError(t, geo.MoveSelection(5, 6))
+	require.NoError(t, geo.BuildSelection())
+
+	for i, point := range before {
+		require.Equal(t, point.Add(5, 6), geo.Edges[edgeID].Points[i])
+	}
 }
