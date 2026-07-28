@@ -250,8 +250,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clipboard.SetTheme(m.theme.formTheme())
 	case tea.KeyboardEnhancementsMsg:
 		m.keys.setKeyboardEnhancements(true)
-		// TODO: for debugging
-		return m, modalview.SwitchTab(modalview.TabID(modalPreferences))
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:

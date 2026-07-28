@@ -95,8 +95,6 @@ func (m *Model[T]) Render() string {
 	value := strconv.FormatUint(uint64(*m.value), 10)
 	title := m.styles.Title.Render(m.title)
 	if !m.focused {
-		// Visually align the value of blurred and focused row values. Focusing will
-		// simply cause the arrows to "appear"
 		return renderRow(m.width, title, "  "+value+"  ")
 	}
 	title = m.styles.FocusedTitle.Render(m.title)

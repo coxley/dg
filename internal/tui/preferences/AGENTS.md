@@ -17,10 +17,11 @@ navigation, and the current form value. `Model` implements `tea.Model`.
   constrains only terminals or explicitly resized modal bodies.
 - Preference rows justify titles against the left edge and controls against
   the right edge of the current modal body width.
+- Action buttons align with the form's lower-left edge.
 - Wheel input moves form focus without activating fields. Arrow keys and
   `h`/`j`/`k`/`l` provide equivalent navigation.
 - The directory picker stays collapsed until Right, `l`, or Enter opens its
-  zoomed subview. Escape closes that subview before it closes the modal.
+  zoomed subview. Escape or `q` closes that subview before it closes the modal.
 
 ## Verification
 

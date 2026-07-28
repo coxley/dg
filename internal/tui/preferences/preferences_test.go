@@ -95,9 +95,9 @@ func TestFieldsJustifyTitlesAndValuesAcrossWidth(t *testing.T) {
 		require.Fail(t, "preference row not rendered", title)
 	}
 	requireRow("Step cost", "⇽ 10 ⇾")
-	requireRow("Shared-step cost", "2")
+	requireRow("Shared-step cost", "2  ")
 	requireRow("Default save directory", "[ browse ]")
-	requireRow("Preferred comments", "//")
+	requireRow("Preferred comments", "//  ")
 }
 
 func TestFieldsFollowFormWidthChanges(t *testing.T) {
@@ -150,21 +150,76 @@ func TestScrollMovesFocusWithoutActivatingFields(t *testing.T) {
 func TestDirectoryBrowserOpensOnlyOnExplicitActivation(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	require.False(t, model.DirectoryOpen())
-	require.Contains(t, model.View().Content, "Preferred comments")
+	for _, key := range []tea.Key{
+		{Code: tea.KeyRight},
+		{Code: 'l', Text: "l"},
+		{Code: tea.KeyEnter},
+	} {
+		model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+		focusField(t, model, model.directory)
 
-	for range 6 {
-		_, _ = model.Update(huh.NextField())
+		update(t, model, tea.KeyPressMsg(key))
+
+		require.True(t, model.DirectoryOpen())
+		require.NotContains(t, model.View().Content, "Preferred comments")
 	}
-	require.False(t, model.DirectoryOpen())
+}
 
-	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: 'l', Text: "l"}))
+func TestCollapsedDirectoryUsesFormNavigation(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		key  tea.Key
+		want func(*Model) huh.Field
+	}{
+		{
+			name: "up",
+			key:  tea.Key{Code: tea.KeyUp},
+			want: func(model *Model) huh.Field { return model.rows[0] },
+		},
+		{
+			name: "k",
+			key:  tea.Key{Code: 'k', Text: "k"},
+			want: func(model *Model) huh.Field { return model.rows[0] },
+		},
+		{
+			name: "down",
+			key:  tea.Key{Code: tea.KeyDown},
+			want: func(model *Model) huh.Field { return model.actions },
+		},
+		{
+			name: "j",
+			key:  tea.Key{Code: 'j', Text: "j"},
+			want: func(model *Model) huh.Field { return model.actions },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+			focusField(t, model, model.directory)
+
+			update(t, model, tea.KeyPressMsg(test.key))
+
+			require.False(t, model.DirectoryOpen())
+			require.Same(t, test.want(model), model.form.GetFocusedField())
+		})
+	}
+}
+
+func TestQClosesOpenDirectoryAndKeepsFormOpen(t *testing.T) {
+	t.Parallel()
+
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+	focusField(t, model, model.directory)
+	update(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	require.True(t, model.DirectoryOpen())
-	require.NotContains(t, model.View().Content, "Preferred comments")
 
-	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	update(t, model, tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+
 	require.False(t, model.DirectoryOpen())
+	require.Same(t, model.directory, model.form.GetFocusedField())
 	require.Contains(t, model.View().Content, "Preferred comments")
 }
 
@@ -192,7 +247,10 @@ func TestVimKeysNavigateAndEditForm(t *testing.T) {
 func TestActionClickSubmitsSelectedAction(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+	styles := testStyles()
+	styles.Action = styles.Action.Border(lipgloss.NormalBorder())
+	styles.SelectedAction = styles.SelectedAction.Border(lipgloss.DoubleBorder())
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, styles)
 	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
 	for y, line := range lines {
 		x := strings.Index(line, "Save as Defaults")
@@ -206,6 +264,45 @@ func TestActionClickSubmitsSelectedAction(t *testing.T) {
 		return
 	}
 	require.Fail(t, "action row not rendered")
+}
+
+func TestActionsAlignWithFormLeftEdge(t *testing.T) {
+	t.Parallel()
+
+	styles := testStyles()
+	styles.Action = styles.Action.Border(lipgloss.NormalBorder())
+	styles.SelectedAction = styles.SelectedAction.Border(lipgloss.DoubleBorder())
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, styles)
+	view := ansi.Strip(model.View().Content)
+	left, _, ok := blockOrigin(view, model.actions.View())
+	require.True(t, ok)
+
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Step cost") {
+			require.Equal(t, strings.Index(line, "Step cost"), left)
+			return
+		}
+	}
+	require.Fail(t, "step cost row not rendered")
+}
+
+func focusField(t *testing.T, model *Model, target huh.Field) {
+	t.Helper()
+	for range 16 {
+		if model.form.GetFocusedField() == target {
+			return
+		}
+		_, _ = model.Update(huh.NextField())
+	}
+	require.Fail(t, "field did not receive focus", target.GetKey())
+}
+
+func update(t *testing.T, model *Model, message tea.Msg) {
+	t.Helper()
+	_, command := model.Update(message)
+	if command != nil {
+		_, _ = model.Update(command())
+	}
 }
 
 func testStyles() Styles {

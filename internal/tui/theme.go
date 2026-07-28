@@ -124,7 +124,7 @@ func (t Theme) preferenceStyles() preferencesview.Styles {
 		NumInput:       t.NumInput,
 		Title:          t.NumInput.Title,
 		FocusedTitle:   t.NumInput.FocusedTitle,
-		Value:          t.HelpDescription,
+		Value:          t.NumInput.Button,
 		FocusedValue:   t.HelpKey,
 		Action:         t.Button,
 		SelectedAction: t.FocusedButton,

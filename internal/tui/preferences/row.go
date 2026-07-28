@@ -161,6 +161,36 @@ func newDirectoryField(
 	}
 }
 
+func (f *directoryField) Update(message tea.Msg) (huh.Model, tea.Cmd) {
+	_, command := f.rowField.Update(message)
+	return f, command
+}
+
+func (f *directoryField) WithTheme(theme huh.Theme) huh.Field {
+	f.rowField.WithTheme(theme)
+	return f
+}
+
+func (f *directoryField) WithKeyMap(keymap *huh.KeyMap) huh.Field {
+	f.rowField.WithKeyMap(keymap)
+	return f
+}
+
+func (f *directoryField) WithWidth(width int) huh.Field {
+	f.rowField.WithWidth(width)
+	return f
+}
+
+func (f *directoryField) WithHeight(height int) huh.Field {
+	f.rowField.WithHeight(height)
+	return f
+}
+
+func (f *directoryField) WithPosition(position huh.FieldPosition) huh.Field {
+	f.rowField.WithPosition(position)
+	return f
+}
+
 func (f *directoryField) close() {
 	f.picker.Picking(false)
 }
@@ -174,5 +204,5 @@ func choiceControl(value any, focused bool) string {
 	if focused {
 		return "⇽ " + choice + " ⇾"
 	}
-	return choice
+	return "  " + choice + "  "
 }

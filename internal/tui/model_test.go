@@ -690,7 +690,7 @@ func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
-	for range 6 {
+	for range 7 {
 		model.updateSettingsTabs(huh.NextField())
 	}
 	updateModelCommand(t, model, keyPress('l', "l"))
@@ -701,6 +701,26 @@ func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
 	require.Equal(t, modalPreferences, model.modal)
 
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
+	require.Equal(t, modalNone, model.modal)
+}
+
+func TestPreferenceQClosesDirectoryBeforeModal(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+	model.openPreferences()
+	for range 7 {
+		model.updateSettingsTabs(huh.NextField())
+	}
+	updateModelCommand(t, model, keyPress('l', "l"))
+	require.True(t, model.preferenceForm.DirectoryOpen())
+
+	updateModelCommand(t, model, keyPress('q', "q"))
+	require.False(t, model.preferenceForm.DirectoryOpen())
+	require.Equal(t, modalPreferences, model.modal)
+
+	updateModel(t, model, keyPress('q', "q"))
 	require.Equal(t, modalNone, model.modal)
 }
 
@@ -2244,7 +2264,8 @@ func modalTextPoint(
 	for row, line := range strings.Split(ansi.Strip(overlay.Content), "\n") {
 		column := strings.Index(line, text)
 		if column >= 0 {
-			return overlay.Left + column + 1, overlay.Top + row
+			return overlay.Left + ansi.StringWidth(line[:column]) + 1,
+				overlay.Top + row
 		}
 	}
 	require.Fail(t, "modal text not rendered", text)

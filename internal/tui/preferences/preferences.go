@@ -128,7 +128,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if handled, command := m.updateCollapsedDirectory(message); handled {
 			return m, command
 		}
-		if message.Code == tea.KeyEscape && m.directory.Zoom() {
+		if m.directory.Zoom() &&
+			(message.Code == tea.KeyEscape ||
+				message.Code == 'q' && message.Mod == 0) {
 			m.directory.close()
 			form, command := m.form.Update(refreshMsg{})
 			m.form = form.(*huh.Form)
@@ -365,15 +367,11 @@ type ScrollMsg struct {
 type refreshMsg struct{}
 
 func (m *Model) click(x, y int) {
-	lines := strings.Split(ansi.Strip(m.form.View()), "\n")
-	actionView := ansi.Strip(m.actions.View())
-	for row, line := range lines {
-		start := strings.Index(line, actionView)
-		if row == y && start >= 0 {
-			m.actions.hit(x - start)
-			return
-		}
+	left, top, ok := blockOrigin(m.form.View(), m.actions.View())
+	if !ok {
+		return
 	}
+	m.actions.hit(x-left, y-top)
 }
 
 func (m *Model) scroll(delta int) tea.Cmd {
@@ -396,15 +394,42 @@ func (m *Model) updateCollapsedDirectory(message tea.KeyPressMsg) (bool, tea.Cmd
 	if m.directory.Zoom() || m.form.GetFocusedField() != m.directory {
 		return false, nil
 	}
-	switch message.Text {
-	case "j":
+	switch {
+	case message.Code == tea.KeyDown || message.Text == "j":
 		return true, m.scroll(1)
-	case "k":
-		return true, m.scroll(-1)
-	case "h":
+	case message.Code == tea.KeyUp || message.Text == "k":
 		return true, m.scroll(-1)
 	}
 	return false, nil
+}
+
+func blockOrigin(view, block string) (left, top int, ok bool) {
+	lines := strings.Split(ansi.Strip(view), "\n")
+	blockLines := strings.Split(ansi.Strip(block), "\n")
+	for top := 0; top+len(blockLines) <= len(lines); top++ {
+		start := strings.Index(lines[top], blockLines[0])
+		for start >= 0 {
+			if blockAt(lines[top:], blockLines, start) {
+				return ansi.StringWidth(lines[top][:start]), top, true
+			}
+			next := strings.Index(lines[top][start+1:], blockLines[0])
+			if next < 0 {
+				break
+			}
+			start += next + 1
+		}
+	}
+	return 0, 0, false
+}
+
+func blockAt(lines, block []string, start int) bool {
+	for i := range block {
+		if start+len(block[i]) > len(lines[i]) ||
+			lines[i][start:start+len(block[i])] != block[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NormalizeCommentPrefix returns a supported comment preference.

@@ -194,8 +194,10 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *Model) settingsModalCloses(key tea.Key) bool {
-	return (m.modal == modalHelp || m.modal == modalPreferences) &&
-		key.Code == 'q' && key.Mod == 0
+	return key.Code == 'q' && key.Mod == 0 &&
+		(m.modal == modalHelp ||
+			m.modal == modalPreferences &&
+				!m.preferenceForm.DirectoryOpen())
 }
 
 func (m *Model) closeSettingsModal() {

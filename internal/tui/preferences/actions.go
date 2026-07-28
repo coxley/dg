@@ -17,7 +17,6 @@ type actionField struct {
 	styles    Styles
 	focused   bool
 	selected  Action
-	width     int
 }
 
 func newActionField(
@@ -97,22 +96,23 @@ func (*actionField) Zoom() bool                         { return false }
 func (*actionField) KeyBinds() []keybinding.Binding     { return nil }
 func (f *actionField) WithTheme(huh.Theme) huh.Field    { return f }
 func (f *actionField) WithKeyMap(*huh.KeyMap) huh.Field { return f }
-func (f *actionField) WithWidth(width int) huh.Field {
-	f.width = max(width, 0)
-	return f
-}
-func (f *actionField) WithHeight(int) huh.Field { return f }
+func (f *actionField) WithWidth(int) huh.Field          { return f }
+func (f *actionField) WithHeight(int) huh.Field         { return f }
 func (f *actionField) WithPosition(huh.FieldPosition) huh.Field {
 	return f
 }
 func (*actionField) GetKey() string  { return "action" }
 func (f *actionField) GetValue() any { return *f.action }
 
-func (f *actionField) hit(x int) {
-	x -= max(lipgloss.Width(f.content()), 0)
+func (f *actionField) hit(x, y int) {
 	for action := ActionSave; action <= ActionCancel; action++ {
-		width := lipgloss.Width(f.button(action))
-		if x >= 0 && x < width {
+		style := f.buttonStyle(action)
+		button := style.Render(actionLabels[action])
+		width, height := lipgloss.Width(button), lipgloss.Height(button)
+		if x >= style.GetMarginLeft() &&
+			x < width-style.GetMarginRight() &&
+			y >= style.GetMarginTop() &&
+			y < height-style.GetMarginBottom() {
 			f.submit(action)
 			return
 		}
@@ -121,11 +121,15 @@ func (f *actionField) hit(x int) {
 }
 
 func (f *actionField) button(action Action) string {
+	return f.buttonStyle(action).Render(actionLabels[action])
+}
+
+func (f *actionField) buttonStyle(action Action) lipgloss.Style {
 	style := f.styles.Action
 	if f.focused && action == f.selected {
 		style = f.styles.SelectedAction
 	}
-	return style.Render(actionLabels[action])
+	return style
 }
 
 func (f *actionField) selectBy(delta int) {

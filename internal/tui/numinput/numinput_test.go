@@ -89,7 +89,7 @@ func TestModelJustifiesTitleAndValueAcrossWidth(t *testing.T) {
 
 	blurred := ansi.Strip(model.View().Content)
 	require.True(t, strings.HasPrefix(blurred, "Cost"))
-	require.True(t, strings.HasSuffix(blurred, "5"))
+	require.True(t, strings.HasSuffix(blurred, "  5  "))
 	require.Equal(t, 20, ansi.StringWidth(blurred))
 
 	model.SetFocused(true)
