@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 2 complete; Phase 3 not started
+- Current phase: Phase 3 complete; Phase 4 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -518,7 +518,7 @@ review, and integration gate before beginning the next phase.
 | 0. Architecture record | Complete | Decisions and boundaries recorded |
 | 1. Baseline characterization | Complete | Baseline tests are green |
 | 2. Geometry and menu | Complete | Existing nav uses chrome geometry |
-| 3. Pane and viewport | Not started | Overflow matrix and resize invariants pass |
+| 3. Pane and viewport | Complete | Overflow matrix and resize invariants pass |
 | 4. Chrome lab | Not started | Interactive and initial `ht` scenarios pass |
 | 5. Commands and focus | Not started | Effective binding matrix matches dispatch |
 | 6. Surfaces and contextual Help | Not started | One z-order/input router owns active surfaces |
@@ -571,14 +571,14 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 3: pane, viewport, and scrolling
 
-- [ ] Implement Pane with optional sticky header and footer.
-- [ ] Implement one body Viewport with clipping and scroll offsets.
-- [ ] Add horizontal and vertical never, automatic, and always scrollbar
+- [x] Implement Pane with optional sticky header and footer.
+- [x] Implement one body Viewport with clipping and scroll offsets.
+- [x] Add horizontal and vertical never, automatic, and always scrollbar
   policies with two-axis convergence.
-- [ ] Define `Reveal(Rect)` mechanics and pointer-coordinate translation through
+- [x] Define `Reveal(Rect)` mechanics and pointer-coordinate translation through
   a viewport; connect Reveal to focus only after focus scopes exist.
-- [ ] Cover wrapping/scrollbar remeasurement and constrained terminal cases.
-- [ ] Verify nested panes can express two independent scroll regions without a
+- [x] Cover wrapping/scrollbar remeasurement and constrained terminal cases.
+- [x] Verify nested panes can express two independent scroll regions without a
   special multi-body API.
 
 ### Phase 4: chrome lab
@@ -801,6 +801,8 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Represent Phase 2 layout as a concrete `Node` tree with retained immutable `Plan` results. | The initial consumers need a small fixed set of mechanics; concrete nodes avoid interface dispatch and keep duplicate-ID validation and stable traversal explicit. |
 | 2026-07-28 | Use `charmbracelet/x/ansi` for display width, wrapping, and truncation at text leaves. | It is already a direct dependency and preserves ANSI sequences, grapheme boundaries, combining marks, and wide cells consistently with existing TUI code. |
 | 2026-07-28 | Clip below intrinsic minimum only as an emergency when the physical parent cannot contain minimums. | This keeps every arranged rectangle inside its parent while preserving minimum sizes whenever the terminal can satisfy them. |
+| 2026-07-28 | Reserve scrollbar cells and converge monotonically from required bars to automatic bars. | Reserving one bar can induce overflow on the other axis; monotonic addition reaches the least stable arrangement without oscillation. |
+| 2026-07-28 | Use `█` thumbs with `│` and `─` tracks for the initial viewport. | These single-cell glyphs remain legible at constrained sizes and make thumb bounds deterministic; the chrome lab can provide evidence for later theme tokens. |
 
 ## Changed-File Ledger
 
@@ -811,6 +813,7 @@ Update this table after each completed phase or reviewable slice.
 | 0 | `internal/tui/CHROME_PLAN.md` | Record architecture, migration gates, deferred sweeps, and verification strategy. |
 | 1 | `internal/tui/keymap.go`, `internal/tui/CHROME_PLAN.md` | Align enhanced copy help with the registered Super chord and record the baseline. |
 | 2 | `internal/tui/chrome/AGENTS.md`, `internal/tui/chrome/{geometry,layout,menu,text}.go`, `internal/tui/chrome/{layout,menu}_test.go`, `internal/tui/nav/{nav.go,nav_test.go}`, `internal/tui/{model,view,modal}.go`, `internal/tui/CHROME_PLAN.md` | Add retained chrome geometry and menu mechanics, migrate navigation and root placement, and remove duplicated toolbar geometry. |
+| 3 | `internal/tui/chrome/{pane,viewport}.go`, `internal/tui/chrome/{pane,viewport}_test.go`, `internal/tui/CHROME_PLAN.md` | Add sticky panes, finite scrolling viewports, convergent reserved scrollbars, reveal, pointer translation, and nested independent scroll regions. |
 
 ## Verification Ledger
 
@@ -843,3 +846,12 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 2 | `ht run` and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed: diagram, centered toolbar, status row, and hidden cursor matched Phase 1 at every size. All sessions stopped and removed. |
 | 2026-07-28 | 2 | `dd-gopls check ./internal/tui/chrome/... ./internal/tui/nav/... ./internal/tui/...` | Did not run diagnostics: `check` accepts file paths, not package patterns. Re-ran against each changed Go file. |
 | 2026-07-28 | 2 | `dd-gopls check <changed-go-file>` for all nine changed Go files | Passed with no diagnostics. |
+| 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome -count=1` | Passed pane, viewport, overflow matrix, convergence, reveal, pointer, constrained-size, and nesting tests. |
+| 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome -run '^$' -bench 'BenchmarkViewportArrange' -benchmem -count=1` | Apple M4 Max: 2,469 ns/op, 1,068 B/op, 31 allocs/op. |
+| 2026-07-28 | 3 | Full test, race, vet, and lint gate | Tests, race, and vet passed; lint failed with four `goconst` findings in tests and one `ineffassign` in viewport convergence. Fixed all five findings and re-ran the complete gate. |
+| 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...` | Passed all packages after lint fixes. |
+| 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...` | Passed all packages after lint fixes. |
+| 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...` | Passed after lint fixes. |
+| 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed with 0 issues after fixes. |
+| 2026-07-28 | 3 | `ht run` and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed: exact dimensions, toolbar, status, and hidden cursor confirmed. All sessions stopped and removed. |
+| 2026-07-28 | 3 | `dd-gopls check <phase-3-go-file>` for all four Phase 3 Go files | Passed with no diagnostics. |
