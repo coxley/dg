@@ -97,7 +97,10 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 						messages <- firstCommand()
 					}()
 
-					time.Sleep(99 * time.Millisecond)
+					time.Sleep(
+						clipboardview.DebounceDuration -
+							time.Millisecond,
+					)
 					require.Empty(t, messages)
 					updateModel(t, model, tea.MouseMotionMsg{
 						X: 10,

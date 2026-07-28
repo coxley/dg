@@ -73,7 +73,7 @@ func TestCopyDebounceWaitsForInactivity(t *testing.T) {
 			messages <- command()
 		}()
 
-		time.Sleep(debounceDuration - time.Millisecond)
+		time.Sleep(DebounceDuration - time.Millisecond)
 		require.Empty(t, messages)
 		time.Sleep(time.Millisecond)
 		message := <-messages

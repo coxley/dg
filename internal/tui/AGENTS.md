@@ -86,7 +86,7 @@ and follows explicit modal resizing. Settings tabs share the larger tab's
 default size when both fit.
 
 Root renders the selected cells, then sends that text to the clipboard model.
-Copy uses Super-C or Ctrl-C. The first copy waits 100 ms. A second copy in that
+Copy uses Super-C or Ctrl-C. The first copy waits 300 ms. A second copy in that
 window cancels the provisional write and opens Export. Passive all-motion
 mouse events and standalone modifier-key events do not cancel this window.
 Stale timers must never write after another interaction.

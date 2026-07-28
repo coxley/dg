@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	probeTimeout     = 100 * time.Millisecond
-	debounceDuration = 100 * time.Millisecond
+	probeTimeout = 100 * time.Millisecond
+	// DebounceDuration is the interval for distinguishing copy from export.
+	DebounceDuration = 300 * time.Millisecond
 )
 
 type mode uint8
@@ -217,7 +218,7 @@ func (m *Model) request(message requestCopyMsg) tea.Cmd {
 	m.copy = message.text
 	m.generation++
 	generation := m.generation
-	return tea.Tick(debounceDuration, func(time.Time) tea.Msg {
+	return tea.Tick(DebounceDuration, func(time.Time) tea.Msg {
 		return UpdateMsg{
 			message: debounceExpiredMsg{generation: generation},
 		}
