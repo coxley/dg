@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 0 complete; Phase 1 not started
+- Current phase: Phase 1 complete; Phase 2 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -516,7 +516,7 @@ review, and integration gate before beginning the next phase.
 | Phase | Status | Review gate |
 | --- | --- | --- |
 | 0. Architecture record | Complete | Decisions and boundaries recorded |
-| 1. Baseline characterization | Not started | Baseline tests are green |
+| 1. Baseline characterization | Complete | Baseline tests are green |
 | 2. Geometry and menu | Not started | Existing nav uses chrome geometry |
 | 3. Pane and viewport | Not started | Overflow matrix and resize invariants pass |
 | 4. Chrome lab | Not started | Interactive and initial `ht` scenarios pass |
@@ -529,13 +529,13 @@ review, and integration gate before beginning the next phase.
 
 ### Phase 1: baseline characterization
 
-- [ ] Resolve the existing copy-help naming mismatch: the test expects
+- [x] Resolve the existing copy-help naming mismatch: the test expects
   `super+c / ctrl+c`, while the model renders `cmd+c / ctrl+c`.
-- [ ] Run all current TUI and command tests before production changes.
-- [ ] Add characterization only where an upcoming migration lacks coverage;
+- [x] Run all current TUI and command tests before production changes.
+- [x] Add characterization only where an upcoming migration lacks coverage;
   avoid duplicating existing model tests.
-- [ ] Record current root view/drag benchmark results.
-- [ ] Confirm current headless output at `100x30`, `80x16`, and `80x12`.
+- [x] Record current root view/drag benchmark results.
+- [x] Confirm current headless output at `100x30`, `80x16`, and `80x12`.
 
 Do not mix baseline repairs with chrome package introduction.
 
@@ -796,6 +796,8 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Keep the canvas host visually transparent. | A rendered border or frame would undermine the canvas's intentionally unbounded feel. |
 | 2026-07-28 | Animate a workspace-owned boundary in docked mode and only the drawer in compact mode. | One transition keeps canvas/sidebar geometry coordinated and avoids unnecessary graph work. |
 | 2026-07-28 | Use deterministic in-process tests plus focused headless-terminal scenarios. | Structural assertions provide broad coverage; a real PTY catches input-decoding and terminal-composition defects. |
+| 2026-07-28 | Advertise the enhanced copy chord as `super+c`, matching Bubble Tea's chord name. | The binding, `Keystroke`, TUI guide, and existing characterization test all use Super; only the help label used `cmd`. |
+| 2026-07-28 | Add no further Phase 1 characterization tests. | Existing tests cover nav geometry and activation, root toolbar placement and hover, resize-before-view behavior, constrained terminals, canvas composition, and cursor placement. |
 
 ## Changed-File Ledger
 
@@ -804,6 +806,7 @@ Update this table after each completed phase or reviewable slice.
 | Phase | Files | Purpose |
 | --- | --- | --- |
 | 0 | `internal/tui/CHROME_PLAN.md` | Record architecture, migration gates, deferred sweeps, and verification strategy. |
+| 1 | `internal/tui/keymap.go`, `internal/tui/CHROME_PLAN.md` | Align enhanced copy help with the registered Super chord and record the baseline. |
 
 ## Verification Ledger
 
@@ -814,3 +817,15 @@ passing command without preserving the investigated failure.
 | --- | --- | --- | --- |
 | 2026-07-28 | 0 | Documentation inspection only | Plan creation; no production code changed. |
 | 2026-07-28 | 0 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` | Failed: `TestKeyboardEnhancementsAdvertiseSuperCopy` expects `super+c / ctrl+c`; model renders `cmd+c / ctrl+c`. Subpackages and `cmd/dg` passed. Resolve in Phase 1. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` (sandboxed) | Blocked before compilation: Go could not create the module cache under `/Users/codey.oxley/go`. Re-ran with module-cache access. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` (pre-change) | Failed only `TestKeyboardEnhancementsAdvertiseSuperCopy`: expected `super+c / ctrl+c`, got `cmd+c / ctrl+c`; all TUI subpackages and `cmd/dg` passed. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^TestKeyboardEnhancementsAdvertiseSuperCopy$' -count=1` | Passed. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` | Passed all TUI and command packages. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: AltDrag 46,249 ns/op, 10,920 B/op, 9 allocs/op; MoveCommittedDuplicate 47,742 ns/op, 10,937 B/op, 11 allocs/op; MoveAndView 5,049 ns/op, 4,680 B/op, 8 allocs/op. |
+| 2026-07-28 | 1 | `ht run --size 100x30 --name dg-phase1-100x30 env GOCACHE=/private/tmp/dg-codex-go-build go run ./cmd/dg`; `ht view --json dg-phase1-100x30` | Passed: 100 columns by 30 rows; diagram, centered toolbar, and status row visible; cursor hidden at row 30, column 33. Session stopped and removed. |
+| 2026-07-28 | 1 | `ht run --size 80x16 --name dg-phase1-80x16 env GOCACHE=/private/tmp/dg-codex-go-build go run ./cmd/dg`; `ht view --json dg-phase1-80x16` | Passed: 80 columns by 16 rows; diagram, centered toolbar, and status row visible; cursor hidden at row 16, column 33. Session stopped and removed. |
+| 2026-07-28 | 1 | `ht run --size 80x12 --name dg-phase1-80x12 env GOCACHE=/private/tmp/dg-codex-go-build go run ./cmd/dg`; `ht view --json dg-phase1-80x12` | Passed: 80 columns by 12 rows; diagram, centered toolbar, and status row visible; cursor hidden at row 12, column 33. Session stopped and removed. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...` | Passed all packages. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...` | Passed all packages. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...` | Passed. |
+| 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed with 0 issues. |
