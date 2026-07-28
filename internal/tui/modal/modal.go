@@ -208,6 +208,17 @@ func (m Model) BodyHeight() int {
 	return max(height, 1)
 }
 
+// BodyOrigin returns the terminal position of the modal body content.
+func (m Model) BodyOrigin() (x, y int) {
+	x = m.overlay.ContentLeft
+	y = m.overlay.ContentTop
+	if len(m.tabs) != 0 {
+		x += m.body.contentLeft
+		y += lipgloss.Height(m.tabsView()) + m.body.contentTop
+	}
+	return x, y
+}
+
 // Dragging reports whether pointer motion is moving the modal.
 func (m Model) Dragging() bool {
 	return m.dragging

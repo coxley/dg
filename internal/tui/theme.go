@@ -19,6 +19,7 @@ type Theme struct {
 	NumInput        numinput.Styles
 	HelpKey         lipgloss.Style
 	HelpDescription lipgloss.Style
+	SettingsContent lipgloss.Style
 	FormSeparator   lipgloss.Style
 	FormField       lipgloss.Style
 }
@@ -84,6 +85,7 @@ func DefaultTheme(dark bool) Theme {
 		},
 		HelpKey:         tabActive.Padding(0),
 		HelpDescription: tab.Padding(0),
+		SettingsContent: lipgloss.NewStyle(),
 		FormSeparator: lipgloss.NewStyle().
 			SetString("\n"),
 		FormField: lipgloss.NewStyle().
@@ -111,7 +113,9 @@ func (t Theme) formTheme() huh.Theme {
 
 func (t Theme) preferenceStyles() preferencesview.Styles {
 	return preferencesview.Styles{
-		Form:     t.formTheme(),
-		NumInput: t.NumInput,
+		Form:           t.formTheme(),
+		NumInput:       t.NumInput,
+		Action:         t.HelpDescription.Padding(0, 1),
+		SelectedAction: t.HelpKey.Padding(0, 1),
 	}
 }

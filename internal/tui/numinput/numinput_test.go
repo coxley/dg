@@ -28,6 +28,11 @@ func TestModelStepsWithinExplicitLimit(t *testing.T) {
 
 	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	require.Equal(t, uint8(1), value)
+
+	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: 'h', Text: "h"}))
+	require.Zero(t, value)
+	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: 'l', Text: "l"}))
+	require.Equal(t, uint8(1), value)
 }
 
 func TestModelIgnoresStaleFlash(t *testing.T) {

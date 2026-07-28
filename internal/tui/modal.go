@@ -4,12 +4,13 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	modalview "github.com/coxley/dg/internal/tui/modal"
+	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 )
 
 const (
-	settingsModalWidth   = 84
-	preferenceModalWidth = 68
+	settingsModalWidth = 84
 )
 
 var settingsTabs = []modalview.Tab{
@@ -71,7 +72,11 @@ func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
 	}
 	switch m.modal {
 	case modalPreferences:
-		return m.updateSettingsTabs(tea.MouseClickMsg(mouse))
+		x, y := m.dialog.BodyOrigin()
+		return m.updateSettingsTabs(preferencesview.ClickMsg{
+			X: mouse.X - x,
+			Y: mouse.Y - y,
+		})
 	case modalSave:
 		return m.updateSaveForm(tea.MouseClickMsg(mouse))
 	case modalExport:
@@ -122,14 +127,32 @@ func (m *Model) closeModal() {
 }
 
 func (m *Model) settingsBody(width int) string {
+	innerWidth := max(width-m.theme.Modal.Container.GetHorizontalFrameSize(), 0)
+	m.help.SetWidth(innerWidth)
+	help := m.help.View(m.keys)
+	preferenceHeight := 0
+	if m.preferenceForm != nil {
+		preferenceHeight = m.preferenceForm.NaturalHeight()
+	}
+
+	var content string
 	switch m.modal {
 	case modalHelp:
-		innerWidth := max(width-m.theme.Modal.Container.GetHorizontalFrameSize(), 0)
-		m.help.SetWidth(innerWidth)
-		return m.help.View(m.keys)
+		content = help
 	case modalPreferences:
-		return m.preferenceForm.View().Content
+		content = m.preferenceForm.View().Content
 	default:
 		return ""
 	}
+	height := lipgloss.Height(content)
+	largerHeight := max(lipgloss.Height(help), preferenceHeight)
+	frameHeight := m.theme.Modal.Container.GetVerticalFrameSize() +
+		m.theme.Modal.Body.GetVerticalFrameSize() + 1
+	if largerHeight+frameHeight+toolbarTop+m.nav.Height() <= m.height {
+		height = largerHeight
+	}
+	return m.theme.SettingsContent.
+		Height(height).
+		MaxHeight(height).
+		Render(content)
 }

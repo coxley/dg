@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
@@ -605,12 +606,13 @@ func TestSettingsTabsAcceptMouseAndWheelInput(t *testing.T) {
 	require.Equal(t, modalPreferences, model.modal)
 
 	overlay = model.currentModalOverlay()
-	command = updateModelCommand(t, model, tea.MouseWheelMsg{
+	updateModelCommand(t, model, tea.MouseWheelMsg{
 		X:      overlay.ContentLeft + 1,
 		Y:      overlay.ContentTop + 2,
 		Button: tea.MouseWheelDown,
 	})
-	require.NotNil(t, command)
+	_, completed := model.preferenceForm.Completed()
+	require.False(t, completed)
 
 	got, command = model.Update(tea.MouseClickMsg{
 		X:      overlay.ContentLeft + 1,
@@ -621,6 +623,85 @@ func TestSettingsTabsAcceptMouseAndWheelInput(t *testing.T) {
 	require.NotNil(t, command)
 	updateModel(t, model, command())
 	require.Equal(t, modalHelp, model.modal)
+}
+
+func TestSettingsModalKeepsLargerTabSizeWhenItFits(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+	model.openHelp()
+	help := model.currentModalOverlay()
+
+	command := updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
+	require.NotNil(t, command)
+	updateModel(t, model, command())
+	preferences := model.currentModalOverlay()
+
+	require.Equal(t, help.Width, preferences.Width)
+	require.Equal(t, help.Height, preferences.Height)
+}
+
+func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
+	t.Parallel()
+
+	t.Run("cancel", func(t *testing.T) {
+		model, _ := newTestModel(t)
+		updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+		model.openPreferences()
+		x, y := modalTextPoint(t, model.currentModalOverlay(), "Cancel")
+
+		updateModel(t, model, tea.MouseClickMsg{
+			X:      x,
+			Y:      y,
+			Button: tea.MouseLeft,
+		})
+
+		require.Equal(t, modalNone, model.modal)
+	})
+
+	t.Run("save as defaults", func(t *testing.T) {
+		model, _ := newTestModel(t)
+		updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+		model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
+		model.openPreferences()
+		x, y := modalTextPoint(
+			t,
+			model.currentModalOverlay(),
+			"Save as Defaults",
+		)
+
+		command := updateModelCommand(t, model, tea.MouseClickMsg{
+			X:      x,
+			Y:      y,
+			Button: tea.MouseLeft,
+		})
+
+		require.NotNil(t, command)
+		data, err := os.ReadFile(model.preferences.path)
+		require.NoError(t, err)
+		require.Contains(t, string(data), `"apply_to_future": true`)
+	})
+}
+
+func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+	model.openPreferences()
+	for range 6 {
+		model.updateSettingsTabs(huh.NextField())
+	}
+	updateModelCommand(t, model, keyPress('l', "l"))
+	require.True(t, model.preferenceForm.DirectoryOpen())
+
+	updateModelCommand(t, model, keyPress(tea.KeyEscape, ""))
+	require.False(t, model.preferenceForm.DirectoryOpen())
+	require.Equal(t, modalPreferences, model.modal)
+
+	updateModel(t, model, keyPress(tea.KeyEscape, ""))
+	require.Equal(t, modalNone, model.modal)
 }
 
 func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
@@ -758,7 +839,7 @@ func TestPreferencesSaveShowsNotice(t *testing.T) {
 	model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
 	model.openPreferences()
 
-	command := model.applyPreferences()
+	command := model.applyPreferences(true)
 
 	require.NotNil(t, command)
 	require.Equal(t, modalNotice, model.modal)
@@ -2151,6 +2232,23 @@ func frameRuneAt(t testing.TB, frame render.Frame, point layout.Point) rune {
 	runes := []rune(rows[y])
 	require.Less(t, x, len(runes))
 	return runes[x]
+}
+
+func modalTextPoint(
+	t testing.TB,
+	overlay modalview.Overlay,
+	text string,
+) (x, y int) {
+	t.Helper()
+
+	for row, line := range strings.Split(ansi.Strip(overlay.Content), "\n") {
+		column := strings.Index(line, text)
+		if column >= 0 {
+			return overlay.Left + column + 1, overlay.Top + row
+		}
+	}
+	require.Fail(t, "modal text not rendered", text)
+	return 0, 0
 }
 
 func updateModel(t testing.TB, model *Model, message tea.Msg) {

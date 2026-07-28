@@ -4,11 +4,13 @@ package preferences
 import (
 	"math"
 	"os"
+	"strings"
 
 	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/internal/tui/numinput"
 	"github.com/coxley/dg/layout"
 )
@@ -16,15 +18,32 @@ import (
 // Value contains editable user preferences.
 type Value struct {
 	Router        layout.Router
-	ApplyToFuture bool
 	SaveDirectory string
 	CommentPrefix string
 }
 
+// Action identifies how an edited preference form should close.
+type Action uint8
+
+const (
+	ActionNone Action = iota
+	ActionSave
+	ActionSaveDefaults
+	ActionCancel
+)
+
+var actionLabels = [...]string{
+	ActionSave:         "Save",
+	ActionSaveDefaults: "Save as Defaults",
+	ActionCancel:       "Cancel",
+}
+
 // Styles defines all preferences-owned appearance.
 type Styles struct {
-	Form     huh.Theme
-	NumInput numinput.Styles
+	Form           huh.Theme
+	NumInput       numinput.Styles
+	Action         lipgloss.Style
+	SelectedAction lipgloss.Style
 }
 
 type formValue struct {
@@ -34,10 +53,10 @@ type formValue struct {
 	crossing      uint32
 	endpoint      uint32
 	reroutePasses uint8
-	applyToFuture bool
 	saveDirectory string
 	commentPrefix string
-	save          bool
+	action        Action
+	submitted     bool
 }
 
 type numericField interface {
@@ -58,6 +77,8 @@ type Model struct {
 	input         formValue
 	form          *huh.Form
 	fields        []numericField
+	directory     *huh.FilePicker
+	actions       *actionField
 	width         int
 	height        int
 	naturalHeight int
@@ -92,6 +113,23 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	switch message := message.(type) {
+	case ClickMsg:
+		m.click(message.X, message.Y)
+		return m, nil
+	case ScrollMsg:
+		return m, m.scroll(message.Delta)
+	case tea.KeyPressMsg:
+		if handled, command := m.updateCollapsedDirectory(message); handled {
+			return m, command
+		}
+		if message.Code == tea.KeyEscape && m.directory.Zoom() {
+			m.directory.Picking(false)
+			form, command := m.form.Update(refreshMsg{})
+			m.form = form.(*huh.Form)
+			return m, wrap(command)
+		}
+	}
 	form, command := m.form.Update(message)
 	m.form = form.(*huh.Form)
 	m.sync()
@@ -107,7 +145,7 @@ func (m *Model) View() tea.View {
 func (m *Model) Reset(value Value) {
 	m.value = value
 	m.input = formValueFrom(value)
-	m.form, m.fields, m.naturalHeight = newForm(
+	m.form, m.fields, m.directory, m.actions, m.naturalHeight = newForm(
 		&m.input,
 		m.width,
 		m.height,
@@ -120,9 +158,19 @@ func (m *Model) Value() Value {
 	return m.value
 }
 
-// Completed reports whether the form finished and whether Save was selected.
-func (m *Model) Completed() (save, completed bool) {
-	return m.input.save, m.form.State == huh.StateCompleted
+// Completed reports the submitted form action.
+func (m *Model) Completed() (Action, bool) {
+	return m.input.action, m.input.submitted
+}
+
+// NaturalHeight returns the unconstrained form height.
+func (m *Model) NaturalHeight() int {
+	return m.naturalHeight
+}
+
+// DirectoryOpen reports whether the directory browser replaces the form.
+func (m *Model) DirectoryOpen() bool {
+	return m.directory.Zoom()
 }
 
 // SetHeight replaces the available form height.
@@ -141,6 +189,7 @@ func (m *Model) SetStyles(styles Styles) {
 	for _, field := range m.fields {
 		field.SetStyles(styles.NumInput)
 	}
+	m.actions.styles = styles
 }
 
 // FieldFlash reports a numeric field's active direction for tests and diagnostics.
@@ -161,7 +210,6 @@ func (m *Model) sync() {
 	router.ReroutePasses = m.input.reroutePasses
 	m.value = Value{
 		Router:        router,
-		ApplyToFuture: m.input.applyToFuture,
 		SaveDirectory: m.input.saveDirectory,
 		CommentPrefix: NormalizeCommentPrefix(m.input.commentPrefix),
 	}
@@ -175,10 +223,9 @@ func formValueFrom(value Value) formValue {
 		crossing:      value.Router.Costs.Crossing,
 		endpoint:      value.Router.Costs.EndpointStep,
 		reroutePasses: value.Router.ReroutePasses,
-		applyToFuture: value.ApplyToFuture,
 		saveDirectory: value.SaveDirectory,
 		commentPrefix: NormalizeCommentPrefix(value.CommentPrefix),
-		save:          true,
+		action:        ActionSave,
 	}
 }
 
@@ -186,7 +233,7 @@ func newForm(
 	value *formValue,
 	width, height int,
 	styles Styles,
-) (*huh.Form, []numericField, int) {
+) (*huh.Form, []numericField, *huh.FilePicker, *actionField, int) {
 	keymap := keyMap()
 	inputs := []numericField{
 		numinput.NewField("Step cost", &value.step, uint32(math.MaxUint32), styles.NumInput),
@@ -200,6 +247,15 @@ func newForm(
 	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
 		directory, _ = os.UserHomeDir()
 	}
+	filePicker := huh.NewFilePicker().
+		Title("Default save directory").
+		DirAllowed(true).
+		FileAllowed(false).
+		ShowHidden(true).
+		CurrentDirectory(directory).
+		Picking(false).
+		Value(&value.saveDirectory)
+	actions := newActionField(&value.action, &value.submitted, styles)
 	fields := []huh.Field{
 		inputs[0],
 		inputs[1],
@@ -207,21 +263,7 @@ func newForm(
 		inputs[3],
 		inputs[4],
 		inputs[5],
-		huh.NewSelect[bool]().
-			Options(
-				huh.NewOption(option("Apply to future diagrams?", "Yes"), true),
-				huh.NewOption(option("Apply to future diagrams?", "No"), false),
-			).
-			Inline(true).
-			Value(&value.applyToFuture),
-		huh.NewFilePicker().
-			Title("Default save directory").
-			DirAllowed(true).
-			FileAllowed(false).
-			ShowHidden(true).
-			CurrentDirectory(directory).
-			Picking(true).
-			Value(&value.saveDirectory),
+		filePicker,
 		huh.NewSelect[string]().
 			Options(
 				huh.NewOption(option("Preferred comments", "//"), "// "),
@@ -230,10 +272,7 @@ func newForm(
 			).
 			Inline(true).
 			Value(&value.commentPrefix),
-		huh.NewConfirm().
-			Affirmative("Save").
-			Negative("Cancel").
-			Value(&value.save),
+		actions,
 	}
 	form := huh.NewForm(huh.NewGroup(fields...)).
 		WithWidth(width).
@@ -246,17 +285,17 @@ func newForm(
 		height = naturalHeight
 	}
 	form.WithHeight(min(height, naturalHeight))
-	return form, inputs, naturalHeight
+	return form, inputs, filePicker, actions, naturalHeight
 }
 
 func keyMap() *huh.KeyMap {
 	keymap := huh.NewDefaultKeyMap()
 	keymap.Input.Prev = keybinding.NewBinding(
-		keybinding.WithKeys("up", "shift+tab"),
+		keybinding.WithKeys("up", "k", "shift+tab"),
 		keybinding.WithHelp("↑", "previous"),
 	)
 	keymap.Input.Next = keybinding.NewBinding(
-		keybinding.WithKeys("down", "enter", "tab"),
+		keybinding.WithKeys("down", "j", "enter", "tab"),
 		keybinding.WithHelp("↓", "next"),
 	)
 	keymap.Confirm.Prev = keymap.Input.Prev
@@ -264,14 +303,70 @@ func keyMap() *huh.KeyMap {
 	keymap.Select.Prev = keymap.Input.Prev
 	keymap.Select.Next = keymap.Input.Next
 	keymap.Select.Up = keybinding.NewBinding(
-		keybinding.WithKeys("left"),
+		keybinding.WithKeys("left", "h"),
 		keybinding.WithHelp("←", "choice"),
 	)
 	keymap.Select.Down = keybinding.NewBinding(
-		keybinding.WithKeys("right"),
+		keybinding.WithKeys("right", "l"),
 		keybinding.WithHelp("→", "choice"),
 	)
 	return keymap
+}
+
+// ClickMsg identifies a form-local pointer click.
+type ClickMsg struct {
+	X int
+	Y int
+}
+
+// ScrollMsg moves form focus without activating the focused field.
+type ScrollMsg struct {
+	Delta int
+}
+
+type refreshMsg struct{}
+
+func (m *Model) click(x, y int) {
+	lines := strings.Split(ansi.Strip(m.form.View()), "\n")
+	actionView := ansi.Strip(m.actions.View())
+	for row, line := range lines {
+		start := strings.Index(line, actionView)
+		if row == y && start >= 0 {
+			m.actions.hit(x - start)
+			return
+		}
+	}
+}
+
+func (m *Model) scroll(delta int) tea.Cmd {
+	if delta == 0 || m.directory.Zoom() {
+		return nil
+	}
+	if m.form.GetFocusedField() == m.actions && delta > 0 {
+		return nil
+	}
+	message := huh.PrevField()
+	if delta > 0 {
+		message = huh.NextField()
+	}
+	form, command := m.form.Update(message)
+	m.form = form.(*huh.Form)
+	return wrap(command)
+}
+
+func (m *Model) updateCollapsedDirectory(message tea.KeyPressMsg) (bool, tea.Cmd) {
+	if m.directory.Zoom() || m.form.GetFocusedField() != m.directory {
+		return false, nil
+	}
+	switch message.Text {
+	case "j":
+		return true, m.scroll(1)
+	case "k":
+		return true, m.scroll(-1)
+	case "h":
+		return true, m.scroll(-1)
+	}
+	return false, nil
 }
 
 func option(title, value string) string {

@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-`numinput` owns a bounded integer input controlled by Left and Right.
+`numinput` owns a bounded integer input controlled by Left/Right or `h`/`l`.
 Its `Model` implements `tea.Model`; `Field` adapts that model to `huh.Field`.
 
 ## Boundaries
@@ -13,7 +13,7 @@ Its `Model` implements `tea.Model`; `Field` adapts that model to `huh.Field`.
 - Flash-expiration messages return through the parent update loop. Parents
   route them to `Field.HandleFlash` before updating a containing form.
 - Navigation bindings belong to the `Field` adapter because they participate
-  in Huh form traversal.
+  in Huh form traversal. Up/Down and `k`/`j` move between fields.
 
 ## Verification
 

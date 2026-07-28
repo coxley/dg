@@ -78,9 +78,12 @@ Shortcuts and Preferences. Esc, `q`, or an outside click closes it.
 The preferences model reports editable values; root applies router changes
 live and owns the layout history transaction. Cancel, close, outside click, or
 lost focus restores the original values. Numeric fields change only with Left
-and Right and briefly highlight the pressed arrow. The directory field uses
-`huh.NewFilePicker`. The form renders at its natural height when the terminal
-allows it and follows explicit modal resizing.
+and Right or `h` and `l`, and briefly highlight the pressed arrow. The
+directory field opens `huh.NewFilePicker` as a temporary subview. Save applies
+the current form; Save as Defaults also enables the persisted router for new
+diagrams. The form renders at its natural height when the terminal allows it
+and follows explicit modal resizing. Settings tabs share the larger tab's
+default size when both fit.
 
 Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 100 ms. A second copy in that

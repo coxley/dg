@@ -30,11 +30,11 @@ func NewField[T constraints.Integer](
 	return &Field[T]{
 		input: New(title, value, maxValue, styles),
 		previous: key.NewBinding(
-			key.WithKeys("up", "shift+tab"),
+			key.WithKeys("up", "k", "shift+tab"),
 			key.WithHelp("↑", "previous"),
 		),
 		next: key.NewBinding(
-			key.WithKeys("down", "enter", "tab"),
+			key.WithKeys("down", "j", "enter", "tab"),
 			key.WithHelp("↓", "next"),
 		),
 	}

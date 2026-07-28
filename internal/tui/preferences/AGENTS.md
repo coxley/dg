@@ -12,9 +12,13 @@ navigation, and the current form value. `Model` implements `tea.Model`.
   decides when to persist a completed value.
 - Commands from Huh and numeric children return as `UpdateMsg`; route those
   messages back to `Model.Update`.
-- `Completed` distinguishes Save from Cancel after the form finishes.
+- `Completed` reports Save, Save as Defaults, or Cancel.
 - The form uses its natural content height when space permits. `SetHeight`
   constrains only terminals or explicitly resized modal bodies.
+- Wheel input moves form focus without activating fields. Arrow keys and
+  `h`/`j`/`k`/`l` provide equivalent navigation.
+- The directory picker stays collapsed until Right, `l`, or Enter opens its
+  zoomed subview. Escape closes that subview before it closes the modal.
 
 ## Verification
 

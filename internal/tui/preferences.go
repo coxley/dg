@@ -154,6 +154,9 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 		}
 	case modalPreferences:
 		if key.Code == tea.KeyEscape {
+			if m.preferenceForm.DirectoryOpen() {
+				return m.updateSettingsTabs(message)
+			}
 			m.closeSettingsModal()
 			return nil
 		}
@@ -217,11 +220,12 @@ func (m *Model) closeSettingsModal() {
 	}
 }
 
-func (m *Model) applyPreferences() tea.Cmd {
+func (m *Model) applyPreferences(saveDefaults bool) tea.Cmd {
 	if err := m.commitTransaction(); err != nil {
 		m.setError(err.Error())
 		return nil
 	}
+	m.preferences.applyToFuture = saveDefaults
 	m.preferenceEdit = false
 	if m.preferences.path == "" {
 		path, err := preferencesPath()
@@ -257,11 +261,12 @@ func (m *Model) resetSettingsTabs(active modal) {
 	m.preferenceForm = preferencesview.New(
 		preferencesview.Value{
 			Router:        m.geo.Router(),
-			ApplyToFuture: m.preferences.applyToFuture,
 			SaveDirectory: m.preferences.saveDirectory,
 			CommentPrefix: m.preferences.commentPrefix,
 		},
-		preferenceModalWidth-4,
+		settingsModalWidth-
+			m.theme.Modal.Container.GetHorizontalFrameSize()-
+			m.theme.Modal.Body.GetHorizontalFrameSize(),
 		m.preferenceFormHeight(),
 		m.theme.preferenceStyles(),
 	)
@@ -279,27 +284,32 @@ func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
 	form, command := m.preferenceForm.Update(message)
 	m.preferenceForm = form.(*preferencesview.Model)
 	m.syncPreferenceForm()
-	if save, completed := m.preferenceForm.Completed(); completed {
-		if !save {
+	if action, completed := m.preferenceForm.Completed(); completed {
+		switch action {
+		case preferencesview.ActionCancel:
 			m.closeSettingsModal()
 			return command
+		case preferencesview.ActionSave:
+			return tea.Batch(command, m.applyPreferences(false))
+		case preferencesview.ActionSaveDefaults:
+			return tea.Batch(command, m.applyPreferences(true))
+		case preferencesview.ActionNone:
 		}
-		return tea.Batch(command, m.applyPreferences())
 	}
 	return command
 }
 
 func (m *Model) updateSettingsWheel(message tea.MouseWheelMsg) tea.Cmd {
-	var code rune
+	var delta int
 	switch message.Mouse().Button {
 	case tea.MouseWheelUp:
-		code = tea.KeyUp
+		delta = -1
 	case tea.MouseWheelDown:
-		code = tea.KeyDown
+		delta = 1
 	default:
 		return nil
 	}
-	return m.updateSettingsTabs(tea.KeyPressMsg(tea.Key{Code: code}))
+	return m.updateSettingsTabs(preferencesview.ScrollMsg{Delta: delta})
 }
 
 func componentCommand(kind componentKind, command tea.Cmd) tea.Cmd {
@@ -327,7 +337,6 @@ func (m *Model) syncPreferenceForm() {
 	}
 	value := m.preferenceForm.Value()
 	router := value.Router
-	m.preferences.applyToFuture = value.ApplyToFuture
 	m.preferences.saveDirectory = value.SaveDirectory
 	m.preferences.commentPrefix = value.CommentPrefix
 	if router == m.preferences.router {

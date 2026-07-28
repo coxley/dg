@@ -1,0 +1,133 @@
+package preferences
+
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	keybinding "charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+)
+
+type actionField struct {
+	action    *Action
+	submitted *bool
+	styles    Styles
+	focused   bool
+	selected  Action
+}
+
+func newActionField(
+	action *Action,
+	submitted *bool,
+	styles Styles,
+) *actionField {
+	return &actionField{
+		action:    action,
+		submitted: submitted,
+		styles:    styles,
+		selected:  ActionSave,
+	}
+}
+
+func (*actionField) Init() tea.Cmd { return nil }
+
+func (f *actionField) Update(message tea.Msg) (huh.Model, tea.Cmd) {
+	key, ok := message.(tea.KeyPressMsg)
+	if !ok {
+		return f, nil
+	}
+	switch key.Code {
+	case tea.KeyUp:
+		return f, huh.PrevField
+	case tea.KeyLeft:
+		f.selectBy(-1)
+	case tea.KeyRight:
+		f.selectBy(1)
+	case tea.KeyEnter:
+		f.submit(f.selected)
+	default:
+		switch key.Text {
+		case "k":
+			return f, huh.PrevField
+		case "h":
+			f.selectBy(-1)
+		case "l":
+			f.selectBy(1)
+		}
+	}
+	return f, nil
+}
+
+func (f *actionField) View() string {
+	var view strings.Builder
+	for action := ActionSave; action <= ActionCancel; action++ {
+		view.WriteString(f.button(action))
+	}
+	return view.String()
+}
+
+func (f *actionField) Focus() tea.Cmd {
+	f.focused = true
+	return nil
+}
+
+func (f *actionField) Blur() tea.Cmd {
+	f.focused = false
+	return nil
+}
+
+func (*actionField) Error() error { return nil }
+func (*actionField) Run() error   { return nil }
+
+func (f *actionField) RunAccessible(writer io.Writer, _ io.Reader) error {
+	_, err := fmt.Fprintln(writer, strings.Join(actionLabels[1:], ", "))
+	return err
+}
+
+func (*actionField) Skip() bool                         { return false }
+func (*actionField) Zoom() bool                         { return false }
+func (*actionField) KeyBinds() []keybinding.Binding     { return nil }
+func (f *actionField) WithTheme(huh.Theme) huh.Field    { return f }
+func (f *actionField) WithKeyMap(*huh.KeyMap) huh.Field { return f }
+func (f *actionField) WithWidth(int) huh.Field          { return f }
+func (f *actionField) WithHeight(int) huh.Field         { return f }
+func (f *actionField) WithPosition(huh.FieldPosition) huh.Field {
+	return f
+}
+func (*actionField) GetKey() string  { return "action" }
+func (f *actionField) GetValue() any { return *f.action }
+
+func (f *actionField) hit(x int) {
+	for action := ActionSave; action <= ActionCancel; action++ {
+		width := lipgloss.Width(f.button(action))
+		if x >= 0 && x < width {
+			f.submit(action)
+			return
+		}
+		x -= width
+	}
+}
+
+func (f *actionField) button(action Action) string {
+	style := f.styles.Action
+	if f.focused && action == f.selected {
+		style = f.styles.SelectedAction
+	}
+	return style.Render(actionLabels[action])
+}
+
+func (f *actionField) selectBy(delta int) {
+	f.selected = Action(min(
+		max(int(f.selected)+delta, int(ActionSave)),
+		int(ActionCancel),
+	))
+}
+
+func (f *actionField) submit(action Action) {
+	f.selected = action
+	*f.action = action
+	*f.submitted = true
+}

@@ -69,6 +69,13 @@ func (m *Model[T]) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.step(-1)
 		case tea.KeyRight:
 			return m, m.step(1)
+		default:
+			switch message.Text {
+			case "h":
+				return m, m.step(-1)
+			case "l":
+				return m, m.step(1)
+			}
 		}
 	case FlashExpiredMsg:
 		m.HandleFlash(message)
