@@ -55,6 +55,73 @@ func TestModelUsesFullScreenWhenLongContentCannotFit(t *testing.T) {
 	require.Equal(t, 8, overlay.Height)
 }
 
+func TestModelDragsFromEmptyCellsAfterPointerMotion(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(80, 24, 0, 40, "Save", Standard, nil, 0)
+	before := model.Overlay()
+
+	model, command := model.Update(tea.MouseClickMsg{
+		X:      before.ContentLeft + 10,
+		Y:      before.ContentTop,
+		Button: tea.MouseLeft,
+	})
+	require.Nil(t, command)
+	require.True(t, model.CapturesPointer())
+	require.False(t, model.Dragging())
+	require.Equal(t, before, model.Overlay())
+
+	model, command = model.Update(tea.MouseMotionMsg{
+		X:      before.ContentLeft + 15,
+		Y:      before.ContentTop + 2,
+		Button: tea.MouseLeft,
+	})
+	require.Nil(t, command)
+	require.True(t, model.Dragging())
+	require.Equal(t, before.Left+5, model.Overlay().Left)
+	require.Equal(t, before.Top+2, model.Overlay().Top)
+}
+
+func TestModelLeavesRenderedContentInteractive(t *testing.T) {
+	t.Parallel()
+
+	button := lipgloss.NewStyle().
+		Background(lipgloss.Color("#ffffff")).
+		Render(" Save ")
+	model := New(testStyles())
+	model.Configure(80, 24, 0, 40, button, Standard, nil, 0)
+	overlay := model.Overlay()
+
+	for _, offset := range []int{0, 1} {
+		next, command := model.Update(tea.MouseClickMsg{
+			X:      overlay.ContentLeft + offset,
+			Y:      overlay.ContentTop,
+			Button: tea.MouseLeft,
+		})
+		require.Nil(t, command)
+		require.False(t, next.CapturesPointer())
+	}
+}
+
+func TestModelReleasesPendingDragWithoutMoving(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(80, 24, 0, 40, "Save", Standard, nil, 0)
+	before := model.Overlay()
+	model, _ = model.Update(tea.MouseClickMsg{
+		X:      before.ContentLeft + 10,
+		Y:      before.ContentTop,
+		Button: tea.MouseLeft,
+	})
+	model, command := model.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft})
+
+	require.Nil(t, command)
+	require.False(t, model.CapturesPointer())
+	require.Equal(t, before, model.Overlay())
+}
+
 func testStyles() Styles {
 	return Styles{
 		Container: lipgloss.NewStyle().Border(lipgloss.NormalBorder()),

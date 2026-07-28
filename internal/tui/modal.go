@@ -66,7 +66,7 @@ func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
 	m.currentModalOverlay()
 	var command tea.Cmd
 	m.dialog, command = m.dialog.Update(tea.MouseClickMsg(mouse))
-	if command != nil || m.dialog.Dragging() || mouse.Button != tea.MouseLeft {
+	if command != nil || m.dialog.CapturesPointer() || mouse.Button != tea.MouseLeft {
 		return command
 	}
 	switch m.modal {
@@ -83,9 +83,9 @@ func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
 }
 
 func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
-	wasDragging := m.dialog.Dragging()
+	wasCaptured := m.dialog.CapturesPointer()
 	m.dialog, _ = m.dialog.Update(tea.MouseMotionMsg(mouse))
-	if wasDragging || m.dialog.Dragging() {
+	if wasCaptured || m.dialog.CapturesPointer() {
 		return nil
 	}
 	switch m.modal {

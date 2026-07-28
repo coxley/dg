@@ -101,6 +101,7 @@ type Model struct {
 	left        int
 	top         int
 	positioned  bool
+	dragPending bool
 	dragging    bool
 	dragOffsetX int
 	dragOffsetY int
@@ -145,6 +146,7 @@ func (m *Model) Configure(
 // Hide removes the modal and resets transient pointer state.
 func (m *Model) Hide() {
 	m.visible = false
+	m.dragPending = false
 	m.dragging = false
 	m.positioned = false
 	m.overlay = Overlay{}
@@ -165,22 +167,22 @@ func (m Model) Dragging() bool {
 	return m.dragging
 }
 
+// CapturesPointer reports whether the modal owns the current pointer gesture.
+func (m Model) CapturesPointer() bool {
+	return m.dragPending || m.dragging
+}
+
 // Update handles tab commands and modal pointer interaction.
 func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 	switch message := message.(type) {
 	case SwitchTabMsg:
 		m.activeTab = message.ID
 	case tea.MouseClickMsg:
+		m.dragPending = false
 		if !m.overlay.Contains(message.X, message.Y) {
 			return m, Close()
 		}
 		if message.Button != tea.MouseLeft {
-			return m, nil
-		}
-		if message.Y == m.overlay.Top && !m.fullscreen {
-			m.dragging = true
-			m.dragOffsetX = message.X - m.overlay.Left
-			m.dragOffsetY = message.Y - m.overlay.Top
 			return m, nil
 		}
 		if message.Y == m.overlay.ContentTop {
@@ -188,7 +190,17 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 				return m, SwitchTab(id)
 			}
 		}
+		if !m.fullscreen && (message.Y == m.overlay.Top ||
+			!m.cellOccupied(message.X, message.Y)) {
+			m.dragPending = true
+			m.dragOffsetX = message.X - m.overlay.Left
+			m.dragOffsetY = message.Y - m.overlay.Top
+		}
 	case tea.MouseMotionMsg:
+		if m.dragPending {
+			m.dragPending = false
+			m.dragging = true
+		}
 		if m.dragging {
 			m.left = message.X - m.dragOffsetX
 			m.top = message.Y - m.dragOffsetY
@@ -196,6 +208,7 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 			m.layout()
 		}
 	case tea.MouseReleaseMsg:
+		m.dragPending = false
 		m.dragging = false
 	}
 	return m, nil
@@ -288,6 +301,19 @@ func (m Model) tabAt(x int) (TabID, bool) {
 		x -= width
 	}
 	return 0, false
+}
+
+func (m Model) cellOccupied(x, y int) bool {
+	x -= m.overlay.Left
+	y -= m.overlay.Top
+	canvas := lipgloss.NewCanvas(m.overlay.Width, m.overlay.Height).
+		Compose(lipgloss.NewLayer(m.overlay.Content))
+	cell := canvas.CellAt(x, y)
+	if cell == nil {
+		return false
+	}
+	hasContent := cell.Content != "" && cell.Content != " "
+	return hasContent || !cell.Style.IsZero()
 }
 
 func measure(style lipgloss.Style) geometry {
