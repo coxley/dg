@@ -304,7 +304,10 @@ func (m *Model) resetSettingsTabs(active modal) {
 		m.preferences.saveDirectory,
 		m.preferences.commentPrefix,
 	)
-	m.preferenceForm, m.preferenceFields = newPreferenceForm(&m.preferenceInput)
+	m.preferenceForm, m.preferenceFields = newPreferenceForm(
+		&m.preferenceInput,
+		m.preferenceFormHeight(),
+	)
 	tabs := []tabmodel.Tab{
 		*tabmodel.NewTab(
 			tabmodel.WithName("Shortcuts"),
@@ -414,6 +417,7 @@ func preferenceFormValuesFrom(
 
 func newPreferenceForm(
 	values *preferenceFormValues,
+	height int,
 ) (*huh.Form, []preferenceField) {
 	keymap := huh.NewDefaultKeyMap()
 	keymap.Input.Prev = key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "previous"))
@@ -469,8 +473,8 @@ func newPreferenceForm(
 			Value(&values.commentPrefix),
 	}
 	form := huh.NewForm(huh.NewGroup(fields...)).
-		WithWidth(settingsModalWidth - 4).
-		WithHeight(len(fields)).
+		WithWidth(preferenceModalWidth - 4).
+		WithHeight(height).
 		WithShowHelp(false).
 		WithKeyMap(keymap).
 		WithTheme(preferenceFormTheme())
@@ -498,8 +502,8 @@ func preferenceTextField(title string, value *string) preferenceField {
 }
 
 func preferencePrompt(title, value string) string {
-	const valueColumnEnd = 74
-	return strings.Repeat("\u00a0", max(valueColumnEnd-len(title)-len(value), 1))
+	const valueColumnEnd = 58
+	return strings.Repeat(" ", max(valueColumnEnd-len(title)-len(value), 1))
 }
 
 func preferenceOption(title, value string) string {
@@ -548,5 +552,22 @@ func (m *Model) syncPreferenceForm() {
 	m.geo.SetRouter(router)
 	if err := m.rebuild(); err != nil {
 		m.setError(err.Error())
+	}
+}
+
+func (m *Model) preferenceFormHeight() int {
+	const (
+		preferenceCount = 9
+		modalFrameRows  = 4
+	)
+	if m.height == 0 {
+		return preferenceCount + 1
+	}
+	return min(preferenceCount+1, max(m.diagramHeight()-modalFrameRows, 1))
+}
+
+func (m *Model) resizePreferenceForm() {
+	if m.preferenceForm != nil {
+		m.preferenceForm.WithHeight(m.preferenceFormHeight())
 	}
 }

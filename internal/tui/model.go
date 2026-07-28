@@ -48,6 +48,7 @@ const (
 const (
 	finishOperation = "finish the current operation first"
 	dragFromSource  = "drag from a source port"
+	noticeDuration  = time.Second
 )
 
 func (m mode) String() string {
@@ -234,6 +235,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 0)
 		m.height = max(message.Height, 0)
+		m.resizePreferenceForm()
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
 		return m, m.updateKey(message)
@@ -336,7 +338,7 @@ func (m *Model) showNotice(text string, returnTo modal) tea.Cmd {
 	m.notice = text
 	m.noticeReturn = returnTo
 	m.modal = modalNotice
-	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
+	return tea.Tick(noticeDuration, func(time.Time) tea.Msg {
 		return noticeExpiredMsg{id: id}
 	})
 }

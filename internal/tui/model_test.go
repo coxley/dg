@@ -500,6 +500,7 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
 	require.Equal(t, modalPreferences, model.modal)
 	require.Contains(t, ansi.Strip(model.View().Content), "Step cost")
+	require.Contains(t, ansi.Strip(model.View().Content), "Preferred comments")
 	before := model.geo.Router()
 	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
 	updateModelCommand(t, model, keyPress('4', "4"))
@@ -515,6 +516,20 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, before, model.geo.Router())
 	require.Equal(t, modalNone, model.modal)
+}
+
+func TestPreferenceModalFitsShortTerminals(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 12})
+	model.openPreferences()
+
+	require.LessOrEqual(
+		t,
+		len(model.modalLines(preferenceModalWidth)),
+		model.diagramHeight(),
+	)
 }
 
 func TestPreferenceModalJustifiesTitlesAndValues(t *testing.T) {
@@ -590,7 +605,10 @@ func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {
 			messages <- command()
 		}()
 
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(noticeDuration - time.Millisecond)
+		require.Equal(t, modalNotice, model.modal)
+		require.Empty(t, messages)
+		time.Sleep(time.Millisecond)
 		updateModel(t, model, <-messages)
 		require.Equal(t, modalNone, model.modal)
 		require.Empty(t, model.notice)

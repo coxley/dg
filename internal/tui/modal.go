@@ -7,7 +7,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const settingsModalWidth = 84
+const (
+	settingsModalWidth   = 84
+	preferenceModalWidth = 68
+)
 
 type modalOverlay struct {
 	lines []string
@@ -26,9 +29,11 @@ func (m *Model) currentModalOverlay() modalOverlay {
 		width = min(68, m.width)
 	case modalExport:
 		width = min(50, m.width)
+	case modalPreferences:
+		width = min(preferenceModalWidth, m.width)
 	case modalNotice:
 		width = min(max(28, displayWidth([]byte(m.notice))+4), m.width)
-	case modalNone, modalHelp, modalPreferences:
+	case modalNone, modalHelp:
 	}
 	lines := m.modalLines(width)
 	height := m.diagramHeight()
