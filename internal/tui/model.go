@@ -995,7 +995,7 @@ func (m *Model) ensureCursorVisible() {
 }
 
 func (m *Model) diagramHeight() int {
-	return max(m.height-2, 0)
+	return max(m.height-toolbarHeight-1, 0)
 }
 
 func indexFrameRows(rows []rowSpan, text []byte) []rowSpan {

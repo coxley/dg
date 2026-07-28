@@ -1078,10 +1078,10 @@ func TestModelViewTracksWindowWithoutCursor(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 12, Height: 6})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 12})
 	view := model.View()
 
-	require.Equal(t, 6, strings.Count(view.Content, "\n"))
+	require.Equal(t, 12, strings.Count(view.Content, "\n"))
 	require.Nil(t, view.Cursor)
 	require.True(t, view.AltScreen)
 	require.Equal(t, tea.MouseModeCellMotion, view.MouseMode)
@@ -1096,22 +1096,27 @@ func TestToolbarOwnsScreenRowAndCentersTools(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 60, Height: 10})
 	view := model.View()
-	firstLine, _, _ := strings.Cut(view.Content, "\n")
-	plain := strings.ReplaceAll(firstLine, selectionStart, "")
-	plain = strings.ReplaceAll(plain, selectionEnd, "")
-	require.True(t, strings.HasPrefix(plain, strings.Repeat(" ", 16)))
-	require.Contains(t, plain, " Cursor  Rectangle  Line ")
+	lines := strings.Split(view.Content, "\n")
+	require.True(t, strings.HasPrefix(lines[0], strings.Repeat(" ", 15)+"╭"))
+	require.Contains(t, lines[0], "╭───────────────────────────╮")
+	require.Contains(t, lines[1], "│                           │")
+	tools := strings.ReplaceAll(lines[2], selectionStart, "")
+	tools = strings.ReplaceAll(tools, selectionEnd, "")
+	require.Contains(t, tools, "│  Cursor  Rectangle  Line  │")
+	require.Contains(t, lines[3], "│                           │")
+	require.Contains(t, lines[4], "╰───────────────────────────╯")
 
-	_, ok := model.documentPoint(3, 0)
+	_, ok := model.documentPoint(3, toolbarHeight-1)
 	require.False(t, ok)
-	point, ok := model.documentPoint(3, 1)
+	point, ok := model.documentPoint(3, toolbarHeight)
 	require.True(t, ok)
 	require.Equal(t, layout.NewPoint(3, 0), point)
 
-	start := (model.width - len(" Cursor ") - len(" Rectangle ") - len(" Line ")) / 2
+	toolbarWidth := len(" Cursor ") + len(" Rectangle ") + len(" Line ")
+	start := (model.width-(toolbarWidth+4))/2 + 2
 	got, command := model.Update(tea.MouseClickMsg{
 		X:      start + len(" Cursor "),
-		Y:      0,
+		Y:      toolbarToolRow,
 		Button: tea.MouseLeft,
 	})
 	require.Same(t, model, got)
@@ -1123,13 +1128,13 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 12, Height: 6})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 12, Height: 12})
 	updateModel(t, model, keyPress('e', "e"))
 	view := model.View()
 
 	require.NotNil(t, view.Cursor)
 	require.Equal(t, int(model.cursor.X-model.viewport.X), view.Cursor.X)
-	require.Equal(t, int(model.cursor.Y-model.viewport.Y)+1, view.Cursor.Y)
+	require.Equal(t, int(model.cursor.Y-model.viewport.Y)+toolbarHeight, view.Cursor.Y)
 	require.NotSame(t, view.Cursor, model.View().Cursor)
 }
 
@@ -1704,19 +1709,19 @@ func updateModel(t testing.TB, model *Model, message tea.Msg) {
 
 	switch message := message.(type) {
 	case tea.MouseClickMsg:
-		message.Y++
+		message.Y += toolbarHeight
 		got, command := model.Update(message)
 		require.Same(t, model, got)
 		require.Nil(t, command)
 		return
 	case tea.MouseMotionMsg:
-		message.Y++
+		message.Y += toolbarHeight
 		got, command := model.Update(message)
 		require.Same(t, model, got)
 		require.Nil(t, command)
 		return
 	case tea.MouseReleaseMsg:
-		message.Y++
+		message.Y += toolbarHeight
 		got, command := model.Update(message)
 		require.Same(t, model, got)
 		require.Nil(t, command)

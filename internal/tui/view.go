@@ -17,6 +17,8 @@ const (
 	selectionStart     = "\x1b[48;5;24;38;5;231m"
 	portHighlightStart = "\x1b[48;5;34;38;5;231m"
 	selectionEnd       = "\x1b[0m"
+	toolbarHeight      = 5
+	toolbarToolRow     = 2
 )
 
 func (m *Model) View() tea.View {
@@ -53,7 +55,7 @@ func (m *Model) View() tea.View {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
 			cursor.X = x
-			cursor.Y = y + 1
+			cursor.Y = y + toolbarHeight
 			view.Cursor = cursor
 		}
 	default:
@@ -78,9 +80,32 @@ func (m *Model) appendToolbar(dst []byte) []byte {
 	for _, tool := range tools {
 		toolbarWidth += len(tool.label)
 	}
-	left := max((m.width-toolbarWidth)/2, 0)
+	boxWidth := toolbarWidth + 4
+	left := max((m.width-boxWidth)/2, 0)
+	if m.width < boxWidth {
+		for _, line := range []string{
+			"╭" + repeatRune('─', boxWidth-2) + "╮",
+			"│" + repeatRune(' ', boxWidth-2) + "│",
+			"│ Cursor  Rectangle  Line │",
+			"│" + repeatRune(' ', boxWidth-2) + "│",
+			"╰" + repeatRune('─', boxWidth-2) + "╯",
+		} {
+			dst = appendStatusLine(dst, []byte(line), m.width)
+		}
+		return dst
+	}
+	appendPlainRow := func(text string) {
+		dst = appendSpaces(dst, left)
+		dst = append(dst, text...)
+		dst = appendSpaces(dst, m.width-left-boxWidth)
+		dst = append(dst, '\n')
+	}
+	appendPlainRow("╭" + repeatRune('─', boxWidth-2) + "╮")
+	appendPlainRow("│" + repeatRune(' ', boxWidth-2) + "│")
+
 	dst = appendSpaces(dst, left)
-	used := left
+	dst = append(dst, "│ "...)
+	used := left + 2
 	for _, tool := range tools {
 		text := tool.label
 		if m.mode == tool.mode {
@@ -92,8 +117,13 @@ func (m *Model) appendToolbar(dst []byte) []byte {
 		}
 		used += len(text)
 	}
+	dst = append(dst, " │"...)
+	used += 2
 	dst = appendSpaces(dst, m.width-used)
-	return append(dst, '\n')
+	dst = append(dst, '\n')
+	appendPlainRow("│" + repeatRune(' ', boxWidth-2) + "│")
+	appendPlainRow("╰" + repeatRune('─', boxWidth-2) + "╯")
+	return dst
 }
 
 func (m *Model) appendStatusText(dst []byte) []byte {

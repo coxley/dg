@@ -11,7 +11,7 @@ import (
 const reconnectDragRadius = 3
 
 func (m *Model) updateMouseClick(mouse tea.Mouse) {
-	if mouse.Y == 0 && m.updateToolbarClick(mouse) {
+	if mouse.Y < toolbarHeight && m.updateToolbarClick(mouse) {
 		return
 	}
 	point, ok := m.documentPoint(mouse.X, mouse.Y)
@@ -106,11 +106,14 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 }
 
 func (m *Model) updateToolbarClick(mouse tea.Mouse) bool {
-	if mouse.Button != tea.MouseLeft || m.modal != modalNone {
+	if mouse.Button != tea.MouseLeft ||
+		mouse.Y != toolbarToolRow ||
+		m.modal != modalNone {
 		return false
 	}
 	toolbarWidth := len(" Cursor ") + len(" Rectangle ") + len(" Line ")
-	x := mouse.X - max((m.width-toolbarWidth)/2, 0)
+	boxWidth := toolbarWidth + 4
+	x := mouse.X - max((m.width-boxWidth)/2, 0) - 2
 	switch {
 	case x >= 0 && x < len(" Cursor "):
 		m.cancelMode()
@@ -531,11 +534,14 @@ func (m *Model) updateMouseWheel(mouse tea.Mouse) {
 }
 
 func (m *Model) documentPoint(x, y int) (layout.Point, bool) {
-	if x < 0 || y <= 0 || x >= m.width || y > m.diagramHeight() {
+	if x < 0 ||
+		y < toolbarHeight ||
+		x >= m.width ||
+		y >= toolbarHeight+m.diagramHeight() {
 		return layout.Point{}, false
 	}
 	documentX := uint64(m.viewport.X) + uint64(x)
-	documentY := uint64(m.viewport.Y) + uint64(y-1)
+	documentY := uint64(m.viewport.Y) + uint64(y-toolbarHeight)
 	if documentX > math.MaxUint32 || documentY > math.MaxUint32 {
 		return layout.Point{}, false
 	}
