@@ -8,8 +8,10 @@ import (
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
+	bubbletab "github.com/mJehanno/bubble-tab"
 )
 
 type mode uint8
@@ -140,9 +142,11 @@ type Model struct {
 
 	saveHint string
 
-	preferences    preferenceState
-	preferenceRow  int
-	preferenceEdit bool
+	preferences     preferenceState
+	preferenceEdit  bool
+	preferenceForm  *huh.Form
+	preferenceInput preferenceFormValues
+	settingsTabs    bubbletab.TabModel
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -221,7 +225,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.hasLastClick = false
 		if m.modal != modalNone {
-			m.updateModal(message)
+			return m, m.updateModal(message)
 		} else if key.Code == 's' && key.Mod == tea.ModCtrl {
 			m.requestSave()
 		} else if m.mode == modeEditLabel {
@@ -237,6 +241,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.modal == modalSave:
 			m.insertSavePathText(message.Content)
+		case m.modal == modalHelp || m.modal == modalPreferences:
+			return m, m.updateSettingsTabs(message)
 		case m.mode == modeEditLabel:
 			m.insertLabelText(message.Content)
 		default:
@@ -259,6 +265,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.BlurMsg:
 		m.interruptInteraction()
+	case settingsComponentMsg:
+		if m.modal == modalHelp || m.modal == modalPreferences {
+			return m, m.updateSettingsTabs(message.message)
+		}
 	}
 	return m, nil
 }

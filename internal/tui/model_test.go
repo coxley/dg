@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
@@ -485,26 +486,28 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	updateModel(t, model, keyPress('?', "?"))
 	require.Equal(t, modalHelp, model.modal)
-	view := model.View().Content
-	require.Contains(t, view, "[ Shortcuts ]")
+	view := ansi.Strip(model.View().Content)
+	require.Contains(t, view, "Shortcuts")
+	require.Contains(t, view, "Preferences")
 	require.Contains(t, view, "Cursor")
 	require.Contains(t, view, "node")
 	require.Contains(t, view, "?              Help")
 	require.Contains(t, view, "Backspace      Delete")
 
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
 	require.Equal(t, modalPreferences, model.modal)
-	require.Contains(t, model.View().Content, "[ Preferences ]")
+	require.Contains(t, ansi.Strip(model.View().Content), "Step cost")
 	before := model.geo.Router()
-	updateModel(t, model, keyPress(tea.KeyRight, ""))
-	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
+	updateModelCommand(t, model, keyPress('4', "4"))
+	require.Equal(t, uint32(4), model.geo.Router().Costs.Step)
+	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
 		Code: tea.KeyTab,
 		Mod:  tea.ModShift,
 	}))
 	require.Equal(t, modalHelp, model.modal)
-	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, uint32(4), model.geo.Router().Costs.Step)
+	updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
 	require.Equal(t, modalPreferences, model.modal)
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, before, model.geo.Router())
@@ -516,18 +519,23 @@ func TestPreferenceModalJustifiesTitlesAndValues(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	model.openHelp()
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
-	model.preferenceRow = 7
+	updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
 	lines := model.modalLines(settingsModalWidth)
 
-	step := lines[2]
-	sharedStep := lines[3]
+	var step, sharedStep string
+	for _, line := range lines {
+		line = ansi.Strip(line)
+		switch {
+		case strings.Contains(line, "Shared-step cost"):
+			sharedStep = line
+		case strings.Contains(line, "Step cost"):
+			step = line
+		}
+	}
+	require.NotEmpty(t, step)
+	require.NotEmpty(t, sharedStep)
 	require.Equal(t, strings.Index(step, "Step cost"), strings.Index(sharedStep, "Shared-step cost"))
-	require.Equal(
-		t,
-		len(strings.TrimRight(strings.TrimSuffix(step, "│"), " ")),
-		len(strings.TrimRight(strings.TrimSuffix(sharedStep, "│"), " ")),
-	)
+	require.Equal(t, strings.LastIndex(step, "1"), strings.LastIndex(sharedStep, "2"))
 }
 
 func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
@@ -535,9 +543,10 @@ func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	model.openHelp()
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
 	before := model.geo.Router()
-	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
+	updateModelCommand(t, model, keyPress('4', "4"))
 	require.NotEqual(t, before, model.geo.Router())
 
 	updateModel(t, model, tea.BlurMsg{})
@@ -545,6 +554,27 @@ func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 	require.Equal(t, before, model.geo.Router())
 	require.Equal(t, modalNone, model.modal)
 	require.False(t, model.preferenceEdit)
+}
+
+func TestSettingsCommandScopesComponentMessages(t *testing.T) {
+	t.Parallel()
+
+	require.Nil(t, settingsCommand(func() tea.Msg { return nil })())
+
+	type componentMsg struct{ value int }
+	command := settingsCommand(tea.Batch(
+		func() tea.Msg { return componentMsg{value: 1} },
+		func() tea.Msg { return componentMsg{value: 2} },
+	))
+	batch, ok := command().(tea.BatchMsg)
+	require.True(t, ok)
+	require.Len(t, batch, 2)
+
+	for i, command := range batch {
+		message, ok := command().(settingsComponentMsg)
+		require.True(t, ok)
+		require.Equal(t, componentMsg{value: i + 1}, message.message)
+	}
 }
 
 func TestModelReordersLayersWithUndo(t *testing.T) {
@@ -1858,6 +1888,14 @@ func updateModel(t testing.TB, model *Model, message tea.Msg) {
 	got, command := model.Update(message)
 	require.Same(t, model, got)
 	require.Nil(t, command)
+}
+
+func updateModelCommand(t testing.TB, model *Model, message tea.Msg) tea.Cmd {
+	t.Helper()
+
+	got, command := model.Update(message)
+	require.Same(t, model, got)
+	return command
 }
 
 func keyPress(code rune, text string) tea.KeyPressMsg {

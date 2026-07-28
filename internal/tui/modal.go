@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const settingsModalWidth = 84
@@ -59,14 +61,24 @@ func (m *Model) modalLines(width int) []string {
 			padModalLine("Tab complete  Enter save  Esc cancel", width),
 			"└" + repeatRune('─', width-2) + "┘",
 		}
-	case modalPreferences:
-		return m.preferenceLines(width)
 	default:
-		return shortcutLines(width)
+		return m.settingsModalLines(width)
 	}
 }
 
-func shortcutLines(width int) []string {
+func (m *Model) settingsModalLines(width int) []string {
+	content := m.settingsTabs.View().Content
+	rows := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	lines := make([]string, 0, len(rows)+2)
+	lines = append(lines, "┌"+repeatRune('─', width-2)+"┐")
+	for _, row := range rows {
+		lines = append(lines, padANSIModalLine(row, width))
+	}
+	lines = append(lines, "└"+repeatRune('─', width-2)+"┘")
+	return lines
+}
+
+func shortcutContent() string {
 	rows := [][6]string{
 		{"?", "Help", "Backspace", "Delete", "d", "Duplicate"},
 		{"r", "Rectangle", "e", "Edit label", "l", "Line"},
@@ -76,24 +88,15 @@ func shortcutLines(width int) []string {
 		{"u / Ctrl-Z", "Undo", "Ctrl-R/Ctrl-Y", "Redo", "Alt-drag", "Duplicate"},
 		{"Ctrl-click", "Add/remove", "Esc", "Close", "", ""},
 	}
-	lines := make([]string, 0, len(rows)+4)
-	lines = append(
-		lines,
-		"┌"+repeatRune('─', width-2)+"┐",
-		settingsTabLine(width, modalHelp),
-	)
+	lines := make([]string, 0, len(rows)+1)
 	for _, row := range rows {
-		lines = append(lines, shortcutRow(width, row))
+		lines = append(lines, shortcutRow(row))
 	}
-	lines = append(
-		lines,
-		padModalLine("Tab / Shift-Tab switch tabs", width),
-		"└"+repeatRune('─', width-2)+"┘",
-	)
-	return lines
+	lines = append(lines, "Tab / Shift-Tab switch tabs    Esc close")
+	return strings.Join(lines, "\n")
 }
 
-func shortcutRow(width int, values [6]string) string {
+func shortcutRow(values [6]string) string {
 	const (
 		keyWidth         = 13
 		descriptionWidth = 10
@@ -107,64 +110,7 @@ func shortcutRow(width int, values [6]string) string {
 		keyWidth, values[4],
 		descriptionWidth, values[5],
 	)
-	return padModalLine(text, width)
-}
-
-func (m *Model) preferenceLines(width int) []string {
-	router := m.preferences.router
-	values := [...]struct {
-		title string
-		value string
-	}{
-		{"Step cost", strconv.FormatUint(uint64(router.Costs.Step), 10)},
-		{"Shared-step cost", strconv.FormatUint(uint64(router.Costs.SharedStep), 10)},
-		{"Bend cost", strconv.FormatUint(uint64(router.Costs.Bend), 10)},
-		{"Crossing cost", strconv.FormatUint(uint64(router.Costs.Crossing), 10)},
-		{"Endpoint cost", strconv.FormatUint(uint64(router.Costs.EndpointStep), 10)},
-		{"Reroute passes", strconv.FormatUint(uint64(router.ReroutePasses), 10)},
-		{"Apply to future diagrams?", "[" + checkbox(m.preferences.applyToFuture) + "]"},
-		{"Default save directory", m.preferences.saveDirectory},
-	}
-	lines := make([]string, 0, len(values)+4)
-	lines = append(
-		lines,
-		"┌"+repeatRune('─', width-2)+"┐",
-		settingsTabLine(width, modalPreferences),
-	)
-	for i, value := range values {
-		lines = append(
-			lines,
-			justifiedModalLine(value.title, value.value, width, i == m.preferenceRow),
-		)
-	}
-	lines = append(
-		lines,
-		padModalLine("↑/↓ select  ←/→ adjust  Space toggle  Enter apply  Esc cancel", width),
-		"└"+repeatRune('─', width-2)+"┘",
-	)
-	return lines
-}
-
-func settingsTabLine(width int, active modal) string {
-	shortcuts, preferences := "  Shortcuts  ", "  Preferences  "
-	if active == modalHelp {
-		shortcuts = "[ Shortcuts ]"
-	} else {
-		preferences = "[ Preferences ]"
-	}
-	return padModalLine(shortcuts+"   "+preferences, width)
-}
-
-func justifiedModalLine(title, value string, width int, selected bool) string {
-	contentWidth := max(width-4, 0)
-	prefix := "  "
-	if selected {
-		prefix = "▶ "
-	}
-	titleWidth := displayWidth([]byte(title))
-	valueWidth := displayWidth([]byte(value))
-	gap := max(contentWidth-titleWidth-valueWidth, 1)
-	return padModalLine(prefix+title+repeatRune(' ', gap)+value, width)
+	return text
 }
 
 func padModalLine(text string, width int) string {
@@ -181,17 +127,16 @@ func padModalLine(text string, width int) string {
 	return "│" + text + repeatRune(' ', content-textWidth) + "│"
 }
 
+func padANSIModalLine(text string, width int) string {
+	content := max(width-2, 0)
+	text = ansi.Truncate(text, content, "")
+	return "│" + text + repeatRune(' ', content-ansi.StringWidth(text)) + "│"
+}
+
 func repeatRune(value rune, count int) string {
 	result := make([]rune, max(count, 0))
 	for i := range result {
 		result[i] = value
 	}
 	return string(result)
-}
-
-func checkbox(checked bool) string {
-	if checked {
-		return "x"
-	}
-	return " "
 }
