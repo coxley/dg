@@ -1,63 +1,59 @@
 # Project handoff
 
-## Goal
+## Goal and constraints
 
-Build a Monodraw-like diagram engine in Go. The engine must support both
-programmatic editing and a point-and-click interface.
+`dg` is a Monodraw-like diagram engine and interactive terminal editor written
+in Go. It supports programmatic construction and point-and-click editing.
 
 This is a freeform editor, not a Graphviz-style global layout system. Callers
 place nodes. The engine resolves cell geometry, routes orthogonal edges, and
 renders the result.
 
-Keep the core geometry grid-based and independent of Unicode glyphs. A future
-renderer should be able to target ASCII or graphics without replacing layout.
+Keep layout grid-based and independent of Unicode glyph selection. Layout owns
+geometry and directional connectivity; renderers decide how to encode it.
 
 Prefer data-oriented design:
 
 - keep structs small
-- use slice indices as IDs
-- keep related geometry in aligned slices
-- reuse hot-path memory
-- add bookkeeping only after benchmarks justify it
+- use slice indices as stable IDs
+- keep related data in index-aligned slices
+- reuse hot-path storage
+- benchmark before adding bookkeeping or spatial indices
+- use concrete algorithms instead of allocation-heavy interfaces
 
-## Current milestone
+## Current capabilities
 
-The first end-to-end milestone is complete. The engine can:
+The engine and TUI currently support:
 
-- create and place nodes with multiline Unicode labels
-- connect side-constrained ports
-- route orthogonal edges around node obstacles
-- share routes between edges with a common endpoint
-- allow and cost unrelated edge crossings
-- reroute crossing edges for one extra pass by default
-- rasterize geometry into directional cell connectivity
-- render Unicode box-drawing output
-- edit labels transactionally
-- delete nodes and edges and reuse their IDs
-- move nodes and rebuild without steady-state allocations
-- query every node, port, and edge rasterized at a grid point
-- edit diagrams interactively through a Bubble Tea terminal UI
-- serialize live graph data, placement, and options to versioned JSON
-- group edits into undoable interactions
-- restore persistent undo and redo history after reopening a saved document
-- auto-size multiline labels or retain explicit node dimensions
-- wrap and visually clip labels inside explicit dimensions without losing text
-- resize nodes from the nearest corner with right-drag
-- order nodes and edges in persistent back-to-front layers
-- occlude lower geometry and labels using raster-cell ownership
-- create explicitly sized empty rectangles with left-drag
-- cycle node focus with Tab and move the focused node with arrow keys
-- persist solid, rounded, and borderless node styles
-- persist independent smart arrow styles at both edge endpoints
-- inherit the most recently chosen node and edge styles when creating objects
+- multiline Unicode labels with grapheme-aware editing
+- automatic node sizing from content
+- explicit node dimensions with wrapping and visual clipping
+- left-drag creation of explicitly sized empty rectangles
+- right-drag resizing from the nearest corner
+- double-click restoration to automatic sizing
+- normalized side ports resolved to usable boundary cells
+- orthogonal routing around obstacles
+- configurable step, shared-step, bend, crossing, and endpoint costs
+- common-endpoint route sharing and one extra reroute pass by default
+- smart filled or outline arrows at either edge endpoint
+- solid, rounded, double, borderless, and dashed styles
+- persistent back-to-front draw order and raster occlusion
+- shared borders and common-endpoint T-junction rasterization
+- hit testing for visible nodes, ports, and compact edge segments
+- engine-owned node and edge selection
+- area, non-contiguous, component, and whole-document selection
+- transactional edits with persistent undo and redo
+- versioned JSON documents
+- persistent gzip-compressed history stored separately in the cache directory
+- a Bubble Tea editor with mouse support, floating toolbar, settings, saving,
+  clipboard export, and live routed previews
 
-The example program renders:
+The example editor starts with:
 
 ```text
 ┌─────┬─────┐
 │ foo │ bar │
 └──┬──┴──┬──┘
-   │     │
    │     │
    └──┬──┘
   ┌───┴───┐
@@ -65,23 +61,30 @@ The example program renders:
   └───────┘
 ```
 
-## Package boundaries
+## Packages
 
 ### `ir`
 
-`ir.Graph` stores the semantic graph:
+`ir.Graph` stores semantic objects:
 
-- `Node` stores its label and port IDs
-- `Port` stores its node ID, side, and normalized offset
-- `Edge` stores two port IDs
+- `Node` stores its label and port IDs.
+- `Port` stores its node ID, side, and normalized offset.
+- `Edge` stores two port IDs.
 
 Edges are undirected. Duplicate port pairs return the existing edge ID.
-New nodes receive ports at offsets `.5`, `.25`, and `.75` on every side. Stored
-order defines connection priority.
 
-Deletion leaves tombstones in the public slices. Per-type free lists reuse those
-indices before growing storage. Node deletion also removes its ports and
-incident edges.
+New nodes receive ports at offsets `.5`, `.25`, and `.75` on every side.
+Stored order defines connection priority. The first port on a side is always
+usable. Later ports become usable when the boundary has enough cells to keep
+one cell between the candidate, corners, and earlier usable ports. This rule is
+offset-agnostic so user-defined ports use the same logic.
+
+Deletion leaves tombstones. Per-type free lists reuse tombstoned indices before
+growing slices. Node deletion removes its ports and incident edges. Live IDs
+remain stable; deleted IDs may be reused.
+
+`ir.Components` owns reusable union-find scratch for connected-component
+selection. Rebuild it after graph mutations.
 
 ### `layout`
 
@@ -91,25 +94,16 @@ incident edges.
 - `Layout.Ports[portID]`
 - `Layout.Edges[edgeID]`
 
-Mutations made through `Layout` update node and port geometry immediately.
-`Build` routes the edges.
-
-`Layout.draftPorts` is reusable transactional scratch space. Port resolution
-finishes there before it commits results to `Layout.Ports`.
-`Layout.explicitSizes` stores optional fixed outer dimensions by node ID.
-`Layout.drawOrder` stores live node and edge hits from back to front. Creation
-appends objects to the front; deletion removes their entries.
-Auto-sized nodes derive their dimensions from their full labels.
-`LabelLine` stores `uint32` byte offsets and display width. `AppendLabelLines`
-preserves explicit newlines and adds Unicode-aware wrapping when given a width.
-
-The public construction API is:
+Mutations go through `Layout` and update semantic and derived state in place.
+`Build` resolves labels and routes edges. `WithGraph` imports initial semantic
+data that did not originate through `Layout`.
 
 ```go
 geo, err := layout.New(
 	layout.WithPadding(1, 0),
 	layout.WithRouter(layout.DefaultRouter()),
 	layout.WithGraph(graph),
+	layout.WithHistory(history),
 )
 source, err := geo.NewNodeAt("source", layout.NewPoint(2, 3))
 sink, err := geo.NewNode("sink")
@@ -122,315 +116,339 @@ err = geo.DeleteEdge(edge)
 err = geo.Build()
 ```
 
-`layout.History` is optional. Attach it through `WithHistory`:
+Important aligned internal slices include explicit node sizes, node styles,
+edge styles, and draw order. `draftPorts`, router state, and raster buffers are
+reusable scratch.
 
-```go
-history, err := layout.NewHistory(
-	layout.WithHistoryLimit(256),
-)
-geo, err := layout.New(layout.WithHistory(history))
-```
+`Layout.Selection()` stores index-aligned node and edge membership. It supports
+replacement, toggling, area intersection, iteration, connected-component
+expansion, and selecting everything. `DuplicateSelection` duplicates selected
+nodes and edges whose endpoints are both duplicated. Portless edges are not yet
+supported.
 
-Transactions group live changes into one interaction. `Commit` keeps the final
-state. `Cancel` restores the initial state. `Interrupt` commits the latest
-applied state, which prevents focus loss or shutdown from leaving unrecorded
-changes.
+Rigid selection moves avoid routing when static edges cannot be affected.
+`BuildSelection` routes only geometry affected by the selection. Keep adding
+safe no-route cases instead of routing defensively in interactive hot paths.
 
-Undo, redo, and cancellation rebuild the layout. Replay failures restore the
-layout and history cursor to their prior state. Closed transaction tokens return
-`ErrTransactionClosed` and cannot affect a newer transaction.
+`Layout.Hits(point)` yields visible objects in interaction priority order.
+Visible node endpoints also yield usable ports and incident edges. It checks
+compact segments, so edge cost does not depend on rendered length.
 
-`History.Store(path)` marks a saved checkpoint and writes history to a cache.
-`History.Restore(path)` attaches matching cached history without changing the
-saved document's visible state. Unsaved changes after the checkpoint return as
-a redo tail. Cache writes use a 100 millisecond debounce and atomic replacement.
-Cache files use gzip compression. Readers also accept the earlier plain JSON
-format. Cache failures never block diagram editing or saving.
+`Layout.PreviewRoute` treats a point as a roaming temporary port.
+`PreviewRouteWithoutEdge` excludes a relocated edge from occupancy. Styled
+variants reserve straight endpoint cells for arrows. Preview operations reuse
+router scratch and do not mutate graph, history, or committed geometry.
 
-`Layout.Hits(point)` yields the topmost visible object. At a visible node
-endpoint it also yields the usable port and incident edges so endpoint dragging
-remains possible. It checks compact edge segments, so its cost does not depend
-on rendered edge length.
+### Routing
 
-`Layout.PreviewRoute` treats a grid point as a temporary port and chooses its
-approach side by route cost. `PreviewRouteWithoutEdge` omits a relocated edge
-from occupancy. Both methods reuse router scratch and leave graph and history
-state unchanged. Their styled variants reserve straight endpoint cells for
-smart arrows.
+The router uses a concrete allocation-free heap and reusable arrays owned by
+`Layout`. `Router` remains copyable configuration.
 
-Smart-arrow ports prefer two straight route cells before a bend, including
-across every edge sharing the port. This leaves one line cell between a shared
-bend and the arrow. The router keeps full clearance when it does not lengthen
-the path. Otherwise it scores full- and short-clearance candidates and chooses
-the shorter clearance when the extra cell would require a costlier detour.
+Default cost reference:
 
-`Layout.Selection()` owns index-aligned node and edge selection sets. It
-supports individual replacement and toggling, area intersection, iteration,
-whole-layout selection, and connected-component expansion. `ir.Components`
-provides the reusable union-find index; rebuilding it after graph mutations
-keeps edge deletion semantics correct.
+- `Step = 10`: ordinary path length
+- `SharedStep = 2`: common-endpoint shared segments; lower values favor trunks
+- `Bend = 5`: direction changes; higher values favor straighter paths
+- `Crossing = 15`: unrelated edge crossings; higher values favor detours
+- `EndpointStep = 40`: travel through endpoint rectangles; higher values favor
+  exterior routes without forbidding overlap
+- `ReroutePasses = 1`: one additional whole-edge reroute pass
+
+Route sharing requires a common endpoint and starts only where that endpoint is
+nearer than both distinct endpoints. This keeps shared trunks near their
+logical destination. Unrelated edges may cross but may not share a segment or
+touch an endpoint.
+
+Smart-arrow ports prefer two straight cells before a bend. The router keeps
+full clearance when it does not lengthen the path, but permits shorter
+clearance when the extra cell would force a substantially worse route.
+
+### `history`
+
+History is engine-level rather than TUI-level. A transaction represents one
+committed interaction:
+
+- `Commit` records the final applied state.
+- `Cancel` restores the initial state.
+- `Interrupt` commits the latest visible state.
+
+The last rule prevents focus loss or shutdown from creating unrecorded changes.
+Closed or stale tokens return `ErrTransactionClosed`.
+
+History retains 256 interactions by default and accepts a custom limit. Cached
+history uses gzip, debounced atomic replacement, and the SHA-256 digest of the
+normalized absolute document path. Anonymous diagrams do not cache history
+until first save. Cache failures never block editing or document saving.
 
 ### `document`
 
-`document.Document` is the versioned persisted schema. It stores live semantic
-objects, node origins, optional fixed node sizes, padding, and router
-configuration. Its layer list stores nodes and edges from back to front. Export
-compacts runtime tombstones and remaps port and layer references; import
-reconstructs independent runtime slices. Documents without layers derive
-node-then-edge creation order.
+`document.Document` is the versioned persisted schema. It stores:
 
-Routes, geometry, free lists, and reusable scratch are derived state and are not
-persisted. `document.Marshal` writes indented JSON. `document.Unmarshal`
-strictly decodes and validates version 1. `Document.Layout` creates an editable
-layout and accepts layout options such as `WithHistory`.
+- live nodes, ports, and edges
+- node origins and optional explicit sizes
+- node border, stroke, and text alignment
+- edge stroke and endpoint arrows
+- padding and router configuration
+- back-to-front layers
+
+Export compacts runtime tombstones and remaps references. Import recreates
+independent runtime slices. Routes, raster cells, free lists, geometry scratch,
+and selection are derived and are not persisted.
 
 ### `render`
 
-`layout.Rasterize` converts rectangles and routes into aligned directional
-connectivity and ownership slices. Later layers replace lower connectivity at
-unrelated crossings and across complete node rectangles. Common-endpoint edges
-still merge shared connectivity. Collinear node boundaries also merge into
-T-sections; node interiors continue to occlude lower geometry. `render.Unicode`
-maps visible connectivity to box-drawing glyphs and only places label graphemes
-whose cells remain owned by their node. Fixed-size nodes wrap to their inner
-width and clip visually at their inner height without changing the stored
-label.
+`layout.Rasterize` produces aligned directional-connectivity and ownership
+slices. Later layers replace lower unrelated geometry. Common-endpoint edges
+retain merged connectivity. Complete node rectangles occlude lower geometry
+and labels.
+
+`render.Encoder` reuses raster and label-placement storage. It applies labels,
+arrows, border styles, and stroke styles after rasterization.
+
+Dashed strokes currently use Unicode light double-dash glyphs `╌` and `╎`.
+These restart their dash pattern inside every cell. Most terminal cells are
+taller than wide, so the pair looks denser horizontally than vertically.
+Standard triple, quadruple, and heavy dashed box glyphs exaggerate the problem.
+
+The recommended fix is phase-aware rendering:
+
+- retain the same solid directional connectivity and ownership
+- render horizontal runs as two `─` cells followed by two spaces
+- render vertical runs as one `│` cell followed by one space
+- keep corners, bends, crossings, T-junctions, arrows, and ports solid
+- fit phase per straight segment so both endpoints remain visible
+- choose the pattern for the complete segment, not global `X+Y` parity
+
+The orientation-specific periods compensate for terminal cells being roughly
+twice as tall as they are wide. A headless-terminal comparison found horizontal
+two-on/two-off plus vertical one-on/one-off the most balanced; one-on/one-off
+was too busy horizontally and Unicode triple/quadruple glyphs looked dotted.
+Rendering spaces must not change hit testing or ownership.
 
 ### `internal/tui`
 
-The Bubble Tea model keeps terminal-only state:
+The Bubble Tea model owns only frontend state: viewport, cursor, active tool,
+modal state, cached frames, drag state, and reusable preview buffers.
 
-- cursor and viewport origins
-- the reusable hit-selection buffer
-- navigation, node movement, live label editing, and edge connection modes
-- cached rendered text, document bounds, raster scratch, and terminal cursor
+The canvas covers the entire terminal. A centered rounded toolbar floats above
+and occludes it. Selection may move partially beyond the viewport as long as a
+visible portion remains recoverable. When unsigned coordinates would cross
+zero, the editor rebases geometry and viewport together.
 
-Bubble Tea messages mutate `Layout` synchronously. Every node movement and label
-keystroke calls `Build` and refreshes the cached frame. Editing has a
-grapheme-aware multiline caret. Enter inserts a newline; Ctrl-Enter and Escape
-commit the current label as one undoable interaction. Label and save-path
-editing use whitespace and slash as word boundaries. They support Ctrl-A and
-Ctrl-E for the line bounds, Alt-B to move to the previous word, Ctrl-W to delete
-the previous word, and Ctrl-U to delete to the line start.
+Node-only duplicate previews layer over the committed frame without routing.
+Rigid committed moves skip routing when static edges cannot be affected. Keep
+preview work separate from committed geometry.
 
-The TUI also supports:
+The settings overlay preserves the diagram underneath it:
 
-- ANSI highlighting for selected node outlines and edges
-- high-contrast green port-only highlighting while creating or reconnecting an
-  edge
-- node creation at the cursor
-- `r` rectangle tool for creating an explicitly sized empty node with left-drag
-- Tab and Shift-Tab node focus in draw order; Ctrl-Tab cycles overlapping hits
-- arrow-key movement of the focused node or every node in a multi-object
-  selection
-- `b` cycles solid, rounded, and borderless node styles
-- `a` and Shift-`a` cycle filled and outline smart arrows at either edge end
-- style cycling applies to every matching object in the current selection as
-  one history interaction without collapsing mixed selections
-- style inheritance for newly created nodes and edges
-- `l` line tool with direct port-to-port mouse dragging and a live orthogonal
-  preview routed around node obstacles
-- direct endpoint reconnection by dragging an edge within three cells of its
-  connected port
-- reconnection previews omit the original edge until the drag commits or
-  cancels
-- selected edges take mouse-hit priority over overlapping nodes and ports
-- edge endpoint reassignment without changing the edge ID
-- mouse hit selection and overlapping-hit cycling
-- left-drag node movement
-- right-drag resizing from the nearest corner as one history interaction
-- click-dragging a node commits an active label edit
-- mouse-wheel viewport panning
-- terminal cursor visibility only while editing text
-- double-click restoration of a fixed-size node to content-derived dimensions
-- Ctrl-S saving with an inline path prompt for new diagrams
-- filesystem path completion in the save prompt
-- `u` or Ctrl-Z undo; Ctrl-R, Ctrl-Y, or Ctrl-Shift-Z redo
-- one history interaction per committed label edit, move, drag, connection, or
-  deletion
-- committed final placement when focus loss or shutdown interrupts a drag
-- focus-colored area selection by dragging from an empty cell
-- Ctrl-click toggling for non-contiguous node and edge selection
-- Ctrl-A expansion through selected connected components, followed by
-  whole-document selection
-- grouped movement and deletion as one history interaction
-- `[` and `]` move the focused object backward or forward one layer
-- Shift-`[` and Shift-`]` send the focused object to the back or front
+- `?` opens Shortcuts.
+- Tab and Shift-Tab switch Shortcuts and Preferences.
+- Esc or `q` closes either settings tab.
+- Preference text inputs use Up/Down to change fields.
+- Preference selects use Up/Down to change fields and Left/Right to change the
+  selected value.
+- Router preferences apply live to the current diagram.
+- “Apply to future diagrams?” controls whether they become defaults.
 
-The model accepts pasted multiline labels and rejects carriage returns before
-they reach the layout.
+Success notices remain visible for one second or until the next key press.
+Errors render in red.
 
-Run the example editor with:
+Current editing shortcuts:
+
+| Key | Action |
+| --- | --- |
+| `r` | rectangle tool |
+| `l` | line tool |
+| Esc | cursor tool or cancel current interaction |
+| `e` | edit selected node label |
+| `b` | cycle solid, rounded, double, and borderless borders |
+| `-` | toggle dashed stroke on selected nodes and edges |
+| `a` / `A` | cycle arrows at either edge endpoint |
+| `t` / `T` | cycle horizontal or vertical label alignment |
+| Tab / Shift-Tab | cycle node focus |
+| arrow keys | move the current node or selection |
+| Backspace/Delete | delete selection |
+| `d` | duplicate selected nodes and internal edges |
+| Alt-drag | duplicate with a live raster preview |
+| Ctrl-A | expand to connected components, then select everything |
+| Ctrl-click | toggle non-contiguous selection |
+| `[` / `]` | move one layer backward or forward |
+| Shift-`[` / Shift-`]` | send to back or front |
+| `u` / Ctrl-Z | undo |
+| Ctrl-R / Ctrl-Y / Ctrl-Shift-Z | redo |
+| Ctrl-S | save |
+| Ctrl-C or `c` | copy selection |
+| `q` | quit when no modal is open |
+
+Two successive copy commands open an export form. Export supports preferred
+line comments (`// `, `# `, or block comments) and Markdown code fences.
+Trailing whitespace is removed from copied rows.
+
+Save and export use `huh` forms. New diagrams use a `huh` file picker on first
+save. Existing paths save directly. Preferences persist separately from
+documents and history.
+
+Run the editor with:
 
 ```sh
 go run ./cmd/dg
 go run ./cmd/dg path/to/diagram.json
 ```
 
-Ctrl-S saves directly when the editor opened a document from disk. New
-diagrams prompt for a path on the first save; Tab completes existing filesystem
-paths.
-
-## Settled design decisions
+## Settled geometry decisions
 
 - `Point` and `Size` use `uint32`.
 - `Padding` uses `uint8`.
 - rectangles use half-open bounds.
-- node dimensions are exactly label size plus padding and borders. Layout does
-  not add parity padding; odd-width nodes retain their true center cell.
-- the first port stored on each side is always connectable. Later ports become
-  connectable in stored order when one boundary cell separates them from both
-  corners and every earlier connectable port. Availability is offset-agnostic,
-  so future custom ports use the same rule.
 - default padding is one horizontal cell and zero vertical cells.
-- labels preserve explicit newlines and use terminal display width, including
-  wide graphemes.
-- nodes auto-size to the widest explicit line and total line count by default.
-- fixed outer dimensions remain authoritative across label edits. Their labels
-  wrap to the available width and clip to the available height.
-- fixed-size labels retain their full source text when clipped.
-- ports contain an `Anchor` on the node boundary and an `Exit` outside it.
-- an `Exit` equals its `Anchor` when unsigned coordinates cannot represent the
-  outward neighbor.
-- the router is configuration passed to `layout.New`.
-- routing costs include step, shared step, bend, crossing, and endpoint-step
-  costs.
-- endpoint steps add 40 by default while ordinary steps cost 10. This prefers
-  exterior detours without making overlapping endpoints unroutable.
-- route sharing requires a common endpoint and begins only where that endpoint
-  is nearer than both distinct endpoints. This keeps shared trunks near their
-  logical destination instead of visually joining source nodes.
-- unrelated edges may cross but may not share a segment or touch an endpoint.
-- rerouting replaces an entire route. Comments mark where more local rerouting
-  would need different logic.
-- the router uses a concrete heap and `cmp.Compare`.
-- `Layout` owns reusable router scratch. `Router` remains copyable configuration.
-- `render.Encoder` owns reusable raster and label-placement scratch.
-- obstacle access uses `Layout.Obstacles()` instead of a stored obstacle slice.
-- rasterization decides glyph connectivity after layout.
-- node tombstones retain an empty port buffer; zero-value edges represent
-  deleted entries.
-- deleted ports use an invalid owner because a zero-value port is valid.
-- IDs remain stable while live and may be reused after deletion.
-- free lists fill tombstones before slices grow.
-- deletion does not compact slices.
-- history retains 256 interactions by default and accepts a custom limit.
-- cached history uses the SHA-256 digest of the normalized absolute document
-  path.
-- macOS stores cached history under
-  `os.UserCacheDir()/org.coxley.dg/history`.
-- Linux and Windows store cached history under
-  `os.UserCacheDir()/dg/history`.
-- anonymous diagrams do not write history until their first save.
+- node dimensions equal content, padding, and border requirements; layout does
+  not add parity padding.
+- labels preserve explicit newlines and terminal display widths.
+- automatic nodes grow to content.
+- an explicit size remains authoritative until `AutoSizeNode`.
+- explicit nodes wrap and visually clip without losing source text.
+- `LabelLine` stores `uint32` byte offsets.
+- ports contain a boundary `Anchor` and an outward `Exit`.
+- `Exit == Anchor` when unsigned coordinates cannot represent the neighbor.
+- rasterization, not routing, chooses final glyphs.
 - draw order contains each live node and edge exactly once.
-- new objects start at the front of draw order.
-- edge endpoint cells remain node-owned so ports and incident edges stay
+- new objects start at the front.
+- edge endpoint cells stay node-owned so ports and incident edges remain
   selectable.
-- unrelated edge crossings show only the upper edge; common-endpoint routes
-  retain merged connectivity.
-- endpoint edges may route through overlapping endpoint rectangles. Raster
-  ownership hides the covered route cells.
+- collinear node boundaries may merge; overlapping interiors occlude.
+- stroke is independent of node border shape and edge arrows.
 
-## Current performance
+## Snapping design
 
-Results from an Apple M4 Max on July 27, 2026:
+Snapping should live in `layout`, with the TUI only supplying proposed movement
+and drawing returned guides. This keeps behavior reusable by native and web
+frontends.
 
-```text
-BenchmarkLayoutBuild             39.9 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutMoveAndBuild      43.7 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutEditLabelAndBuild 23.6 µs/op   0 B/op   0 allocs/op
-BenchmarkLayoutDeleteAndCreateNode
-                                  114 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutDeleteAndConnectEdge
-                                  7.7 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/node         32.6 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/edge         30.5 ns/op   0 B/op   0 allocs/op
-BenchmarkLayoutHits/miss         31.2 ns/op   0 B/op   0 allocs/op
-BenchmarkPreviewRoute             0.8 ms/op   0 B/op   0 allocs/op
-BenchmarkEncoderEncode           2.3 µs/op   0 B/op   0 allocs/op
-BenchmarkModelMoveAndView        3.68 µs/op   2304 B/op   1 allocs/op
-BenchmarkAppendLabelLines        2.89 µs/op      0 B/op   0 allocs/op
+Use an optional reusable `Snapper` with data-oriented scratch:
+
+- build separate X and Y candidate arrays from live, unselected nodes
+- use node left/center/right and top/middle/bottom anchors
+- represent centers in doubled integer coordinates; this preserves half-cell
+  centers without floats
+- reject center matches that cannot be reached by whole-cell translation
+- snap the selection's outer bounds and move the selection rigidly
+- evaluate axes independently
+- return a signed adjusted delta plus zero or more guide descriptors
+- do not mutate layout while evaluating candidates
+- reuse candidate and guide buffers across drag frames
+
+Interaction policy:
+
+- snapping is on by default
+- enter a snap within one cell
+- retain the latched candidate until raw movement exceeds two cells
+- prefer exact edge alignment, then center alignment
+- resolve equal candidates deterministically by distance, visual priority, and
+  stable object ID
+- exclude selected objects from candidates
+- initially ignore edges and ports
+- hold Shift during drag to bypass snapping temporarily
+- render guides in the preview layer
+- commit only the final visible snapped placement as one history interaction
+
+The one-cell acquire/two-cell release hysteresis prevents flicker and keeps
+always-on snapping from feeling sticky. Future candidate kinds can add equal
+spacing, port alignment, and baseline alignment without changing movement or
+history APIs.
+
+Property tests should verify:
+
+- results never move farther than the acquisition threshold
+- X and Y snapping remain independent
+- candidate ordering does not change the result
+- multi-selection relative geometry never changes
+- bypass returns the exact proposed delta
+- interrupted drags commit the final previewed placement
+- undo and redo reproduce the same snapped placement
+
+Benchmark no-candidate, many-candidate, and latched-snap drag frames with
+`b.Loop`. The initial implementation can scan nodes; add sorted candidate
+indices or a spatial index only when benchmarks justify it.
+
+## Headless terminal verification
+
+Use [`montanaflynn/headless-terminal`](https://github.com/montanaflynn/headless-terminal)
+to inspect actual Bubble Tea output through a PTY and Ghostty-compatible VT
+renderer.
+
+Start a named editor session:
+
+```sh
+ht run --size 100x30 --name dg-smoke \
+  env GOCACHE=/private/tmp/dg-codex-go-build go run ./cmd/dg
 ```
 
-These benchmarks use a small three-node, two-edge diagram. `Layout.Hits` scans
-nodes, ports, and compact edge segments. Add a spatial index only if larger
-interactive diagrams show that this scan matters.
+Send keys using Vim-style notation:
 
-The TUI benchmark uses a one-node document and covers a Bubble Tea key update,
-node movement, layout build, rasterization, viewport composition, and view
-creation. Its only steady-state allocation converts the completed byte buffer
-to the frame string required by Bubble Tea.
-
-## Recommended next work
-
-The next phase should make export and richer text layout feel native to the
-editor.
-
-### 1. Add clipboard export
-
-Ctrl-C should copy the selected rendered cells to the system clipboard. This
-replaces the current Ctrl-C quit binding, so choose another quit shortcut.
-
-Two successive Ctrl-C presses should open an export prompt. The prompt should
-default to line comments and also offer a Markdown code block. Line-comment
-export prefixes every copied row.
-
-Store the preferred comment prefix, such as `// ` or `# `, in a user
-preferences file under the platform cache directory. Keep preferences separate
-from per-document history.
-
-### 2. Complete text layout
-
-Add horizontal alignment, vertical alignment, and justification after the
-object and style model can persist those choices.
-
-### 5. Add reusable custom shapes
-
-Support custom shapes composed from multiple boxes and lines. Rasterize their
-components as one object so internal overlaps retain their intended
-connectivity instead of gaining the gap cells used when independent layered
-objects occlude each other.
-
-For example, a reusable database shape could render as:
-
-```text
-┌─────────────┐
-│  cassandra  ├┐
-└┬────────────┘│
- └─────────────┘
+```sh
+ht send dg-smoke '?'
+ht send dg-smoke '<tab><down><down>'
+ht send dg-smoke '<esc>'
 ```
 
-Each shape definition needs to identify:
+Inspect the current terminal:
 
-- the component that owns the label
-- which components scale vertically for multiline labels, and in what
-  proportions
-- which components scale horizontally for wider labels, and in what
-  proportions
+```sh
+ht view dg-smoke
+ht view --format ansi dg-smoke
+ht view --format png --output /private/tmp/dg-smoke.png dg-smoke
+```
 
-Persist custom shape definitions under the platform cache directory so users
-can quickly reuse designs across documents.
+For mouse flows, inspect `ht send --help` for the installed version's event
+syntax. Use several terminal sizes, especially `100x30`, `80x16`, and a short
+height such as `80x12`.
+
+Always clean up named sessions:
+
+```sh
+ht stop dg-smoke
+ht remove dg-smoke
+```
+
+Use headless-terminal to validate cells, focus, overlays, cursor visibility,
+and interaction state. Font-specific glyph appearance can still differ from
+the user's terminal, so compare Unicode styles in more than one font before
+settling rendering choices.
+
+## Next work
+
+Recommended order:
+
+1. Replace static Unicode dashed glyphs with phase-aware segment dashing.
+2. Implement the engine-level `Snapper`, guides, hysteresis, TUI integration,
+   property tests, and drag benchmarks described above.
+3. Apply layer commands to whole selections rather than one focused object.
+4. Add portless lines or boxless ports so arbitrary line selections can be
+   duplicated.
+5. Add reusable custom shapes composed from multiple primitives. Custom shapes
+   need a label owner and horizontal/vertical scaling rules. Persist reusable
+   definitions in the platform cache directory.
+6. Continue identifying interactions that can reuse committed raster output or
+   skip routing entirely.
 
 ## Known limits
 
-- coordinates cannot be negative
-- layer commands currently reorder one selected object rather than a selected
-  group
-- moving a connected node still rolls back when an edge cannot route around
-  unrelated obstacles
-- Ctrl-C quits instead of copying
-- every `Build` routes every edge
-- hit testing scans all geometry
+- coordinates cannot be negative; the TUI rebases geometry near zero
+- current dashed glyphs have uneven horizontal and vertical rhythm
+- double-dashed lines have no faithful Unicode box-drawing representation
+- layer commands reorder one object rather than a whole selection
+- duplicating selections requires at least one node
+- moving connected nodes may fail when no valid route exists
+- normal full builds route every edge
+- hit testing scans live geometry
 - public geometry slices rely on callers not mutating them
-- several methods assume valid IDs and may panic on invalid indices
+- several low-level methods assume valid IDs
 
 ## Verification
 
-Use `github.com/stretchr/testify/require` for test and benchmark assertions.
-Inside a `b.Loop` body, use direct benchmark failures to avoid boxing values in
-the measured path.
-
-Use a writable Go build cache in the sandbox:
+Use `github.com/stretchr/testify/require` for tests and benchmark setup.
+Inside `b.Loop`, use direct benchmark failures to avoid boxing measured values.
+Never use `time.Sleep` in tests outside `testing/synctest`.
 
 ```sh
 GOCACHE=/private/tmp/dg-codex-go-build go test ./...
@@ -440,8 +458,7 @@ GOCACHE=/private/tmp/dg-codex-go-build \
   GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache \
   golangci-lint run --path-mode abs
 GOCACHE=/private/tmp/dg-codex-go-build \
-  go test ./layout -run '^$' \
-  -bench 'BenchmarkLayout' -benchmem
+  go test ./layout -run '^$' -bench 'BenchmarkLayout' -benchmem
 ```
 
 Before this handoff, tests, race detection, vet, and lint passed.
