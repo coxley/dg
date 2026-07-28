@@ -51,15 +51,6 @@ func (m *Model) View() tea.View {
 	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "dg"
 	switch {
-	case m.modal == modalSave:
-		x := overlay.left + len("│ Path: ") + displayWidth(m.editBuffer[:m.editCaret])
-		if x < m.width {
-			cursor := &m.viewCursor[m.nextCursor]
-			m.nextCursor ^= 1
-			cursor.X = x
-			cursor.Y = overlay.top + 2
-			view.Cursor = cursor
-		}
 	case m.modal != modalNone:
 	case m.mode == modeEditLabel:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
@@ -131,10 +122,6 @@ func appendRunes(dst []byte, value rune, count int) []byte {
 }
 
 func (m *Model) appendStatusText(dst []byte) []byte {
-	if m.mode == modeSavePath {
-		dst = append(dst, "save path: "...)
-		return append(dst, m.editBuffer...)
-	}
 	if m.status != "" {
 		return append(dst, m.status...)
 	}

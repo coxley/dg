@@ -51,6 +51,7 @@ type componentKind uint8
 const (
 	settingsComponent componentKind = iota
 	exportComponent
+	saveComponent
 )
 
 type componentMsg struct {
@@ -198,8 +199,15 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 		}
 		return m.updateExportForm(message)
 	case modalSave:
-		m.updateSavePath(message)
-		return nil
+		if key.Code == tea.KeyEscape {
+			m.closeSaveForm()
+			return nil
+		}
+		if key.Code == 's' && key.Mod == tea.ModCtrl {
+			m.commitSaveForm()
+			return nil
+		}
+		return m.updateSaveForm(message)
 	}
 	if key.Code == tea.KeyTab && (key.Mod == 0 || key.Mod == tea.ModShift) {
 		if m.modal == modalHelp {

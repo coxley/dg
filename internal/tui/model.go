@@ -28,7 +28,6 @@ const (
 	modeEditLabel
 	modeConnect
 	modeRectangle
-	modeSavePath
 )
 
 const (
@@ -61,8 +60,6 @@ func (m mode) String() string {
 		return "connect"
 	case modeRectangle:
 		return "rectangle"
-	case modeSavePath:
-		return "save path"
 	default:
 		return "unknown"
 	}
@@ -142,13 +139,14 @@ type Model struct {
 	status string
 	path   string
 
-	saveHint string
-
 	clipboardWrite func(string) error
 	copyArmed      bool
 	exportForm     *huh.Form
 	exportText     string
 	exportStyle    exportStyle
+	saveForm       *huh.Form
+	saveDirectory  string
+	saveName       string
 
 	preferences     preferenceState
 	preferenceEdit  bool
@@ -260,7 +258,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.PasteMsg:
 		switch {
 		case m.modal == modalSave:
-			m.insertSavePathText(message.Content)
+			return m, m.updateSaveForm(message)
 		case m.modal == modalHelp || m.modal == modalPreferences:
 			return m, m.updateSettingsTabs(message)
 		case m.mode == modeEditLabel:
@@ -292,6 +290,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.updateSettingsTabs(message.message)
 		case message.kind == exportComponent && m.modal == modalExport:
 			return m, m.updateExportForm(message.message)
+		case message.kind == saveComponent && m.modal == modalSave:
+			return m, m.updateSaveForm(message.message)
 		}
 	}
 	return m, nil

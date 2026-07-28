@@ -22,10 +22,7 @@ func (m *Model) currentModalOverlay() modalOverlay {
 	}
 	width := min(settingsModalWidth, m.width)
 	if m.modal == modalSave {
-		width = min(
-			max(42, displayWidth(m.editBuffer)+10),
-			m.width,
-		)
+		width = min(68, m.width)
 	}
 	lines := m.modalLines(width)
 	height := m.diagramHeight()
@@ -53,14 +50,7 @@ func (o modalOverlay) line(screenY int) (string, bool) {
 func (m *Model) modalLines(width int) []string {
 	switch m.modal {
 	case modalSave:
-		path := string(m.editBuffer)
-		return []string{
-			"┌" + repeatRune('─', width-2) + "┐",
-			padModalLine("Save diagram", width),
-			padModalLine("Path: "+path, width),
-			padModalLine("Tab complete  Enter save  Esc cancel", width),
-			"└" + repeatRune('─', width-2) + "┘",
-		}
+		return componentModalLines(m.saveForm.View(), width)
 	case modalExport:
 		return componentModalLines(m.exportForm.View(), width)
 	default:

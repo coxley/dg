@@ -1,13 +1,14 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/coxley/dg/document"
 )
 
@@ -17,127 +18,85 @@ func (m *Model) requestSave() {
 		return
 	}
 	if m.path == "" {
-		m.mode = modeSavePath
-		m.modal = modalSave
-		m.editBuffer = append(m.editBuffer[:0], m.preferences.saveDirectory...)
-		if len(m.editBuffer) != 0 &&
-			m.editBuffer[len(m.editBuffer)-1] != filepath.Separator {
-			m.editBuffer = append(m.editBuffer, byte(filepath.Separator))
-		}
-		m.editDraft = m.editDraft[:0]
-		m.editCaret = len(m.editBuffer)
-		m.status = ""
-		m.saveHint = ""
+		m.openSaveForm()
 		return
 	}
 	m.save(m.path)
 }
 
-func (m *Model) updateSavePath(message tea.KeyPressMsg) {
-	key := message.Key()
-	if key.Mod == tea.ModCtrl {
-		switch key.Code {
-		case 'a':
-			m.editCaret = 0
-			return
-		case 'e':
-			m.editCaret = len(m.editBuffer)
-			return
-		case 'u':
-			if m.editCaret != 0 {
-				m.replaceSavePathRange(0, m.editCaret, nil)
-			}
-			return
-		case 'w':
-			start := previousWordStart(m.editBuffer, m.editCaret)
-			if start != m.editCaret {
-				m.replaceSavePathRange(start, m.editCaret, nil)
-			}
-			return
-		case 's':
-			m.commitSavePath()
-			return
-		}
+func (m *Model) openSaveForm() {
+	m.saveDirectory = m.preferences.saveDirectory
+	if m.saveDirectory == "" {
+		m.saveDirectory = "."
 	}
-	if key.Mod.Contains(tea.ModAlt) && (key.Code == 'b' || key.Code == 'B') {
-		m.editCaret = previousWordStart(m.editBuffer, m.editCaret)
-		return
-	}
-	if key.Mod != 0 {
-		m.insertSavePathText(key.Text)
-		return
-	}
-	switch key.Code {
-	case tea.KeyEscape:
-		m.finishSavePath()
-		m.status = ""
-	case tea.KeyEnter:
-		m.commitSavePath()
-	case tea.KeyTab:
-		m.completeSavePath()
-	case tea.KeyLeft:
-		m.editCaret = previousGraphemeStart(m.editBuffer, m.editCaret)
-	case tea.KeyRight:
-		m.editCaret = nextGraphemeEnd(m.editBuffer, m.editCaret)
-	case tea.KeyHome:
-		m.editCaret = 0
-	case tea.KeyEnd:
-		m.editCaret = len(m.editBuffer)
-	case tea.KeyBackspace:
-		start := previousGraphemeStart(m.editBuffer, m.editCaret)
-		if start != m.editCaret {
-			m.replaceSavePathRange(start, m.editCaret, nil)
-		}
-	case tea.KeyDelete:
-		end := nextGraphemeEnd(m.editBuffer, m.editCaret)
-		if end != m.editCaret {
-			m.replaceSavePathRange(m.editCaret, end, nil)
-		}
-	default:
-		m.insertSavePathText(key.Text)
-	}
-}
-
-func (m *Model) insertSavePathText(text string) {
-	if text == "" {
-		return
-	}
-	if strings.ContainsAny(text, "\r\n") {
-		m.status = "save path must fit on one line"
-		return
-	}
-	m.replaceSavePathRange(m.editCaret, m.editCaret, []byte(text))
-}
-
-func (m *Model) replaceSavePathRange(start, end int, replacement []byte) {
-	m.editDraft = append(m.editDraft[:0], m.editBuffer[:start]...)
-	m.editDraft = append(m.editDraft, replacement...)
-	m.editDraft = append(m.editDraft, m.editBuffer[end:]...)
-	m.editBuffer, m.editDraft = m.editDraft, m.editBuffer[:0]
-	m.editCaret = start + len(replacement)
+	m.saveName = "diagram.json"
+	m.saveForm = huh.NewForm(
+		huh.NewGroup(
+			huh.NewFilePicker().
+				Title("Directory").
+				DirAllowed(true).
+				FileAllowed(true).
+				ShowHidden(true).
+				CurrentDirectory(m.saveDirectory).
+				Picking(true).
+				Value(&m.saveDirectory),
+			huh.NewInput().
+				Title("File name").
+				Placeholder("diagram.json").
+				Value(&m.saveName).
+				Validate(func(name string) error {
+					if name == "" {
+						return errors.New("enter a file name")
+					}
+					if filepath.Base(name) != name {
+						return errors.New("file name must not contain a directory")
+					}
+					return nil
+				}),
+		),
+	).
+		WithWidth(64).
+		WithHeight(14).
+		WithShowHelp(true)
+	_ = m.saveForm.Init()
+	m.modal = modalSave
 	m.status = ""
-	m.saveHint = ""
 }
 
-func (m *Model) commitSavePath() {
-	if len(m.editBuffer) == 0 {
-		m.status = "enter a save path"
+func (m *Model) updateSaveForm(message tea.Msg) tea.Cmd {
+	form, command := m.saveForm.Update(message)
+	m.saveForm = form.(*huh.Form)
+	if m.saveForm.State != huh.StateCompleted {
+		return componentCommand(saveComponent, command)
+	}
+	m.commitSaveForm()
+	return nil
+}
+
+func (m *Model) commitSaveForm() {
+	name := strings.TrimSpace(m.saveName)
+	if name == "" {
+		m.status = "enter a file name"
 		return
 	}
-	path := string(m.editBuffer)
+	path := filepath.Join(m.saveDirectory, name)
+	if info, err := os.Stat(m.saveDirectory); err == nil && !info.IsDir() {
+		path = m.saveDirectory
+		if name != "diagram.json" {
+			path = filepath.Join(filepath.Dir(path), name)
+		}
+	}
 	if !m.save(path) {
 		return
 	}
-	m.finishSavePath()
+	m.closeSaveForm()
 }
 
-func (m *Model) finishSavePath() {
-	m.mode = modeNavigate
+func (m *Model) closeSaveForm() {
 	m.modal = modalNone
-	m.editBuffer = m.editBuffer[:0]
-	m.editDraft = m.editDraft[:0]
-	m.editCaret = 0
-	m.saveHint = ""
+	m.saveForm = nil
+	m.saveDirectory = ""
+	m.saveName = ""
 }
 
 func (m *Model) save(path string) bool {
@@ -158,56 +117,4 @@ func (m *Model) save(path string) bool {
 		}
 	}
 	return true
-}
-
-func (m *Model) completeSavePath() {
-	prefix := string(m.editBuffer[:m.editCaret])
-	dir, partial := filepath.Split(prefix)
-	searchDir := dir
-	if searchDir == "" {
-		searchDir = "."
-	}
-	entries, err := os.ReadDir(searchDir)
-	if err != nil {
-		m.saveHint = fmt.Sprintf("complete path: %v", err)
-		return
-	}
-
-	matches := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), partial) {
-			matches = append(matches, entry.Name())
-		}
-	}
-	if len(matches) == 0 {
-		m.saveHint = "no matching path"
-		return
-	}
-	slices.Sort(matches)
-	completed := dir + commonPrefix(matches)
-	if len(matches) == 1 {
-		info, err := os.Stat(filepath.Join(searchDir, matches[0]))
-		if err == nil && info.IsDir() {
-			completed += string(filepath.Separator)
-		}
-	}
-	m.replaceSavePathRange(0, m.editCaret, []byte(completed))
-	if len(matches) > 1 {
-		m.saveHint = strings.Join(matches, "  ")
-	}
-}
-
-func commonPrefix(values []string) string {
-	prefix := []rune(values[0])
-	for _, value := range values[1:] {
-		next := []rune(value)
-		prefix = prefix[:min(len(prefix), len(next))]
-		for i := range prefix {
-			if prefix[i] != next[i] {
-				prefix = prefix[:i]
-				break
-			}
-		}
-	}
-	return string(prefix)
 }

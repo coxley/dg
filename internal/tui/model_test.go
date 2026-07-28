@@ -1234,60 +1234,34 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 	require.NotSame(t, view.Cursor, model.View().Cursor)
 }
 
-func TestModelViewShowsSavePathPrompt(t *testing.T) {
+func TestModelViewShowsSaveForm(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 6})
+	model.preferences.saveDirectory = t.TempDir()
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	updateModel(t, model, tea.PasteMsg{Content: "diagram.json"})
 	view := model.View()
 
-	require.Contains(t, view.Content, "Path: diagram.json")
-	require.NotNil(t, view.Cursor)
-	require.Positive(t, view.Cursor.X)
-	require.Equal(t, 2, view.Cursor.Y)
-}
-
-func TestModelSavePathShortcuts(t *testing.T) {
-	t.Parallel()
-
-	const path = "界面/one/two"
-	model, _ := newTestModel(t)
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	updateModel(t, model, tea.PasteMsg{Content: path})
-
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'b', Mod: tea.ModAlt}))
-	require.Equal(t, len("界面/one/"), model.editCaret)
-
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'w', Mod: tea.ModCtrl}))
-	require.Equal(t, "界面/two", string(model.editBuffer))
-	require.Equal(t, len("界面/"), model.editCaret)
-
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'e', Mod: tea.ModCtrl}))
-	require.Equal(t, len("界面/two"), model.editCaret)
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
-	require.Zero(t, model.editCaret)
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'e', Mod: tea.ModCtrl}))
-	require.Equal(t, len("界面/two"), model.editCaret)
-
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
-	require.Empty(t, model.editBuffer)
-	require.Zero(t, model.editCaret)
+	require.Contains(t, view.Content, "Directory")
+	require.Nil(t, view.Cursor)
 }
 
 func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
-	path := filepath.Join(t.TempDir(), "diagram.json")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "diagram.json")
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	require.Equal(t, modeSavePath, model.mode)
-	updateModel(t, model, tea.PasteMsg{Content: path})
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	require.Equal(t, modalSave, model.modal)
+	model.saveDirectory = dir
+	model.saveName = "diagram.json"
+	model.commitSaveForm()
 
 	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modalNone, model.modal)
 	require.Equal(t, path, model.path)
 	require.Equal(t, "saved "+path, model.status)
 	requireSavedLabel(t, path, "node")
@@ -1300,7 +1274,7 @@ func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 	requireSavedLabel(t, path, "updated")
 }
 
-func TestModelCompletesSavePath(t *testing.T) {
+func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -1309,26 +1283,18 @@ func TestModelCompletesSavePath(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o700))
 
 	model, _ := newTestModel(t)
+	model.preferences.saveDirectory = dir
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	updateModel(t, model, tea.PasteMsg{Content: filepath.Join(dir, "dia")})
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
-	require.Equal(t, filepath.Join(dir, "diagram-"), string(model.editBuffer))
-	require.Contains(t, model.saveHint, "diagram-one.json")
-	require.Contains(t, model.saveHint, "diagram-two.json")
 
-	updateModel(t, model, keyPress('o', "o"))
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
-	require.Equal(t, filepath.Join(dir, "diagram-one.json"), string(model.editBuffer))
-	require.Empty(t, model.saveHint)
-
-	model.editBuffer = append(model.editBuffer[:0], filepath.Join(dir, "nes")...)
-	model.editCaret = len(model.editBuffer)
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
-	require.Equal(
-		t,
-		filepath.Join(dir, "nested")+string(filepath.Separator),
-		string(model.editBuffer),
-	)
+	views := model.View().Content
+	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
+	views += model.View().Content
+	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
+	views += model.View().Content
+	require.Contains(t, views, "diagram-one.json")
+	require.Contains(t, views, "diagram-two.json")
+	require.Contains(t, views, "nested")
 }
 
 func TestModelMouseSelectsAndDragsNode(t *testing.T) {
