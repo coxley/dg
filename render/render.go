@@ -172,25 +172,20 @@ func encodeFrame(
 			wrapWidth,
 		)
 		visible := lines[:min(len(lines), int(bounds.Size.Height))]
-		style, _ := l.NodeStyle(nodeID)
-		yOffset := alignmentOffset(
-			bounds.Size.Height,
-			uint32(len(visible)),
-			uint8(style.Vertical),
-		)
 		for lineID, line := range visible {
 			label := l.Label(nodeID)[line.Start:line.End]
 			lineWidth := uint32(uniseg.StringWidth(label))
-			xOffset := alignmentOffset(
-				bounds.Size.Width,
-				min(lineWidth, bounds.Size.Width),
-				uint8(style.Horizontal),
+			point, _ := l.LabelLinePoint(
+				nodeID,
+				uint32(lineID),
+				uint32(len(visible)),
+				lineWidth,
 			)
 			if err := placeLabelLine(
 				&grid,
 				labels,
 				continuations,
-				bounds.Min.Add(xOffset, yOffset+uint32(lineID)),
+				point,
 				label,
 				bounds.Size.Width,
 				layout.Hit{ID: nodeID, Kind: layout.HitNode},
@@ -245,18 +240,6 @@ func encodeFrame(
 		buf.WriteRune('\n')
 	}
 	return Frame{Bounds: grid.Bounds, Text: buf.Bytes()}, lines, nil
-}
-
-func alignmentOffset(space, content uint32, alignment uint8) uint32 {
-	remaining := space - min(space, content)
-	switch alignment {
-	case 1:
-		return remaining / 2
-	case 2:
-		return remaining
-	default:
-		return 0
-	}
 }
 
 func placeEdgeArrows(

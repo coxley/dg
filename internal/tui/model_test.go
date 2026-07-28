@@ -559,6 +559,52 @@ func TestSettingsModalClosesWithQ(t *testing.T) {
 	require.Equal(t, modalNone, model.modal)
 }
 
+func TestSettingsTabsAcceptMouseAndWheelInput(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.openHelp()
+	overlay := model.currentModalOverlay()
+	view := model.View()
+	require.NotNil(t, view.OnMouse)
+
+	shortcutsWidth := ansi.StringWidth(
+		settingsTabStyles().ActiveHeader.Render("Shortcuts"),
+	)
+	command := view.OnMouse(tea.MouseClickMsg{
+		X:      overlay.left + 1 + shortcutsWidth + 1,
+		Y:      overlay.top + 1,
+		Button: tea.MouseLeft,
+	})
+	require.NotNil(t, command)
+	message, ok := command().(settingsTabMouseMsg)
+	require.True(t, ok)
+	got, _ := model.Update(message)
+	require.Same(t, model, got)
+	require.Equal(t, modalPreferences, model.modal)
+
+	overlay = model.currentModalOverlay()
+	command = updateModelCommand(t, model, tea.MouseWheelMsg{
+		X:      overlay.left + 2,
+		Y:      overlay.top + 3,
+		Button: tea.MouseWheelDown,
+	})
+	require.NotNil(t, command)
+
+	command = model.View().OnMouse(tea.MouseClickMsg{
+		X:      overlay.left + 2,
+		Y:      overlay.top + 1,
+		Button: tea.MouseLeft,
+	})
+	require.NotNil(t, command)
+	message, ok = command().(settingsTabMouseMsg)
+	require.True(t, ok)
+	got, _ = model.Update(message)
+	require.Same(t, model, got)
+	require.Equal(t, modalHelp, model.modal)
+}
+
 func TestPreferenceSelectArrowsNavigateConsistently(t *testing.T) {
 	t.Parallel()
 
@@ -810,6 +856,31 @@ func TestModelEditMovesByGraphemeWidth(t *testing.T) {
 	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint.Add(1, 0), model.cursor)
 	updateModel(t, model, keyPress(tea.KeyDelete, ""))
 	require.Equal(t, "A", model.geo.Label(nodeID))
+}
+
+func TestRectangleLabelCursorUsesTextAlignment(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.nodeStyle = layout.NodeStyle{
+		Horizontal: layout.AlignCenter,
+		Vertical:   layout.AlignMiddle,
+	}
+	model.startRectangle(layout.NewPoint(20, 10))
+	model.resizeNode(layout.NewPoint(31, 16))
+	nodeID := model.target.ID
+	model.finishRectangle()
+	model.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+
+	want, visible := model.geo.LabelLinePoint(nodeID, 0, 1, 0)
+	require.True(t, visible)
+	require.True(t, model.editCaretVisible)
+	require.Equal(t, want, model.cursor)
+
+	updateModel(t, model, keyPress('x', "x"))
+	want, visible = model.geo.LabelLinePoint(nodeID, 0, 1, 1)
+	require.True(t, visible)
+	require.Equal(t, want.Add(1, 0), model.cursor)
 }
 
 func TestModelEditShortcuts(t *testing.T) {

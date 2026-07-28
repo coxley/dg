@@ -122,6 +122,44 @@ type NodeStyle struct {
 	Vertical   VerticalAlign
 }
 
+// LabelLinePoint returns the aligned origin of one visible label line.
+func (l *Layout) LabelLinePoint(
+	nodeID, lineID, lineCount, lineWidth uint32,
+) (Point, bool) {
+	if !l.graph.NodeExists(nodeID) {
+		return Point{}, false
+	}
+	bounds := l.LabelBounds(nodeID)
+	visibleLines := min(lineCount, bounds.Size.Height)
+	if lineID >= visibleLines {
+		return bounds.Min, false
+	}
+	style := l.nodeStyles[nodeID]
+	x := alignmentOffset(
+		bounds.Size.Width,
+		min(lineWidth, bounds.Size.Width),
+		uint8(style.Horizontal),
+	)
+	y := alignmentOffset(
+		bounds.Size.Height,
+		visibleLines,
+		uint8(style.Vertical),
+	) + lineID
+	return bounds.Min.Add(x, y), true
+}
+
+func alignmentOffset(space, content uint32, alignment uint8) uint32 {
+	remaining := space - min(space, content)
+	switch alignment {
+	case 1:
+		return remaining / 2
+	case 2:
+		return remaining
+	default:
+		return 0
+	}
+}
+
 // Valid reports whether every node style dimension is supported.
 func (s NodeStyle) Valid() bool {
 	return s.Border.Valid() &&

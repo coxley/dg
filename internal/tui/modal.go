@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -56,6 +57,47 @@ func (o modalOverlay) line(screenY int) (string, bool) {
 		return "", false
 	}
 	return o.lines[row], true
+}
+
+func (o modalOverlay) contains(x, y int) bool {
+	return x >= o.left && x < o.left+o.width &&
+		y >= o.top && y < o.top+len(o.lines)
+}
+
+func (m *Model) settingsMouseHandler(
+	overlay modalOverlay,
+) func(tea.MouseMsg) tea.Cmd {
+	handler := m.settingsTabs.View().OnMouse
+	if handler == nil {
+		return nil
+	}
+	contentX, contentY := overlay.left+1, overlay.top+1
+	shortcutsWidth := ansi.StringWidth(
+		settingsTabStyles().ActiveHeader.Render("Shortcuts"),
+	)
+	return func(message tea.MouseMsg) tea.Cmd {
+		click, ok := message.(tea.MouseClickMsg)
+		if !ok {
+			return nil
+		}
+		mouse := click.Mouse()
+		mouse.X -= contentX
+		mouse.Y -= contentY
+		command := handler(tea.MouseClickMsg(mouse))
+		if command == nil {
+			return nil
+		}
+		tab := modalHelp
+		if mouse.X >= shortcutsWidth {
+			tab = modalPreferences
+		}
+		return func() tea.Msg {
+			return settingsTabMouseMsg{
+				tab:     tab,
+				message: command(),
+			}
+		}
+	}
 }
 
 func (m *Model) modalLines(width int) []string {

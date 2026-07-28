@@ -52,6 +52,8 @@ func (m *Model) View() tea.View {
 	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "dg"
 	switch {
+	case m.modal == modalHelp || m.modal == modalPreferences:
+		view.OnMouse = m.settingsMouseHandler(overlay)
 	case m.modal != modalNone:
 	case m.mode == modeEditLabel:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {

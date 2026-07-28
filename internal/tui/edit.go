@@ -169,21 +169,33 @@ func (m *Model) moveCaretToPoint(point layout.Point) {
 	if !m.geo.NodeExists(m.target.ID) {
 		return
 	}
-	labelPoint := m.geo.Nodes[m.target.ID].LabelPoint
 	m.refreshEditLines()
+	first := m.editLines[0]
+	firstPoint, _ := m.geo.LabelLinePoint(
+		m.target.ID,
+		0,
+		uint32(len(m.editLines)),
+		uint32(displayWidth(m.editBuffer[first.Start:first.End])),
+	)
 	lineID := 0
-	if point.Y >= labelPoint.Y {
+	if point.Y >= firstPoint.Y {
 		lineID = min(
-			int(point.Y-labelPoint.Y),
+			int(point.Y-firstPoint.Y),
 			max(len(m.editLines)-1, 0),
 		)
 	}
 	line := m.editLines[lineID]
+	linePoint, _ := m.geo.LabelLinePoint(
+		m.target.ID,
+		uint32(lineID),
+		uint32(len(m.editLines)),
+		uint32(displayWidth(m.editBuffer[line.Start:line.End])),
+	)
 	m.editCaret = int(line.Start)
-	if point.X > labelPoint.X {
+	if point.X > linePoint.X {
 		m.editCaret += graphemeOffsetAtWidth(
 			m.editBuffer[line.Start:line.End],
-			int(point.X-labelPoint.X),
+			int(point.X-linePoint.X),
 		)
 	}
 	m.moveCursorToCaret()
@@ -197,8 +209,15 @@ func (m *Model) moveCursorToCaret() {
 	lineID, line := m.caretLineAt(m.editCaret)
 	column := displayWidth(m.editBuffer[line.Start:min(uint32(m.editCaret), line.End)])
 	labelBounds := m.geo.LabelBounds(m.target.ID)
-	m.cursor = labelBounds.Min.Add(uint32(column), uint32(lineID))
-	m.editCaretVisible = uint32(lineID) < labelBounds.Size.Height &&
+	lineWidth := displayWidth(m.editBuffer[line.Start:line.End])
+	linePoint, visible := m.geo.LabelLinePoint(
+		m.target.ID,
+		uint32(lineID),
+		uint32(len(m.editLines)),
+		uint32(lineWidth),
+	)
+	m.cursor = linePoint.Add(uint32(column), 0)
+	m.editCaretVisible = visible &&
 		uint32(column) <= labelBounds.Size.Width
 	m.ensureCursorVisible()
 }

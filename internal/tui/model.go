@@ -266,9 +266,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseWheelMsg:
 		m.copyArmed = false
-		if m.modal == modalNone {
-			m.updateMouseWheel(message.Mouse())
-		}
+		return m, m.updateMouseWheelMessage(message)
 	case tea.BlurMsg:
 		m.interruptInteraction()
 	case componentMsg:
@@ -281,6 +279,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case message.kind == saveComponent && m.modal == modalSave:
 			return m, m.updateSaveForm(message.message)
 		}
+	case settingsTabMouseMsg:
+		return m, m.updateSettingsTabMouse(message)
 	case noticeExpiredMsg:
 		if m.modal == modalNotice && message.id == m.noticeID {
 			m.modal = m.noticeReturn
@@ -288,6 +288,28 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
+	overlay := m.currentModalOverlay()
+	if m.modal == modalPreferences && overlay.contains(message.X, message.Y) {
+		return m.updateSettingsWheel(message)
+	}
+	if m.modal == modalNone {
+		m.updateMouseWheel(message.Mouse())
+	}
+	return nil
+}
+
+func (m *Model) updateSettingsTabMouse(message settingsTabMouseMsg) tea.Cmd {
+	if m.modal != modalHelp && m.modal != modalPreferences {
+		return nil
+	}
+	if message.tab == modalPreferences {
+		m.beginPreferenceEdit()
+	}
+	m.modal = message.tab
+	return m.updateSettingsTabs(message.message)
 }
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {

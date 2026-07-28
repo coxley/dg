@@ -108,3 +108,27 @@ func TestStyleValidation(t *testing.T) {
 		Stroke: StrokeStyle(255),
 	}))
 }
+
+func TestLabelLinePointAppliesNodeAlignment(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	nodeID, err := geo.NewNode("label")
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(nodeID, Size{Width: 12, Height: 7}))
+	require.NoError(t, geo.SetNodeStyle(nodeID, NodeStyle{
+		Horizontal: AlignCenter,
+		Vertical:   AlignMiddle,
+	}))
+
+	bounds := geo.LabelBounds(nodeID)
+	point, visible := geo.LabelLinePoint(nodeID, 0, 1, 3)
+	require.True(t, visible)
+	require.Equal(t, bounds.Min.Add(2, 2), point)
+
+	_, visible = geo.LabelLinePoint(nodeID, 1, 1, 3)
+	require.False(t, visible)
+	_, visible = geo.LabelLinePoint(nodeID+1, 0, 1, 3)
+	require.False(t, visible)
+}

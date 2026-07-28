@@ -70,6 +70,11 @@ type componentMsg struct {
 	message tea.Msg
 }
 
+type settingsTabMouseMsg struct {
+	tab     modal
+	message tea.Msg
+}
+
 type staticTabBody string
 
 func (staticTabBody) Init() tea.Cmd {
@@ -363,6 +368,19 @@ func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
 		)
 	}
 	return componentCommand(settingsComponent, command)
+}
+
+func (m *Model) updateSettingsWheel(message tea.MouseWheelMsg) tea.Cmd {
+	var code rune
+	switch message.Mouse().Button {
+	case tea.MouseWheelUp:
+		code = tea.KeyUp
+	case tea.MouseWheelDown:
+		code = tea.KeyDown
+	default:
+		return nil
+	}
+	return m.updateSettingsTabs(tea.KeyPressMsg(tea.Key{Code: code}))
 }
 
 func componentCommand(kind componentKind, command tea.Cmd) tea.Cmd {
