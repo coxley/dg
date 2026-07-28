@@ -164,6 +164,44 @@ func TestMoveSelectionPreservesValidInternalRoutes(t *testing.T) {
 	}
 }
 
+func TestTranslateMovesAllGeometryAndIsUndoable(t *testing.T) {
+	t.Parallel()
+
+	history, err := NewHistory()
+	require.NoError(t, err)
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	a, err := geo.NewNodeAt("a", NewPoint(2, 3))
+	require.NoError(t, err)
+	b, err := geo.NewNodeAt("b", NewPoint(14, 3))
+	require.NoError(t, err)
+	edgeID := geo.ConnectNodes(a, ir.RightSide, ir.LeftSide, b)
+	require.NoError(t, geo.Build())
+	beforeRoute := append([]Point(nil), geo.Edges[edgeID].Points...)
+	history.Clear()
+
+	transaction := history.Begin()
+	require.NoError(t, geo.Translate(5, 7))
+	require.NoError(t, transaction.Commit())
+
+	require.Equal(t, NewPoint(7, 10), geo.Nodes[a].Rect.Min)
+	require.Equal(t, NewPoint(19, 10), geo.Nodes[b].Rect.Min)
+	for i, point := range beforeRoute {
+		require.Equal(t, point.Add(5, 7), geo.Edges[edgeID].Points[i])
+	}
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, NewPoint(2, 3), geo.Nodes[a].Rect.Min)
+	require.Equal(t, NewPoint(14, 3), geo.Nodes[b].Rect.Min)
+	changed, err = history.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, NewPoint(7, 10), geo.Nodes[a].Rect.Min)
+	require.Equal(t, NewPoint(19, 10), geo.Nodes[b].Rect.Min)
+}
+
 func TestSelectionMovesRigidly(t *testing.T) {
 	t.Parallel()
 

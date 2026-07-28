@@ -458,18 +458,74 @@ func (m *Model) moveNode(dx, dy int) {
 	}
 }
 
-func (m *Model) placeNode(nodeID uint32, origin, cursor layout.Point) {
+func (m *Model) dragNode(nodeID uint32, cursor layout.Point) {
 	if !m.geo.Selection().Contains(
 		layout.Hit{ID: nodeID, Kind: layout.HitNode},
 	) {
 		m.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 	}
 	previous := m.geo.Nodes[nodeID].Rect.Min
-	dx := int64(origin.X) - int64(previous.X)
-	dy := int64(origin.Y) - int64(previous.Y)
+	dx := int64(cursor.X) - int64(m.dragOffset.X) - int64(previous.X)
+	dy := int64(cursor.Y) - int64(m.dragOffset.Y) - int64(previous.Y)
+	rebase, err := m.rebaseSelectionMove(dx, dy, cursor)
+	if err != nil {
+		m.status = err.Error()
+		return
+	}
+	cursor = cursor.Add(rebase.X, rebase.Y)
 	if _, err := m.moveSelectedNodes(dx, dy, cursor); err != nil {
 		m.status = err.Error()
 	}
+}
+
+func (m *Model) rebaseSelectionMove(
+	dx, dy int64,
+	cursor layout.Point,
+) (layout.Point, error) {
+	var shift layout.Point
+	include := func(point layout.Point) {
+		shift.X = max(shift.X, rebaseCoordinate(point.X, dx))
+		shift.Y = max(shift.Y, rebaseCoordinate(point.Y, dy))
+	}
+	for nodeID := range m.geo.Selection().Nodes() {
+		include(m.geo.Nodes[nodeID].Rect.Min)
+	}
+	for edgeID, edge := range m.geo.Edges {
+		id := uint32(edgeID)
+		if !m.geo.EdgeExists(id) {
+			continue
+		}
+		nodeA, nodeB, err := m.geo.EdgeNodes(id)
+		if err != nil ||
+			!m.geo.Selection().Contains(layout.Hit{ID: nodeA, Kind: layout.HitNode}) ||
+			!m.geo.Selection().Contains(layout.Hit{ID: nodeB, Kind: layout.HitNode}) {
+			continue
+		}
+		for _, point := range edge.Points {
+			include(point)
+		}
+	}
+	if shift == (layout.Point{}) {
+		return shift, nil
+	}
+	if cursor.X > math.MaxUint32-shift.X ||
+		cursor.Y > math.MaxUint32-shift.Y ||
+		m.viewport.X > math.MaxUint32-shift.X ||
+		m.viewport.Y > math.MaxUint32-shift.Y {
+		return layout.Point{}, errors.New("viewport outside coordinate space")
+	}
+	if err := m.geo.Translate(shift.X, shift.Y); err != nil {
+		return layout.Point{}, err
+	}
+	m.viewport = m.viewport.Add(shift.X, shift.Y)
+	return shift, nil
+}
+
+func rebaseCoordinate(value uint32, delta int64) uint32 {
+	if delta >= 0 || -delta <= int64(value) {
+		return 0
+	}
+	return uint32(-delta - int64(value))
 }
 
 func (m *Model) moveSelectedNodes(

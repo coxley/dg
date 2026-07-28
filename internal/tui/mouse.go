@@ -272,7 +272,7 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 	}
 	if m.mode == modeEditLabel && m.editMouseDown && mouse.Button == tea.MouseLeft {
 		point, ok := m.documentPoint(mouse.X, mouse.Y)
-		if !ok || point.X < m.dragOffset.X || point.Y < m.dragOffset.Y {
+		if !ok {
 			return
 		}
 		nodeID := m.target.ID
@@ -281,19 +281,17 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 		m.editMouseDown = false
 		m.rigidMoving = m.geo.SelectionMovesRigidly()
 		m.dragging = true
-		origin := layout.NewPoint(point.X-m.dragOffset.X, point.Y-m.dragOffset.Y)
-		m.placeNode(nodeID, origin, point)
+		m.dragNode(nodeID, point)
 		return
 	}
 	if !m.dragging || mouse.Button != tea.MouseLeft || !m.geo.NodeExists(m.target.ID) {
 		return
 	}
 	point, ok := m.documentPoint(mouse.X, mouse.Y)
-	if !ok || point.X < m.dragOffset.X || point.Y < m.dragOffset.Y {
+	if !ok {
 		return
 	}
-	origin := layout.NewPoint(point.X-m.dragOffset.X, point.Y-m.dragOffset.Y)
-	m.placeNode(m.target.ID, origin, point)
+	m.dragNode(m.target.ID, point)
 }
 
 func (m *Model) updateConnectionMotion(mouse tea.Mouse) bool {

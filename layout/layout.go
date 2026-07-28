@@ -517,6 +517,55 @@ func (l *Layout) MoveSelection(dx, dy int64) error {
 	return nil
 }
 
+// Translate moves all node and routed-edge geometry by dx and dy cells.
+func (l *Layout) Translate(dx, dy uint32) error {
+	if dx == 0 && dy == 0 {
+		return nil
+	}
+	for nodeID := range l.Nodes {
+		id := uint32(nodeID)
+		if !l.graph.NodeExists(id) {
+			continue
+		}
+		point, ok := offsetPoint(l.origins[id], int64(dx), int64(dy))
+		if !ok {
+			return errors.New("layout placement outside coordinate space")
+		}
+		if _, err := l.prepareNode(id, l.graph.Nodes[id].Label, point); err != nil {
+			return err
+		}
+	}
+	for edgeID, edge := range l.Edges {
+		if !l.graph.EdgeExists(uint32(edgeID)) {
+			continue
+		}
+		for _, point := range edge.Points {
+			if _, ok := offsetPoint(point, int64(dx), int64(dy)); !ok {
+				return errors.New("layout route outside coordinate space")
+			}
+		}
+	}
+	for nodeID := range l.Nodes {
+		id := uint32(nodeID)
+		if !l.graph.NodeExists(id) {
+			continue
+		}
+		point, _ := offsetPoint(l.origins[id], int64(dx), int64(dy))
+		if err := l.PlaceNode(id, point); err != nil {
+			return err
+		}
+	}
+	for edgeID, edge := range l.Edges {
+		if !l.graph.EdgeExists(uint32(edgeID)) {
+			continue
+		}
+		for i, point := range edge.Points {
+			edge.Points[i], _ = offsetPoint(point, int64(dx), int64(dy))
+		}
+	}
+	return nil
+}
+
 // SelectionMovesRigidly reports whether every edge incident to a selected node
 // has both endpoint nodes selected.
 func (l *Layout) SelectionMovesRigidly() bool {

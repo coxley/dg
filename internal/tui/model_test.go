@@ -1470,6 +1470,65 @@ func TestModelMouseCyclesHitsAndScrolls(t *testing.T) {
 	require.Zero(t, model.viewport.Y)
 }
 
+func TestModelMouseDragCanMovePartiallyOutsideViewportAndBack(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 20})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(2, 8)))
+	staticID, err := model.geo.NewNodeAt("static", layout.NewPoint(20, 8))
+	require.NoError(t, err)
+	require.NoError(t, model.rebuild())
+	model.history.Clear()
+	staticBefore := model.geo.Nodes[staticID].Rect.Min
+
+	label := model.geo.Nodes[nodeID].LabelPoint
+	click := tea.Mouse{
+		X:      int(label.X - model.viewport.X),
+		Y:      int(label.Y - model.viewport.Y),
+		Button: tea.MouseLeft,
+	}
+	updateModel(t, model, tea.MouseClickMsg(click))
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, uint32(2), model.viewport.X)
+	require.Equal(t, uint32(1), model.viewport.Y)
+	require.Equal(t, layout.Point{}, model.geo.Nodes[nodeID].Rect.Min)
+	staticAfter := model.geo.Nodes[staticID].Rect.Min
+	require.Equal(t, staticBefore.X, staticAfter.X-model.viewport.X)
+	require.Equal(t, staticBefore.Y, staticAfter.Y-model.viewport.Y)
+
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      4,
+		Y:      4,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      4,
+		Y:      4,
+		Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, layout.NewPoint(4, 4), model.geo.Nodes[nodeID].Rect.Min)
+	staticAfter = model.geo.Nodes[staticID].Rect.Min
+	require.Equal(t, staticBefore.X, staticAfter.X-model.viewport.X)
+	require.Equal(t, staticBefore.Y, staticAfter.Y-model.viewport.Y)
+}
+
 func TestModelDoubleClickRestoresAutoNodeSize(t *testing.T) {
 	t.Parallel()
 
