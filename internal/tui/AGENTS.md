@@ -85,7 +85,8 @@ directory field opens `huh.NewFilePicker` as a temporary subview. Save applies
 the current form; Save as Defaults also enables the persisted router for new
 diagrams. The form renders at its natural height when the terminal allows it
 and follows explicit modal resizing, with actions anchored to the body bottom.
-Settings tabs share the larger tab's default size when both fit.
+Settings tabs share the larger tab's default height when both fit, and the
+settings shell derives its default width from the complete help layout.
 
 Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 300 ms. A second copy in that

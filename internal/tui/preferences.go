@@ -266,7 +266,7 @@ func (m *Model) resetSettingsTabs(active modal) {
 			SaveDirectory: m.preferences.saveDirectory,
 			CommentPrefix: m.preferences.commentPrefix,
 		},
-		settingsModalWidth-
+		minimumSettingsModalWidth-
 			m.theme.Modal.Container.GetHorizontalFrameSize()-
 			m.theme.Modal.Body.GetHorizontalFrameSize(),
 		0,

@@ -642,6 +642,34 @@ func TestSettingsModalKeepsLargerTabSizeWhenItFits(t *testing.T) {
 	require.Equal(t, help.Height, preferences.Height)
 }
 
+func TestSettingsModalShowsCompleteHelpWithoutResize(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 180, Height: 50})
+	updateModel(t, model, tea.KeyboardEnhancementsMsg{})
+	model.openHelp()
+
+	view := ansi.Strip(model.currentModalOverlay().Content)
+	fullHelp := model.help
+	fullHelp.SetWidth(0)
+	require.GreaterOrEqual(
+		t,
+		model.dialog.BodyWidth(),
+		lipgloss.Width(fullHelp.View(model.keys)),
+	)
+	require.NotContains(t, view, model.help.Ellipsis)
+	for _, group := range model.keys.FullHelp() {
+		for _, binding := range group {
+			if !binding.Enabled() {
+				continue
+			}
+			require.Contains(t, view, binding.Help().Key)
+			require.Contains(t, view, binding.Help().Desc)
+		}
+	}
+}
+
 func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 	t.Parallel()
 

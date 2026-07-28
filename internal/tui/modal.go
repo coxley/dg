@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	settingsModalWidth = 84
+	minimumSettingsModalWidth = 84
 )
 
 var settingsTabs = []modalview.Tab{
@@ -23,7 +23,7 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		m.dialog.Hide()
 		return modalview.Overlay{}
 	}
-	width := min(settingsModalWidth, m.width)
+	width := min(minimumSettingsModalWidth, m.width)
 	var (
 		content string
 		variant modalview.Variant
@@ -41,6 +41,7 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		content = " " + m.notice
 		variant = modalview.Notice
 	case modalHelp, modalPreferences:
+		width = min(m.settingsModalWidth(), m.width)
 		bodyWidth := max(
 			width-
 				m.theme.Modal.Container.GetHorizontalFrameSize()-
@@ -65,6 +66,15 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		modalview.TabID(m.modal),
 	)
 	return m.dialog.Overlay()
+}
+
+func (m *Model) settingsModalWidth() int {
+	help := m.help
+	help.SetWidth(0)
+	contentWidth := lipgloss.Width(help.View(m.keys))
+	frameWidth := m.theme.Modal.Container.GetHorizontalFrameSize() +
+		m.theme.Modal.Body.GetHorizontalFrameSize()
+	return max(minimumSettingsModalWidth, contentWidth+frameWidth)
 }
 
 func (m *Model) openModal(next modal) {
