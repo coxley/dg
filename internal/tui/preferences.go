@@ -187,6 +187,10 @@ func (m *Model) beginPreferenceEdit() {
 
 func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
+	if m.settingsModalCloses(key) {
+		m.closeSettingsModal()
+		return nil
+	}
 	switch m.modal {
 	case modalNone:
 		return nil
@@ -237,6 +241,11 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 		m.openPreferences()
 	}
 	return m.updateSettingsTabs(message)
+}
+
+func (m *Model) settingsModalCloses(key tea.Key) bool {
+	return (m.modal == modalHelp || m.modal == modalPreferences) &&
+		key.Code == 'q' && key.Mod == 0
 }
 
 func (m *Model) closeSettingsModal() {
@@ -419,11 +428,7 @@ func newPreferenceForm(
 	values *preferenceFormValues,
 	height int,
 ) (*huh.Form, []preferenceField) {
-	keymap := huh.NewDefaultKeyMap()
-	keymap.Input.Prev = key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "previous"))
-	keymap.Input.Next = key.NewBinding(key.WithKeys("down", "enter"), key.WithHelp("↓", "next"))
-	keymap.Confirm.Prev = keymap.Input.Prev
-	keymap.Confirm.Next = keymap.Input.Next
+	keymap := preferenceKeyMap()
 	inputs := []preferenceField{
 		preferenceNumberField("Step cost", &values.step, 32),
 		preferenceNumberField("Shared-step cost", &values.sharedStep, 32),
@@ -479,6 +484,19 @@ func newPreferenceForm(
 		WithKeyMap(keymap).
 		WithTheme(preferenceFormTheme())
 	return form, inputs
+}
+
+func preferenceKeyMap() *huh.KeyMap {
+	keymap := huh.NewDefaultKeyMap()
+	keymap.Input.Prev = key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "previous"))
+	keymap.Input.Next = key.NewBinding(key.WithKeys("down", "enter"), key.WithHelp("↓", "next"))
+	keymap.Confirm.Prev = keymap.Input.Prev
+	keymap.Confirm.Next = keymap.Input.Next
+	keymap.Select.Prev = keymap.Input.Prev
+	keymap.Select.Next = keymap.Input.Next
+	keymap.Select.Up = key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "choice"))
+	keymap.Select.Down = key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "choice"))
+	return keymap
 }
 
 func preferenceNumberField(title string, value *string, bits int) preferenceField {

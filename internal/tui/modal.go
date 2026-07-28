@@ -94,11 +94,11 @@ func shortcutContent() string {
 	rows := [][6]string{
 		{"?", "Help", "Backspace", "Delete", "d", "Duplicate"},
 		{"r", "Rectangle", "e", "Edit label", "l", "Line"},
-		{"b", "Border", "a / A", "Arrows", "t / T", "Text align"},
+		{"b", "Border", "-", "Dashed", "a / A", "Arrows"},
 		{"Tab/Shift-Tab", "Focus", "Arrows", "Move", "Ctrl-A", "Expand"},
 		{"[ / ]", "Layer", "{ / }", "Back/front", "Ctrl-S", "Save"},
 		{"u / Ctrl-Z", "Undo", "Ctrl-R/Ctrl-Y", "Redo", "Alt-drag", "Duplicate"},
-		{"Ctrl-click", "Add/remove", "Esc", "Close", "", ""},
+		{"Ctrl-click", "Add/remove", "Esc / q", "Close", "t / T", "Text align"},
 	}
 	lines := make([]string, 0, len(rows)+1)
 	for _, row := range rows {

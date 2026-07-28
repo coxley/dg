@@ -13,6 +13,7 @@ type BorderStyle uint8
 const (
 	BorderSolid BorderStyle = iota
 	BorderRounded
+	BorderDouble
 	BorderNone
 	borderStyleCount
 )
@@ -25,6 +26,25 @@ func (s BorderStyle) Valid() bool {
 // Next returns the next border style, wrapping to BorderSolid.
 func (s BorderStyle) Next() BorderStyle {
 	return (s + 1) % borderStyleCount
+}
+
+// StrokeStyle controls whether a boundary or line is continuous.
+type StrokeStyle uint8
+
+const (
+	StrokeSolid StrokeStyle = iota
+	StrokeDashed
+	strokeStyleCount
+)
+
+// Valid reports whether style is supported.
+func (s StrokeStyle) Valid() bool {
+	return s < strokeStyleCount
+}
+
+// Toggle switches between solid and dashed strokes.
+func (s StrokeStyle) Toggle() StrokeStyle {
+	return (s + 1) % strokeStyleCount
 }
 
 // HorizontalAlign controls label placement across a node's inner bounds.
@@ -97,24 +117,31 @@ func (s ArrowStyle) Next() ArrowStyle {
 // NodeStyle controls node rendering.
 type NodeStyle struct {
 	Border     BorderStyle
+	Stroke     StrokeStyle
 	Horizontal HorizontalAlign
 	Vertical   VerticalAlign
 }
 
 // Valid reports whether every node style dimension is supported.
 func (s NodeStyle) Valid() bool {
-	return s.Border.Valid() && s.Horizontal.Valid() && s.Vertical.Valid()
+	return s.Border.Valid() &&
+		s.Stroke.Valid() &&
+		s.Horizontal.Valid() &&
+		s.Vertical.Valid()
 }
 
 // EdgeStyle controls endpoint rendering by graph port order.
 type EdgeStyle struct {
 	PortAArrow ArrowStyle
 	PortBArrow ArrowStyle
+	Stroke     StrokeStyle
 }
 
 // Valid reports whether every edge style dimension is supported.
 func (s EdgeStyle) Valid() bool {
-	return s.PortAArrow.Valid() && s.PortBArrow.Valid()
+	return s.PortAArrow.Valid() &&
+		s.PortBArrow.Valid() &&
+		s.Stroke.Valid()
 }
 
 // NodeStyle returns nodeID's style.

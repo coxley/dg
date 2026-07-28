@@ -83,6 +83,14 @@ func TestUnicodeNodeBorderStyles(t *testing.T) {
 				"╰──────╯\n",
 		},
 		{
+			name:  "double",
+			style: layout.BorderDouble,
+			output: "" +
+				"╔══════╗\n" +
+				"║ node ║\n" +
+				"╚══════╝\n",
+		},
+		{
 			name:  "none",
 			style: layout.BorderNone,
 			output: "" +
@@ -107,6 +115,29 @@ func TestUnicodeNodeBorderStyles(t *testing.T) {
 			require.Equal(t, test.output, got)
 		})
 	}
+}
+
+func TestUnicodeDashedStrokes(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	source := newNodeAt(t, geo, "a", layout.Point{})
+	sink := newNodeAt(t, geo, "b", layout.Point{X: 12})
+	edgeID := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+	for _, nodeID := range [...]uint32{source, sink} {
+		require.NoError(t, geo.SetNodeStyle(nodeID, layout.NodeStyle{
+			Stroke: layout.StrokeDashed,
+		}))
+	}
+	require.NoError(t, geo.SetEdgeStyle(edgeID, layout.EdgeStyle{
+		Stroke: layout.StrokeDashed,
+	}))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Contains(t, got, "╌")
+	require.Contains(t, got, "╎")
 }
 
 func TestUnicodeEdgeArrowsDoNotMutateRoute(t *testing.T) {

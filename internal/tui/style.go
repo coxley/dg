@@ -115,6 +115,84 @@ func (m *Model) cycleTextAlignment(vertical bool) {
 	m.status = ""
 }
 
+func (m *Model) toggleStroke() {
+	if m.mode != modeNavigate {
+		m.setError(finishOperation)
+		return
+	}
+	selection := m.geo.Selection()
+	hit, hasHit := m.activeHit()
+	if selection.Empty() && (!hasHit ||
+		hit.Kind != layout.HitNode && hit.Kind != layout.HitEdge) {
+		m.setError("select a node or edge to change its stroke")
+		return
+	}
+
+	m.beginTransaction()
+	var err error
+	if selection.Empty() {
+		err = m.toggleHitStroke(hit)
+	} else {
+		err = m.toggleSelectionStroke()
+	}
+	if err == nil {
+		err = m.render()
+	}
+	if err != nil {
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
+		return
+	}
+	if err := m.commitTransaction(); err != nil {
+		m.setError(err.Error())
+		return
+	}
+	if selection.Empty() {
+		m.target = hit
+		m.selectOnly(hit)
+	}
+	m.refreshHits()
+	m.selectTarget()
+	m.status = ""
+}
+
+func (m *Model) toggleHitStroke(hit layout.Hit) error {
+	switch hit.Kind {
+	case layout.HitNode:
+		style, _ := m.geo.NodeStyle(hit.ID)
+		style.Stroke = style.Stroke.Toggle()
+		m.nodeStyle = style
+		return m.geo.SetNodeStyle(hit.ID, style)
+	case layout.HitEdge:
+		style, _ := m.geo.EdgeStyle(hit.ID)
+		style.Stroke = style.Stroke.Toggle()
+		m.edgeStyle = style
+		return m.geo.SetEdgeStyle(hit.ID, style)
+	case layout.HitPort:
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) toggleSelectionStroke() error {
+	for nodeID := range m.geo.Selection().Nodes() {
+		if err := m.toggleHitStroke(layout.Hit{
+			ID:   nodeID,
+			Kind: layout.HitNode,
+		}); err != nil {
+			return err
+		}
+	}
+	for edgeID := range m.geo.Selection().Edges() {
+		if err := m.toggleHitStroke(layout.Hit{
+			ID:   edgeID,
+			Kind: layout.HitEdge,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Model) cycleEdgeArrow(portA bool) {
 	if m.mode != modeNavigate {
 		m.setError(finishOperation)

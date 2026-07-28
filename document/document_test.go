@@ -161,6 +161,7 @@ func TestUnmarshalRejectsInvalidJSONShape(t *testing.T) {
 func TestDocumentValidation(t *testing.T) {
 	t.Parallel()
 
+	const unknownStyle = "future"
 	tests := []struct {
 		name   string
 		mutate func(*Document)
@@ -176,16 +177,30 @@ func TestDocumentValidation(t *testing.T) {
 		{
 			name: "unknown border style",
 			mutate: func(doc *Document) {
-				doc.Nodes[0].Style.Border = "future"
+				doc.Nodes[0].Style.Border = unknownStyle
 			},
 			want: "unknown border",
 		},
 		{
+			name: "unknown node stroke",
+			mutate: func(doc *Document) {
+				doc.Nodes[0].Style.Stroke = unknownStyle
+			},
+			want: "unknown stroke",
+		},
+		{
 			name: "unknown arrow style",
 			mutate: func(doc *Document) {
-				doc.Edges[0].Style.PortBArrow = "future"
+				doc.Edges[0].Style.PortBArrow = unknownStyle
 			},
 			want: "unknown arrow",
+		},
+		{
+			name: "unknown edge stroke",
+			mutate: func(doc *Document) {
+				doc.Edges[0].Style.Stroke = unknownStyle
+			},
+			want: "unknown stroke",
 		},
 		{
 			name: "unknown node port",
@@ -405,8 +420,13 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 					Border: rapid.SampledFrom([]BorderStyle{
 						"",
 						BorderRounded,
+						BorderDouble,
 						BorderNone,
 					}).Draw(t, "node border"),
+					Stroke: rapid.SampledFrom([]StrokeStyle{
+						"",
+						StrokeDashed,
+					}).Draw(t, "node stroke"),
 				},
 			}
 			if rapid.Bool().Draw(t, "explicit size") {
@@ -468,6 +488,10 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 					ArrowOpen,
 					ArrowFilled,
 				}).Draw(t, "port B arrow"),
+				Stroke: rapid.SampledFrom([]StrokeStyle{
+					"",
+					StrokeDashed,
+				}).Draw(t, "edge stroke"),
 			}
 		}
 		layers := make([]Layer, 0, len(doc.Nodes)+len(doc.Edges))

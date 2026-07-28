@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
@@ -261,7 +262,7 @@ func TestModelCyclesStylesAcrossSelection(t *testing.T) {
 	updateModel(t, model, keyPress('b', "b"))
 	require.Equal(
 		t,
-		layout.NodeStyle{Border: layout.BorderNone},
+		layout.NodeStyle{Border: layout.BorderDouble},
 		mustNodeStyle(t, model, left),
 	)
 	require.Equal(
@@ -290,6 +291,19 @@ func TestModelCyclesStylesAcrossSelection(t *testing.T) {
 	require.True(t, model.geo.Selection().Contains(edgeAHit))
 	require.True(t, model.geo.Selection().Contains(edgeBHit))
 	require.True(t, model.geo.Selection().Contains(leftHit))
+
+	updateModel(t, model, keyPress('-', "-"))
+	require.Equal(t, layout.StrokeDashed, mustNodeStyle(t, model, left).Stroke)
+	require.Equal(t, layout.StrokeDashed, mustEdgeStyle(t, model, edgeA).Stroke)
+	require.Equal(t, layout.StrokeDashed, mustEdgeStyle(t, model, edgeB).Stroke)
+	require.True(t, model.geo.Selection().Contains(edgeAHit))
+	require.True(t, model.geo.Selection().Contains(edgeBHit))
+	require.True(t, model.geo.Selection().Contains(leftHit))
+
+	updateModel(t, model, keyPress('-', "-"))
+	require.Equal(t, layout.StrokeSolid, mustNodeStyle(t, model, left).Stroke)
+	require.Equal(t, layout.StrokeSolid, mustEdgeStyle(t, model, edgeA).Stroke)
+	require.Equal(t, layout.StrokeSolid, mustEdgeStyle(t, model, edgeB).Stroke)
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{
 		Code: 'A',
@@ -530,6 +544,36 @@ func TestPreferenceModalFitsShortTerminals(t *testing.T) {
 		len(model.modalLines(preferenceModalWidth)),
 		model.diagramHeight(),
 	)
+}
+
+func TestSettingsModalClosesWithQ(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.openHelp()
+	updateModel(t, model, keyPress('q', "q"))
+	require.Equal(t, modalNone, model.modal)
+
+	model.openPreferences()
+	updateModel(t, model, keyPress('q', "q"))
+	require.Equal(t, modalNone, model.modal)
+}
+
+func TestPreferenceSelectArrowsNavigateConsistently(t *testing.T) {
+	t.Parallel()
+
+	keymap := preferenceKeyMap()
+	up := keyPress(tea.KeyUp, "")
+	down := keyPress(tea.KeyDown, "")
+	left := keyPress(tea.KeyLeft, "")
+	right := keyPress(tea.KeyRight, "")
+
+	require.True(t, key.Matches(up, keymap.Select.Prev))
+	require.False(t, key.Matches(up, keymap.Select.Up))
+	require.True(t, key.Matches(down, keymap.Select.Next))
+	require.False(t, key.Matches(down, keymap.Select.Down))
+	require.True(t, key.Matches(left, keymap.Select.Up))
+	require.True(t, key.Matches(right, keymap.Select.Down))
 }
 
 func TestPreferenceModalJustifiesTitlesAndValues(t *testing.T) {

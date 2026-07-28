@@ -436,13 +436,33 @@ func cellGlyph(
 ) rune {
 	connections := grid.Cells[index] &^ endpoints[index]
 	owner := grid.Owners[index]
-	if owner.Kind != layout.HitNode {
-		return Glyph(connections)
+	switch owner.Kind {
+	case layout.HitEdge:
+		style, ok := l.EdgeStyle(owner.ID)
+		if ok {
+			return StrokeGlyph(connections, style.Stroke)
+		}
+	case layout.HitNode:
+		style, ok := l.NodeStyle(owner.ID)
+		if !ok {
+			break
+		}
+		if style.Stroke == layout.StrokeDashed {
+			return StrokeGlyph(connections, style.Stroke)
+		}
+		switch style.Border {
+		case layout.BorderRounded:
+			return roundedGlyph(connections)
+		case layout.BorderDouble:
+			return doubleGlyph(connections)
+		case layout.BorderSolid, layout.BorderNone:
+		}
+	case layout.HitPort:
 	}
-	style, ok := l.NodeStyle(owner.ID)
-	if !ok || style.Border != layout.BorderRounded {
-		return Glyph(connections)
-	}
+	return Glyph(connections)
+}
+
+func roundedGlyph(connections layout.Connections) rune {
 	switch connections {
 	case layout.North | layout.East:
 		return '╰'
@@ -452,6 +472,35 @@ func cellGlyph(
 		return '╮'
 	case layout.North | layout.West:
 		return '╯'
+	default:
+		return Glyph(connections)
+	}
+}
+
+func doubleGlyph(connections layout.Connections) rune {
+	switch connections {
+	case layout.North | layout.East:
+		return '╚'
+	case layout.North | layout.South:
+		return '║'
+	case layout.North | layout.West:
+		return '╝'
+	case layout.East | layout.South:
+		return '╔'
+	case layout.East | layout.West:
+		return '═'
+	case layout.South | layout.West:
+		return '╗'
+	case layout.North | layout.East | layout.South:
+		return '╠'
+	case layout.North | layout.East | layout.West:
+		return '╩'
+	case layout.North | layout.South | layout.West:
+		return '╣'
+	case layout.East | layout.South | layout.West:
+		return '╦'
+	case layout.North | layout.East | layout.South | layout.West:
+		return '╬'
 	default:
 		return Glyph(connections)
 	}
@@ -565,4 +614,21 @@ func Glyph(connections layout.Connections) rune {
 	default:
 		panic(fmt.Sprintf("unknown connections %04b", connections))
 	}
+}
+
+// StrokeGlyph returns the glyph for connections using stroke.
+func StrokeGlyph(
+	connections layout.Connections,
+	stroke layout.StrokeStyle,
+) rune {
+	if stroke == layout.StrokeDashed {
+		switch connections {
+		case layout.North | layout.South:
+			return '╎'
+		case layout.East | layout.West:
+			return '╌'
+		case layout.North, layout.East, layout.South, layout.West:
+		}
+	}
+	return Glyph(connections)
 }

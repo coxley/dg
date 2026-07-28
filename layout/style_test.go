@@ -98,7 +98,13 @@ func TestStyleValidation(t *testing.T) {
 	require.Error(t, geo.SetNodeStyle(nodeID, NodeStyle{
 		Border: BorderStyle(255),
 	}))
+	require.Error(t, geo.SetNodeStyle(nodeID, NodeStyle{
+		Stroke: StrokeStyle(255),
+	}))
 	require.Error(t, geo.SetEdgeStyle(edgeID, EdgeStyle{
 		PortAArrow: ArrowStyle(255),
+	}))
+	require.Error(t, geo.SetEdgeStyle(edgeID, EdgeStyle{
+		Stroke: StrokeStyle(255),
 	}))
 }

@@ -704,7 +704,10 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 	); ok {
 		return glyph, true
 	}
-	return render.Glyph(connections), true
+	return render.StrokeGlyph(
+		connections,
+		model.connectionPreviewStyle().Stroke,
+	), true
 }
 
 func (m *Model) connectionPreviewStyle() layout.EdgeStyle {

@@ -438,6 +438,8 @@ func (m *Model) updateNavigationCommand(code rune) {
 		m.activateTool(modeRectangle)
 	case 'b':
 		m.cycleBorder()
+	case '-':
+		m.toggleStroke()
 	case 'a':
 		m.cycleEdgeArrow(false)
 	case 't':

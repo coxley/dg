@@ -40,6 +40,7 @@ type Node struct {
 // NodeStyle stores node rendering choices.
 type NodeStyle struct {
 	Border     BorderStyle     `json:"border,omitempty"`
+	Stroke     StrokeStyle     `json:"stroke,omitempty"`
 	Horizontal HorizontalAlign `json:"horizontal,omitempty"`
 	Vertical   VerticalAlign   `json:"vertical,omitempty"`
 }
@@ -49,8 +50,14 @@ type BorderStyle string
 
 const (
 	BorderRounded BorderStyle = "rounded"
+	BorderDouble  BorderStyle = "double"
 	BorderNone    BorderStyle = "none"
 )
+
+// StrokeStyle identifies a persisted line pattern.
+type StrokeStyle string
+
+const StrokeDashed StrokeStyle = "dashed"
 
 // HorizontalAlign identifies persisted horizontal label placement.
 type HorizontalAlign string
@@ -105,8 +112,9 @@ type Edge struct {
 
 // EdgeStyle stores endpoint arrow choices.
 type EdgeStyle struct {
-	PortAArrow ArrowStyle `json:"port_a_arrow,omitempty"`
-	PortBArrow ArrowStyle `json:"port_b_arrow,omitempty"`
+	PortAArrow ArrowStyle  `json:"port_a_arrow,omitempty"`
+	PortBArrow ArrowStyle  `json:"port_b_arrow,omitempty"`
+	Stroke     StrokeStyle `json:"stroke,omitempty"`
 }
 
 // ArrowStyle identifies a persisted endpoint marker.
@@ -371,6 +379,8 @@ func documentNodeStyle(style layout.NodeStyle) NodeStyle {
 	case layout.BorderSolid:
 	case layout.BorderRounded:
 		border = BorderRounded
+	case layout.BorderDouble:
+		border = BorderDouble
 	case layout.BorderNone:
 		border = BorderNone
 	}
@@ -392,6 +402,7 @@ func documentNodeStyle(style layout.NodeStyle) NodeStyle {
 	}
 	return NodeStyle{
 		Border:     border,
+		Stroke:     documentStrokeStyle(style.Stroke),
 		Horizontal: horizontal,
 		Vertical:   vertical,
 	}
@@ -404,10 +415,15 @@ func (s NodeStyle) layoutStyle() (layout.NodeStyle, error) {
 		border = layout.BorderSolid
 	case BorderRounded:
 		border = layout.BorderRounded
+	case BorderDouble:
+		border = layout.BorderDouble
 	case BorderNone:
 		border = layout.BorderNone
 	default:
 		return layout.NodeStyle{}, fmt.Errorf("unknown border %q", s.Border)
+	}
+	if s.Stroke != "" && s.Stroke != StrokeDashed {
+		return layout.NodeStyle{}, fmt.Errorf("unknown stroke %q", s.Stroke)
 	}
 	var horizontal layout.HorizontalAlign
 	switch s.Horizontal {
@@ -433,6 +449,7 @@ func (s NodeStyle) layoutStyle() (layout.NodeStyle, error) {
 	}
 	return layout.NodeStyle{
 		Border:     border,
+		Stroke:     s.Stroke.layoutStyle(),
 		Horizontal: horizontal,
 		Vertical:   vertical,
 	}, nil
@@ -442,7 +459,22 @@ func documentEdgeStyle(style layout.EdgeStyle) EdgeStyle {
 	return EdgeStyle{
 		PortAArrow: documentArrowStyle(style.PortAArrow),
 		PortBArrow: documentArrowStyle(style.PortBArrow),
+		Stroke:     documentStrokeStyle(style.Stroke),
 	}
+}
+
+func documentStrokeStyle(style layout.StrokeStyle) StrokeStyle {
+	if style == layout.StrokeDashed {
+		return StrokeDashed
+	}
+	return ""
+}
+
+func (s StrokeStyle) layoutStyle() layout.StrokeStyle {
+	if s == StrokeDashed {
+		return layout.StrokeDashed
+	}
+	return layout.StrokeSolid
 }
 
 func documentArrowStyle(style layout.ArrowStyle) ArrowStyle {
@@ -465,7 +497,14 @@ func (s EdgeStyle) layoutStyle() (layout.EdgeStyle, error) {
 	if err != nil {
 		return layout.EdgeStyle{}, fmt.Errorf("port B: %w", err)
 	}
-	return layout.EdgeStyle{PortAArrow: portA, PortBArrow: portB}, nil
+	if s.Stroke != "" && s.Stroke != StrokeDashed {
+		return layout.EdgeStyle{}, fmt.Errorf("unknown stroke %q", s.Stroke)
+	}
+	return layout.EdgeStyle{
+		PortAArrow: portA,
+		PortBArrow: portB,
+		Stroke:     s.Stroke.layoutStyle(),
+	}, nil
 }
 
 func (s ArrowStyle) layoutStyle() (layout.ArrowStyle, error) {
