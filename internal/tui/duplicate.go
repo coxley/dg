@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"slices"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
@@ -158,72 +157,11 @@ func (m *Model) cancelDuplicateDrag() {
 }
 
 func (m *Model) refreshDuplicateHighlight() {
-	bounds := m.duplicateFrame.Bounds
-	cellCount := int(bounds.Size.Width) * int(bounds.Size.Height)
-	m.duplicateHighlight = slices.Grow(
-		m.duplicateHighlight[:0],
-		cellCount,
-	)[:cellCount]
-	clear(m.duplicateHighlight)
-	for nodeID := range m.duplicateGeo.Selection().Nodes() {
-		rect := m.duplicateGeo.Nodes[nodeID].Rect
-		limit := rect.Max()
-		for x := rect.Min.X; x < limit.X; x++ {
-			m.markDuplicateHighlight(layout.NewPoint(x, rect.Min.Y))
-			m.markDuplicateHighlight(layout.NewPoint(x, limit.Y-1))
-		}
-		for y := rect.Min.Y; y < limit.Y; y++ {
-			m.markDuplicateHighlight(layout.NewPoint(rect.Min.X, y))
-			m.markDuplicateHighlight(layout.NewPoint(limit.X-1, y))
-		}
-	}
-	for edgeID := range m.duplicateGeo.Selection().Edges() {
-		points := m.duplicateGeo.Edges[edgeID].Points
-		for i := 1; i < len(points); i++ {
-			m.markDuplicateSegment(points[i-1], points[i])
-		}
-	}
-}
-
-func (m *Model) markDuplicateSegment(a, b layout.Point) {
-	switch {
-	case a.X == b.X:
-		end := max(a.Y, b.Y)
-		for y := min(a.Y, b.Y); ; y++ {
-			m.markDuplicateHighlight(layout.NewPoint(a.X, y))
-			if y == end {
-				break
-			}
-		}
-	case a.Y == b.Y:
-		end := max(a.X, b.X)
-		for x := min(a.X, b.X); ; x++ {
-			m.markDuplicateHighlight(layout.NewPoint(x, a.Y))
-			if x == end {
-				break
-			}
-		}
-	}
-}
-
-func (m *Model) markDuplicateHighlight(point layout.Point) {
-	bounds := m.duplicateFrame.Bounds
-	if !bounds.Contains(point) {
-		return
-	}
-	x := int(point.X - bounds.Min.X)
-	y := int(point.Y - bounds.Min.Y)
-	m.duplicateHighlight[y*int(bounds.Size.Width)+x] = true
-}
-
-func (m *Model) duplicateHighlighted(point layout.Point) bool {
-	bounds := m.duplicateFrame.Bounds
-	if !bounds.Contains(point) {
-		return false
-	}
-	x := int(point.X - bounds.Min.X)
-	y := int(point.Y - bounds.Min.Y)
-	return m.duplicateHighlight[y*int(bounds.Size.Width)+x]
+	m.duplicateHighlight = appendSelectionHighlight(
+		m.duplicateHighlight,
+		m.duplicateGeo,
+		m.duplicateFrame,
+	)
 }
 
 func pointDelta(from, to layout.Point) (int64, int64) {

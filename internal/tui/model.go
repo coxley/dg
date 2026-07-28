@@ -106,6 +106,7 @@ type Model struct {
 	editCaretVisible bool
 
 	dragging      bool
+	rigidMoving   bool
 	resizing      bool
 	resizeCorner  resizeCorner
 	resizeFixed   layout.Point
@@ -120,6 +121,7 @@ type Model struct {
 	encoder            render.Encoder
 	duplicateEncoder   render.Encoder
 	duplicateHighlight []bool
+	moveHighlight      []bool
 	frameRows          []rowSpan
 	connectFrameRows   []rowSpan
 	duplicateRows      []rowSpan
@@ -492,7 +494,16 @@ func (m *Model) moveSelectedNodes(
 	if err := m.geo.MoveSelection(dx, dy); err != nil {
 		return false, errors.Join(err, m.restoreMovedNodes())
 	}
-	if err := m.rebuildSelection(); err != nil {
+	if m.rigidMoving {
+		if err := m.render(); err != nil {
+			return false, errors.Join(err, m.restoreMovedNodes())
+		}
+		m.moveHighlight = appendSelectionHighlight(
+			m.moveHighlight,
+			m.geo,
+			m.frame,
+		)
+	} else if err := m.rebuildSelection(); err != nil {
 		return false, errors.Join(err, m.restoreMovedNodes())
 	}
 	m.cursor = cursor
@@ -538,6 +549,7 @@ func (m *Model) beginMove() {
 	}
 	m.target = target
 	m.beginTransaction()
+	m.rigidMoving = m.geo.SelectionMovesRigidly()
 	m.mode = modeMove
 	m.status = ""
 }
@@ -809,9 +821,15 @@ func (m *Model) cancelTransaction() error {
 }
 
 func (m *Model) finishMove() {
-	err := m.commitTransaction()
+	var routeErr error
+	if m.rigidMoving {
+		routeErr = m.rebuildSelection()
+	}
+	err := errors.Join(routeErr, m.commitTransaction())
 	m.mode = modeNavigate
 	m.dragging = false
+	m.rigidMoving = false
+	m.moveHighlight = m.moveHighlight[:0]
 	if err != nil {
 		m.status = err.Error()
 	} else {
@@ -832,6 +850,8 @@ func (m *Model) interruptInteraction() {
 	m.clearConnection()
 	m.cancelDuplicateDrag()
 	m.dragging = false
+	m.rigidMoving = false
+	m.moveHighlight = m.moveHighlight[:0]
 	m.resizing = false
 	m.creatingRectangle = false
 	m.editMouseDown = false

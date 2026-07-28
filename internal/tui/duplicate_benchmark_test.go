@@ -61,3 +61,36 @@ func BenchmarkModelAltDrag(b *testing.B) {
 		iteration++
 	}
 }
+
+func BenchmarkModelMoveCommittedDuplicate(b *testing.B) {
+	model, left, right := newTwoNodeModel(b)
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(b, model.rebuild())
+	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
+	require.True(b, model.geo.Selection().Toggle(layout.Hit{
+		ID:   right,
+		Kind: layout.HitNode,
+	}))
+	require.True(b, model.geo.Selection().Toggle(layout.Hit{
+		ID:   edgeID,
+		Kind: layout.HitEdge,
+	}))
+	require.NoError(b, model.geo.DuplicateSelection(30, 10))
+	require.NoError(b, model.rebuild())
+	updateModel(b, model, tea.WindowSizeMsg{Width: 120, Height: 40})
+	model.beginMove()
+	require.Equal(b, modeMove, model.mode)
+
+	keys := [...]tea.KeyPressMsg{
+		keyPress(tea.KeyRight, ""),
+		keyPress(tea.KeyLeft, ""),
+	}
+	iteration := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		model.Update(keys[iteration%len(keys)])
+		benchmarkView = model.View()
+		iteration++
+	}
+}

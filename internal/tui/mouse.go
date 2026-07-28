@@ -101,6 +101,7 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.target = hit
 	m.dragOffset = layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y)
 	m.beginTransaction()
+	m.rigidMoving = m.geo.SelectionMovesRigidly()
 	m.dragging = true
 }
 
@@ -266,6 +267,7 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 		m.commitLabelEdit()
 		m.beginTransaction()
 		m.editMouseDown = false
+		m.rigidMoving = m.geo.SelectionMovesRigidly()
 		m.dragging = true
 		origin := layout.NewPoint(point.X-m.dragOffset.X, point.Y-m.dragOffset.Y)
 		m.placeNode(nodeID, origin, point)

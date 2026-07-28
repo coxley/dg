@@ -317,7 +317,14 @@ func (m *Model) highlightedRange(y, start, end uint32) bool {
 
 func (m *Model) highlightedPoint(point layout.Point) bool {
 	if m.duplicateDragging {
-		return m.duplicateHighlighted(point)
+		return highlightContains(
+			m.duplicateHighlight,
+			m.duplicateFrame,
+			point,
+		)
+	}
+	if m.rigidMoving {
+		return highlightContains(m.moveHighlight, m.frame, point)
 	}
 	if m.selecting && m.marqueeArea().contains(point) {
 		return true

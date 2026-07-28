@@ -670,10 +670,18 @@ func (r Router) routeSelection(l *Layout) error {
 			continue
 		}
 		if l.edgeEndpointsSelected(edge) && len(scratch.paths[edgeID]) >= 2 {
+			expanded, err := appendExpandedPath(
+				scratch.expanded[:0],
+				scratch.paths[edgeID],
+			)
+			if err != nil {
+				return fmt.Errorf("expand edge %d: %w", edgeID, err)
+			}
+			scratch.expanded = expanded
 			_, _, valid := r.scorePath(
 				l,
 				id,
-				scratch.paths[edgeID],
+				expanded,
 				&scratch.occupancy,
 			)
 			if valid {

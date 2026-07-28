@@ -517,6 +517,28 @@ func (l *Layout) MoveSelection(dx, dy int64) error {
 	return nil
 }
 
+// SelectionMovesRigidly reports whether every edge incident to a selected node
+// has both endpoint nodes selected.
+func (l *Layout) SelectionMovesRigidly() bool {
+	if !l.selection.HasNodes() {
+		return false
+	}
+	for edgeID, edge := range l.graph.Edges {
+		id := uint32(edgeID)
+		if !l.graph.EdgeExists(id) {
+			continue
+		}
+		nodeA := l.graph.Ports[edge.PortA].Node
+		nodeB := l.graph.Ports[edge.PortB].Node
+		selectedA := l.selection.Contains(Hit{ID: nodeA, Kind: HitNode})
+		selectedB := l.selection.Contains(Hit{ID: nodeB, Kind: HitNode})
+		if selectedA != selectedB {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *Layout) edgeEndpointsSelected(edge ir.Edge) bool {
 	nodeA := l.graph.Ports[edge.PortA].Node
 	nodeB := l.graph.Ports[edge.PortB].Node

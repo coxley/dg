@@ -163,3 +163,23 @@ func TestMoveSelectionPreservesValidInternalRoutes(t *testing.T) {
 		require.Equal(t, point.Add(5, 6), geo.Edges[edgeID].Points[i])
 	}
 }
+
+func TestSelectionMovesRigidly(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	a, err := geo.NewNodeAt("a", NewPoint(2, 2))
+	require.NoError(t, err)
+	b, err := geo.NewNodeAt("b", NewPoint(14, 2))
+	require.NoError(t, err)
+	c, err := geo.NewNodeAt("c", NewPoint(26, 2))
+	require.NoError(t, err)
+	geo.ConnectNodes(a, ir.RightSide, ir.LeftSide, b)
+	geo.Selection().SelectOnly(Hit{ID: a, Kind: HitNode})
+	require.True(t, geo.Selection().Toggle(Hit{ID: b, Kind: HitNode}))
+	require.True(t, geo.SelectionMovesRigidly())
+
+	geo.ConnectNodes(b, ir.RightSide, ir.LeftSide, c)
+	require.False(t, geo.SelectionMovesRigidly())
+}
