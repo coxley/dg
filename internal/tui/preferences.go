@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	modalview "github.com/coxley/dg/internal/tui/modal"
+	"github.com/coxley/dg/internal/tui/numinput"
 	"github.com/coxley/dg/layout"
 )
 
@@ -362,15 +363,15 @@ func newPreferenceForm(
 	values *preferenceFormValues,
 	height int,
 	theme Theme,
-) (*huh.Form, []*stepperField) {
+) (*huh.Form, []*numinput.Field) {
 	keymap := preferenceKeyMap()
-	steppers := []*stepperField{
-		newStepperField("Step cost", &values.step, 32, theme),
-		newStepperField("Shared-step cost", &values.sharedStep, 32, theme),
-		newStepperField("Bend cost", &values.bend, 32, theme),
-		newStepperField("Crossing cost", &values.crossing, 32, theme),
-		newStepperField("Endpoint cost", &values.endpoint, 32, theme),
-		newStepperField("Reroute passes", &values.reroutePasses, 8, theme),
+	steppers := []*numinput.Field{
+		numinput.NewField("Step cost", &values.step, 32, theme.NumInput),
+		numinput.NewField("Shared-step cost", &values.sharedStep, 32, theme.NumInput),
+		numinput.NewField("Bend cost", &values.bend, 32, theme.NumInput),
+		numinput.NewField("Crossing cost", &values.crossing, 32, theme.NumInput),
+		numinput.NewField("Endpoint cost", &values.endpoint, 32, theme.NumInput),
+		numinput.NewField("Reroute passes", &values.reroutePasses, 8, theme.NumInput),
 	}
 	directory := values.saveDirectory
 	if info, err := os.Stat(directory); err != nil || !info.IsDir() {

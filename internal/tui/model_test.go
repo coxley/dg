@@ -691,7 +691,7 @@ func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	require.Equal(t, before, model.geo.Router().Costs.Step)
 	command := updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before+1, model.geo.Router().Costs.Step)
-	require.Equal(t, 1, model.preferenceFields[0].flash)
+	require.Equal(t, 1, model.preferenceFields[0].Flash())
 	require.NotNil(t, command)
 }
 

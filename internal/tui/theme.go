@@ -7,21 +7,19 @@ import (
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
+	"github.com/coxley/dg/internal/tui/numinput"
 )
 
 // Theme contains every terminal-facing visual style.
 type Theme struct {
-	Canvas            canvasview.Styles
-	Nav               nav.Styles
-	Modal             modalview.Styles
-	HelpKey           lipgloss.Style
-	HelpDescription   lipgloss.Style
-	StepperTitle      lipgloss.Style
-	StepperTitleFocus lipgloss.Style
-	Button            lipgloss.Style
-	ButtonActive      lipgloss.Style
-	FormSeparator     lipgloss.Style
-	FormField         lipgloss.Style
+	Canvas          canvasview.Styles
+	Nav             nav.Styles
+	Modal           modalview.Styles
+	NumInput        numinput.Styles
+	HelpKey         lipgloss.Style
+	HelpDescription lipgloss.Style
+	FormSeparator   lipgloss.Style
+	FormField       lipgloss.Style
 }
 
 // DefaultTheme returns the editor's default terminal theme.
@@ -73,16 +71,18 @@ func DefaultTheme(dark bool) Theme {
 			Tab:       tab,
 			ActiveTab: tabActive,
 		},
-		HelpKey:           tabActive.Padding(0),
-		HelpDescription:   tab.Padding(0),
-		StepperTitle:      tab.Padding(0),
-		StepperTitleFocus: tabActive.Padding(0),
-		Button: lipgloss.NewStyle().
-			Padding(0, 1),
-		ButtonActive: lipgloss.NewStyle().
-			Background(focus).
-			Foreground(text).
-			Padding(0, 1),
+		NumInput: numinput.Styles{
+			Title:        tab.Padding(0),
+			FocusedTitle: tabActive.Padding(0),
+			Button: lipgloss.NewStyle().
+				Padding(0, 1),
+			ActiveButton: lipgloss.NewStyle().
+				Background(focus).
+				Foreground(text).
+				Padding(0, 1),
+		},
+		HelpKey:         tabActive.Padding(0),
+		HelpDescription: tab.Padding(0),
 		FormSeparator: lipgloss.NewStyle().
 			SetString("\n"),
 		FormField: lipgloss.NewStyle().

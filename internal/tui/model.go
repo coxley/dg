@@ -15,6 +15,7 @@ import (
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
+	"github.com/coxley/dg/internal/tui/numinput"
 	"github.com/coxley/dg/layout"
 )
 
@@ -158,7 +159,7 @@ type Model struct {
 	preferenceEdit   bool
 	preferenceForm   *huh.Form
 	preferenceInput  preferenceFormValues
-	preferenceFields []*stepperField
+	preferenceFields []*numinput.Field
 	help             help.Model
 	keys             keyMap
 
@@ -256,7 +257,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.preferenceForm != nil {
 			m.preferenceForm.WithTheme(m.theme.formTheme())
 			for _, field := range m.preferenceFields {
-				field.theme = m.theme
+				field.SetStyles(m.theme.NumInput)
 			}
 		}
 	case tea.KeyboardEnhancementsMsg:
@@ -360,9 +361,12 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m *Model) updateComponent(message componentMsg) tea.Cmd {
-	if flash, ok := message.message.(stepperFlashMsg); ok {
-		flash.field.clearFlash(flash.generation)
-		return nil
+	if flash, ok := message.message.(numinput.FlashExpiredMsg); ok {
+		for _, field := range m.preferenceFields {
+			if field.HandleFlash(flash) {
+				return nil
+			}
+		}
 	}
 	switch {
 	case message.kind == settingsComponent &&
