@@ -161,6 +161,8 @@ type Model struct {
 	clipboardPending  string
 	clipboardProbe    uint64
 	copyArmed         bool
+	copyPending       string
+	copyGeneration    uint64
 	exportForm        *huh.Form
 	exportText        string
 	exportStyle       exportStyle
@@ -290,27 +292,27 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 		}
 	case tea.MouseClickMsg:
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		if m.modal != modalNone {
 			return m, m.updateModalMouseClick(message.Mouse())
 		}
 		m.updateMouseClick(message.Mouse())
 	case tea.MouseReleaseMsg:
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		if m.modal != modalNone {
 			m.modalDragging = false
 			return m, nil
 		}
 		m.updateMouseRelease(message.Mouse())
 	case tea.MouseMotionMsg:
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		if m.modal != modalNone {
 			return m, m.updateModalMouseMotion(message.Mouse())
 		}
 		m.updateToolbarHover(message.Mouse())
 		m.updateMouseMotion(message.Mouse())
 	case tea.MouseWheelMsg:
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		return m, m.updateMouseWheelMessage(message)
 	case tea.BlurMsg:
 		m.interruptInteraction()
@@ -323,6 +325,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case clipboardProbeExpiredMsg:
 		return m, m.handleClipboardTimeout(message)
+	case copyDebounceExpiredMsg:
+		return m, m.handleCopyDebounce(message)
 	case clipboardFallbackMsg:
 		return m, m.handleClipboardFallback(message)
 	}
@@ -371,7 +375,7 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	if !copyKey {
-		m.copyArmed = false
+		m.cancelPendingCopy()
 	}
 	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
 		return m.copySelection()
@@ -513,8 +517,6 @@ func (m *Model) updateNavigationCommand(code rune) {
 		m.activateTool(modeConnect)
 	case 'd':
 		m.duplicateSelectionDefault()
-	case 'c':
-		m.copySelection()
 	case tea.KeyBackspace, tea.KeyDelete:
 		m.deleteActive()
 	case tea.KeyEscape:
@@ -1067,6 +1069,7 @@ func (m *Model) finishMove() {
 }
 
 func (m *Model) interruptInteraction() {
+	m.cancelPendingCopy()
 	if m.preferenceEdit {
 		m.closeSettingsModal()
 	}

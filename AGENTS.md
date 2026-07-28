@@ -296,9 +296,11 @@ Current editing shortcuts:
 
 Two successive copy commands open an export form. Export supports preferred
 line comments (`// `, `# `, or block comments) and Markdown code fences.
-Trailing whitespace is removed from copied rows. On first use, the editor
-probes terminal clipboard reads for 100 ms. A response selects Bubble Tea's
-OSC52 clipboard commands for the session; a timeout selects
+Trailing whitespace is removed from copied rows. The first copy waits 100 ms;
+a second copy in that window opens Export without writing the provisional
+version. On first clipboard use, the editor probes terminal clipboard reads
+for 100 ms. A response selects Bubble Tea's OSC52 clipboard commands for the
+session; a timeout selects
 `golang.design/x/clipboard`. Advertise Super-C only after Bubble Tea reports
 keyboard enhancements.
 

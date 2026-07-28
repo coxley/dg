@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
@@ -47,8 +49,11 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 
 		command := updateModelCommand(t, model, tea.KeyPressMsg(key))
 		require.NotNil(t, command)
-		message := command()
-		command = updateModelCommand(t, model, message)
+		command = updateModelCommand(t, model, copyDebounceExpiredMsg{
+			generation: model.copyGeneration,
+		})
+		require.NotNil(t, command)
+		command = updateModelCommand(t, model, command())
 
 		require.Equal(t, strings.Join([]string{
 			"┌──────┐",
@@ -67,22 +72,93 @@ func TestSecondCopyOpensExportPrompt(t *testing.T) {
 	model, nodeID := newTestModel(t)
 	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 	model.clipboardMode = clipboardFallback
-	model.clipboardFallback = func(string) error { return nil }
+	copies := 0
+	model.clipboardFallback = func(string) error {
+		copies++
+		return nil
+	}
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
 		Code: 'c',
 		Mod:  tea.ModCtrl,
 	}))
-	updateModelCommand(t, model, command())
+	require.NotNil(t, command)
+	generation := model.copyGeneration
 	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
 		Code: 'c',
 		Mod:  tea.ModCtrl,
 	}))
+	require.Nil(t, updateModelCommand(t, model, copyDebounceExpiredMsg{
+		generation: generation,
+	}))
 
 	require.Equal(t, modalExport, model.modal)
+	require.Zero(t, copies)
 	require.Equal(t, exportLineSlash, model.exportStyle)
 	require.Contains(t, model.View().Content, "Line comments")
+}
+
+func TestCopyDebounceWaitsForInactivity(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		model, nodeID := newTestModel(t)
+		model.geo.Selection().SelectOnly(layout.Hit{
+			ID:   nodeID,
+			Kind: layout.HitNode,
+		})
+		model.clipboardMode = clipboardFallback
+		var copied string
+		model.clipboardFallback = func(text string) error {
+			copied = text
+			return nil
+		}
+
+		command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+			Code: 'c',
+			Mod:  tea.ModCtrl,
+		}))
+		messages := make(chan tea.Msg, 1)
+		go func() {
+			messages <- command()
+		}()
+
+		time.Sleep(copyDebounceDuration - time.Millisecond)
+		require.Empty(t, messages)
+		require.Empty(t, copied)
+		time.Sleep(time.Millisecond)
+		command = updateModelCommand(t, model, <-messages)
+		require.NotNil(t, command)
+		updateModelCommand(t, model, command())
+		require.NotEmpty(t, copied)
+	})
+}
+
+func TestCopyDebounceIgnoresStaleTimerAfterInterruption(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	model.geo.Selection().SelectOnly(layout.Hit{
+		ID:   nodeID,
+		Kind: layout.HitNode,
+	})
+	model.clipboardMode = clipboardFallback
+	copies := 0
+	model.clipboardFallback = func(string) error {
+		copies++
+		return nil
+	}
+
+	require.NotNil(t, updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	})))
+	generation := model.copyGeneration
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Nil(t, updateModelCommand(t, model, copyDebounceExpiredMsg{
+		generation: generation,
+	}))
+	require.Zero(t, copies)
 }
 
 func TestExportPromptStartsWithPreferredComments(t *testing.T) {
@@ -109,6 +185,11 @@ func TestCopySelectionReportsClipboardFailure(t *testing.T) {
 		Code: 'c',
 		Mod:  tea.ModCtrl,
 	}))
+	require.NotNil(t, command)
+	command = updateModelCommand(t, model, copyDebounceExpiredMsg{
+		generation: model.copyGeneration,
+	})
+	require.NotNil(t, command)
 	updateModel(t, model, command())
 
 	require.Equal(t, "copy selection: unavailable", model.status)

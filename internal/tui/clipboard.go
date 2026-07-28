@@ -15,7 +15,10 @@ import (
 	"golang.design/x/clipboard"
 )
 
-const clipboardProbeTimeout = 100 * time.Millisecond
+const (
+	clipboardProbeTimeout = 100 * time.Millisecond
+	copyDebounceDuration  = 100 * time.Millisecond
+)
 
 type clipboardMode uint8
 
@@ -26,6 +29,10 @@ const (
 )
 
 type clipboardProbeExpiredMsg struct {
+	generation uint64
+}
+
+type copyDebounceExpiredMsg struct {
 	generation uint64
 }
 
@@ -61,23 +68,49 @@ const (
 func (m *Model) copySelection() tea.Cmd {
 	if !m.hasSelection() {
 		m.setError("select something to copy")
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		return nil
 	}
 	text, err := m.selectionText()
 	if err != nil {
 		m.setError(err.Error())
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		return nil
 	}
 	if m.copyArmed {
+		m.cancelPendingCopy()
 		m.openExport(text)
-		m.copyArmed = false
 		return nil
 	}
 	m.copyArmed = true
+	m.copyPending = text
+	m.copyGeneration++
+	generation := m.copyGeneration
 	m.status = ""
+	return tea.Tick(copyDebounceDuration, func(time.Time) tea.Msg {
+		return copyDebounceExpiredMsg{generation: generation}
+	})
+}
+
+func (m *Model) handleCopyDebounce(message copyDebounceExpiredMsg) tea.Cmd {
+	if !m.copyArmed ||
+		m.copyPending == "" ||
+		message.generation != m.copyGeneration {
+		return nil
+	}
+	text := m.copyPending
+	m.copyArmed = false
+	m.copyPending = ""
 	return m.writeClipboard(text)
+}
+
+func (m *Model) cancelPendingCopy() {
+	if !m.copyArmed && m.copyPending == "" {
+		return
+	}
+	m.copyArmed = false
+	m.copyPending = ""
+	m.copyGeneration++
 }
 
 func (m *Model) openExport(text string) {
@@ -208,7 +241,7 @@ func (m *Model) writeFallbackClipboard(text string) tea.Cmd {
 func (m *Model) handleClipboardFallback(message clipboardFallbackMsg) tea.Cmd {
 	if message.err != nil {
 		m.setError("copy selection: " + message.err.Error())
-		m.copyArmed = false
+		m.cancelPendingCopy()
 		return nil
 	}
 	return m.showNotice("Copied to clipboard", modalNone)
