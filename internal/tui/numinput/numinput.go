@@ -3,12 +3,11 @@ package numinput
 
 import (
 	"strconv"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
+	"github.com/coxley/dg/internal/tui/flex"
 	"golang.org/x/exp/constraints"
 )
 
@@ -96,7 +95,9 @@ func (m *Model[T]) Render() string {
 	value := strconv.FormatUint(uint64(*m.value), 10)
 	title := m.styles.Title.Render(m.title)
 	if !m.focused {
-		return justifyApart(title, value, m.width)
+		// Visually align the value of blurred and focused row values. Focusing will
+		// simply cause the arrows to "appear"
+		return renderRow(m.width, title, "  "+value+"  ")
 	}
 	title = m.styles.FocusedTitle.Render(m.title)
 	left, right := m.styles.Button.Render("⇽"), m.styles.Button.Render("⇾")
@@ -105,11 +106,7 @@ func (m *Model[T]) Render() string {
 	} else if m.flash > 0 {
 		right = m.styles.ActiveButton.Render("⇾")
 	}
-	return justifyApart(
-		title,
-		left+" "+value+" "+right,
-		m.width,
-	)
+	return renderRow(m.width, title, left+" "+value+" "+right)
 }
 
 // SetStyles replaces the input's visual styles.
@@ -168,14 +165,14 @@ func (m *Model[T]) step(delta int) tea.Cmd {
 	})
 }
 
-func justifyApart(left, right string, width int) string {
-	if width <= 0 {
-		return left + "  " + right
-	}
-	rightWidth := ansi.StringWidth(right)
-	leftWidth := max(width-rightWidth-1, 0)
-	left = ansi.Truncate(left, leftWidth, "")
-	return left +
-		strings.Repeat(" ", max(width-ansi.StringWidth(left)-rightWidth, 0)) +
-		right
+func renderRow(width int, title, value string) string {
+	return flex.Row(
+		width,
+		flex.Item{Content: title, Shrink: 1},
+		flex.Item{
+			Content: value,
+			Grow:    1,
+			Align:   lipgloss.Right,
+		},
+	)
 }

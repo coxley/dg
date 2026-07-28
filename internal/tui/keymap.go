@@ -105,7 +105,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 func (k *keyMap) setKeyboardEnhancements(enabled bool) {
 	if enabled {
-		k.copy.SetHelp("super+c / ctrl+c", "copy")
+		k.copy.SetHelp("cmd+c / cmd+c", "copy")
 		return
 	}
 	k.copy.SetHelp("ctrl+c", "copy")

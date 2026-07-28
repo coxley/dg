@@ -19,6 +19,7 @@ Composable presentation models live in sub-packages:
 - `canvas` owns canvas styles, encoders, retained frames, and row indexes.
 - `clipboard` owns copy debounce, export formatting and form state, terminal
   capability probing, and fallback writes.
+- `flex` allocates ANSI-aware single-line content across horizontal rows.
 - `nav` owns floating tool navigation styles, geometry, hover, and activation.
 - `modal` owns modal and tab styles, sizing, full-screen fallback, movement,
   and pointer hit testing.

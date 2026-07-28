@@ -77,11 +77,11 @@ func DefaultTheme(dark bool) Theme {
 			Title:        tab.Padding(0),
 			FocusedTitle: tabActive.Padding(0),
 			Button: lipgloss.NewStyle().
-				Padding(0, 1),
+				Padding(0),
 			ActiveButton: lipgloss.NewStyle().
 				Background(focus).
 				Foreground(text).
-				Padding(0, 1),
+				Padding(0),
 		},
 		HelpKey:         tabActive.Padding(0),
 		HelpDescription: tab.Padding(0),

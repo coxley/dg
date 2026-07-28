@@ -274,7 +274,7 @@ func newForm(
 		Title("Default save directory").
 		DirAllowed(true).
 		FileAllowed(false).
-		ShowHidden(true).
+		ShowHidden(false).
 		CurrentDirectory(directory).
 		Picking(false).
 		Value(&value.saveDirectory)
@@ -329,11 +329,11 @@ func newForm(
 func keyMap() *huh.KeyMap {
 	keymap := huh.NewDefaultKeyMap()
 	keymap.Input.Prev = keybinding.NewBinding(
-		keybinding.WithKeys("up", "k", "shift+tab"),
+		keybinding.WithKeys("up", "k"),
 		keybinding.WithHelp("↑", "previous"),
 	)
 	keymap.Input.Next = keybinding.NewBinding(
-		keybinding.WithKeys("down", "j", "enter", "tab"),
+		keybinding.WithKeys("down", "j", "enter"),
 		keybinding.WithHelp("↓", "next"),
 	)
 	keymap.Confirm.Prev = keymap.Input.Prev

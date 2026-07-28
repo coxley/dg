@@ -15,7 +15,7 @@ import (
 const (
 	probeTimeout = 100 * time.Millisecond
 	// DebounceDuration is the interval for distinguishing copy from export.
-	DebounceDuration = 300 * time.Millisecond
+	DebounceDuration = 175 * time.Millisecond
 )
 
 type mode uint8

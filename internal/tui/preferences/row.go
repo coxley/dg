@@ -7,7 +7,8 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"github.com/charmbracelet/x/ansi"
+	"charm.land/lipgloss/v2"
+	"github.com/coxley/dg/internal/tui/flex"
 )
 
 type rowField struct {
@@ -62,7 +63,15 @@ func (f *rowField) View() string {
 	control := valueStyle.Render(
 		f.control(f.field.GetValue(), f.focused),
 	)
-	return justifyApart(title, control, f.width)
+	return flex.Row(
+		f.width,
+		flex.Item{Content: title, Shrink: 1},
+		flex.Item{
+			Content: control,
+			Grow:    1,
+			Align:   lipgloss.Right,
+		},
+	)
 }
 
 func (f *rowField) Focus() tea.Cmd {
@@ -166,16 +175,4 @@ func choiceControl(value any, focused bool) string {
 		return "⇽ " + choice + " ⇾"
 	}
 	return choice
-}
-
-func justifyApart(left, right string, width int) string {
-	if width <= 0 {
-		return left + "  " + right
-	}
-	rightWidth := ansi.StringWidth(right)
-	leftWidth := max(width-rightWidth-1, 0)
-	left = ansi.Truncate(left, leftWidth, "")
-	return left +
-		strings.Repeat(" ", max(width-ansi.StringWidth(left)-rightWidth, 0)) +
-		right
 }
