@@ -344,7 +344,7 @@ func (m *Model) updateNavigationCommand(code rune) {
 	case 'n':
 		m.newNode()
 	case 'r':
-		m.beginRectangle()
+		m.activateTool(modeRectangle)
 	case 'b':
 		m.cycleBorder()
 	case 'a':
@@ -352,15 +352,28 @@ func (m *Model) updateNavigationCommand(code rune) {
 	case 't':
 		m.cycleTextAlignment(false)
 	case 'l':
-		if m.mode != modeConnect {
-			m.beginConnection()
-		}
+		m.activateTool(modeConnect)
 	case 'd':
 		m.duplicateSelectionDefault()
 	case tea.KeyBackspace, tea.KeyDelete:
 		m.deleteActive()
 	case tea.KeyEscape:
 		m.cancelMode()
+	}
+}
+
+func (m *Model) activateTool(next mode) {
+	if m.mode == next {
+		return
+	}
+	m.cancelMode()
+	switch next {
+	case modeRectangle:
+		m.beginRectangle()
+	case modeConnect:
+		m.beginConnection()
+	default:
+		return
 	}
 }
 

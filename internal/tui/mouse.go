@@ -117,11 +117,9 @@ func (m *Model) updateToolbarClick(mouse tea.Mouse) bool {
 	case x >= 0 && x < len(" Cursor "):
 		m.cancelMode()
 	case x < len(" Cursor ")+len(" Rectangle "):
-		m.cancelMode()
-		m.beginRectangle()
+		m.activateTool(modeRectangle)
 	case x < toolbarToolsWidth:
-		m.cancelMode()
-		m.beginConnection()
+		m.activateTool(modeConnect)
 	default:
 		return false
 	}

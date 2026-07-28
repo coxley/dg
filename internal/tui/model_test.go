@@ -137,6 +137,21 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 	require.Equal(t, layout.Size{Width: 8, Height: 5}, model.geo.Nodes[nodeID].Rect.Size)
 }
 
+func TestModelSwitchesDirectlyBetweenDrawingTools(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+
+	updateModel(t, model, keyPress('r', "r"))
+	require.Equal(t, modeRectangle, model.mode)
+	updateModel(t, model, keyPress('l', "l"))
+	require.Equal(t, modeConnect, model.mode)
+	updateModel(t, model, keyPress('r', "r"))
+	require.Equal(t, modeRectangle, model.mode)
+	updateModel(t, model, keyPress(tea.KeyEscape, ""))
+	require.Equal(t, modeNavigate, model.mode)
+}
+
 func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
 	t.Parallel()
 
