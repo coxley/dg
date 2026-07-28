@@ -91,6 +91,11 @@ type Model struct {
 	edgeDragHit       layout.Hit
 	edgeDragStart     layout.Point
 	creatingRectangle bool
+	duplicatePending  bool
+	duplicateDragging bool
+	duplicateStart    layout.Point
+	duplicatePoint    layout.Point
+	duplicateGeo      *layout.Layout
 
 	mode             mode
 	modal            modal
@@ -111,9 +116,12 @@ type Model struct {
 
 	frame            render.Frame
 	connectFrame     render.Frame
+	duplicateFrame   render.Frame
 	encoder          render.Encoder
+	duplicateEncoder render.Encoder
 	frameRows        []rowSpan
 	connectFrameRows []rowSpan
+	duplicateRows    []rowSpan
 	viewBuffer       []byte
 	statusText       []byte
 
@@ -773,6 +781,7 @@ func (m *Model) cancelMode() {
 	}
 	m.mode = modeNavigate
 	m.clearConnection()
+	m.cancelDuplicateDrag()
 	m.dragging = false
 	m.selecting = false
 	m.creatingRectangle = false
@@ -825,6 +834,7 @@ func (m *Model) interruptInteraction() {
 		m.mode = modeNavigate
 	}
 	m.clearConnection()
+	m.cancelDuplicateDrag()
 	m.dragging = false
 	m.resizing = false
 	m.creatingRectangle = false

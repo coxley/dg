@@ -86,3 +86,23 @@ func TestSetRouterIsUndoable(t *testing.T) {
 	require.True(t, changed)
 	require.Equal(t, before, geo.Router())
 }
+
+func TestCloneIsIndependentAndPreservesSelection(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	nodeID, err := geo.NewNodeAt("node", NewPoint(3, 4))
+	require.NoError(t, err)
+	geo.Selection().SelectOnly(Hit{ID: nodeID, Kind: HitNode})
+	require.NoError(t, geo.Build())
+
+	cloned, err := geo.Clone()
+	require.NoError(t, err)
+	require.True(t, cloned.Selection().Contains(Hit{ID: nodeID, Kind: HitNode}))
+	require.NoError(t, cloned.PlaceNode(nodeID, NewPoint(9, 10)))
+	require.NoError(t, cloned.Build())
+
+	require.Equal(t, NewPoint(3, 4), geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, NewPoint(9, 10), cloned.Nodes[nodeID].Rect.Min)
+}

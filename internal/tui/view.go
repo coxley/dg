@@ -26,6 +26,8 @@ func (m *Model) View() tea.View {
 	frame, rows := m.frame, m.frameRows
 	if m.reconnecting && m.connectDragging {
 		frame, rows = m.connectFrame, m.connectFrameRows
+	} else if m.duplicateDragging {
+		frame, rows = m.duplicateFrame, m.duplicateRows
 	}
 	m.viewBuffer = m.appendToolbar(m.viewBuffer[:0])
 	bodyOrigin := m.viewport
@@ -344,8 +346,12 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 	if m.mode == modeConnect {
 		return m.portAt(point)
 	}
-	if m.hasSelection() {
-		for nodeID := range m.geo.Selection().Nodes() {
+	geo := m.geo
+	if m.duplicateDragging {
+		geo = m.duplicateGeo
+	}
+	if !geo.Selection().Empty() {
+		for nodeID := range geo.Selection().Nodes() {
 			if m.highlightForHit(
 				layout.Hit{ID: nodeID, Kind: layout.HitNode},
 				point,
@@ -353,7 +359,7 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 				return true
 			}
 		}
-		for edgeID := range m.geo.Selection().Edges() {
+		for edgeID := range geo.Selection().Edges() {
 			if m.highlightForHit(
 				layout.Hit{ID: edgeID, Kind: layout.HitEdge},
 				point,
@@ -371,15 +377,19 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 }
 
 func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
+	geo := m.geo
+	if m.duplicateDragging {
+		geo = m.duplicateGeo
+	}
 	switch hit.Kind {
 	case layout.HitNode:
-		return m.geo.NodeExists(hit.ID) &&
-			m.geo.Nodes[hit.ID].Rect.OnBoundary(point)
+		return geo.NodeExists(hit.ID) &&
+			geo.Nodes[hit.ID].Rect.OnBoundary(point)
 	case layout.HitPort:
 		return false
 	case layout.HitEdge:
-		return m.geo.EdgeExists(hit.ID) &&
-			m.geo.Edges[hit.ID].Contains(point)
+		return geo.EdgeExists(hit.ID) &&
+			geo.Edges[hit.ID].Contains(point)
 	}
 	return false
 }

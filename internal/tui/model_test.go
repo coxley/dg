@@ -345,6 +345,73 @@ func TestModelDuplicatesSelectedNodesAndInternalEdges(t *testing.T) {
 	require.False(t, model.geo.NodeExists(3))
 }
 
+func TestModelAltDragPreviewsAndCommitsDuplicate(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	point := model.geo.Nodes[nodeID].LabelPoint
+	click := tea.MouseClickMsg{
+		X:      int(point.X),
+		Y:      int(point.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	}
+	updateModel(t, model, click)
+	require.True(t, model.duplicatePending)
+	require.False(t, model.duplicateDragging)
+	require.Len(t, model.geo.Graph().Nodes, 1)
+
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      click.X + 10,
+		Y:      click.Y + 4,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	require.True(t, model.duplicateDragging)
+	require.NotNil(t, model.duplicateGeo)
+	require.NotEmpty(t, model.duplicateFrame.Text)
+	require.Len(t, model.geo.Graph().Nodes, 1)
+
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      click.X + 10,
+		Y:      click.Y + 4,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	require.False(t, model.duplicateDragging)
+	require.Nil(t, model.duplicateGeo)
+	require.Len(t, model.geo.Graph().Nodes, 2)
+	copied, ok := model.firstSelectedNode()
+	require.True(t, ok)
+	require.Equal(t, model.geo.Nodes[nodeID].Rect.Min.Add(10, 4), model.geo.Nodes[copied.ID].Rect.Min)
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.False(t, model.geo.NodeExists(copied.ID))
+}
+
+func TestModelAltClickWithoutDragDoesNotDuplicate(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	point := model.geo.Nodes[nodeID].LabelPoint
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(point.X),
+		Y:      int(point.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      int(point.X),
+		Y:      int(point.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+
+	require.False(t, model.duplicatePending)
+	require.Len(t, model.geo.Graph().Nodes, 1)
+}
+
 func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	t.Parallel()
 

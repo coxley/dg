@@ -757,6 +757,55 @@ func (l *Layout) SetRouter(router Router) {
 	}
 }
 
+// Clone returns an independent layout with matching semantic, geometry, style,
+// layer, and selection state. The clone has no attached history.
+func (l *Layout) Clone() (*Layout, error) {
+	cloned, err := New(func(cloned *Layout) {
+		cloned.graph = l.graph
+		cloned.padding = l.padding
+		cloned.router = l.router
+		cloned.drawOrder = slices.Clone(l.drawOrder)
+	})
+	if err != nil {
+		return nil, err
+	}
+	for nodeID := range l.graph.Nodes {
+		id := uint32(nodeID)
+		if !l.graph.NodeExists(id) {
+			continue
+		}
+		if err := cloned.PlaceNode(id, l.origins[id]); err != nil {
+			return nil, err
+		}
+		if size, explicit := l.ExplicitNodeSize(id); explicit {
+			if err := cloned.SetNodeSize(id, size); err != nil {
+				return nil, err
+			}
+		}
+		if err := cloned.SetNodeStyle(id, l.nodeStyles[id]); err != nil {
+			return nil, err
+		}
+	}
+	for edgeID := range l.graph.Edges {
+		id := uint32(edgeID)
+		if l.graph.EdgeExists(id) {
+			if err := cloned.SetEdgeStyle(id, l.edgeStyles[id]); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for nodeID := range l.selection.Nodes() {
+		cloned.selection.Toggle(Hit{ID: nodeID, Kind: HitNode})
+	}
+	for edgeID := range l.selection.Edges() {
+		cloned.selection.Toggle(Hit{ID: edgeID, Kind: HitEdge})
+	}
+	if err := cloned.Build(); err != nil {
+		return nil, err
+	}
+	return cloned, nil
+}
+
 // Build routes edges using the current node and port geometry.
 func (l *Layout) Build() error {
 	if err := l.router.route(l); err != nil {

@@ -68,6 +68,10 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		}
 		return
 	}
+	if m.mode == modeNavigate && mouse.Mod.Contains(tea.ModAlt) {
+		m.beginDuplicateDrag(point, hit)
+		return
+	}
 	if m.mode == modeNavigate && mouse.Mod.Contains(tea.ModCtrl) {
 		m.geo.Selection().Toggle(hit)
 		m.dragging = false
@@ -233,6 +237,13 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 	if m.updateRectangleMotion(mouse) {
 		return
 	}
+	if (m.duplicatePending || m.duplicateDragging) &&
+		mouse.Button == tea.MouseLeft {
+		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+			m.updateDuplicateDrag(point)
+		}
+		return
+	}
 	if m.edgeDragPending && mouse.Button == tea.MouseLeft {
 		point, ok := m.documentPoint(mouse.X, mouse.Y)
 		if !ok || point == m.edgeDragStart {
@@ -321,6 +332,14 @@ func (m *Model) updateRectangleMotion(mouse tea.Mouse) bool {
 
 func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 	switch {
+	case (m.duplicatePending || m.duplicateDragging) &&
+		mouse.Button == tea.MouseLeft:
+		point, ok := m.documentPoint(mouse.X, mouse.Y)
+		if !ok {
+			m.cancelDuplicateDrag()
+			return
+		}
+		m.finishDuplicateDrag(point)
 	case m.creatingRectangle && mouse.Button == tea.MouseLeft:
 		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
 			m.resizeNode(point)
