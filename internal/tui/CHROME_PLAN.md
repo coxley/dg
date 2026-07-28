@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 3 complete; Phase 4 not started
+- Current phase: Phase 4 complete; Phase 5 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -519,7 +519,7 @@ review, and integration gate before beginning the next phase.
 | 1. Baseline characterization | Complete | Baseline tests are green |
 | 2. Geometry and menu | Complete | Existing nav uses chrome geometry |
 | 3. Pane and viewport | Complete | Overflow matrix and resize invariants pass |
-| 4. Chrome lab | Not started | Interactive and initial `ht` scenarios pass |
+| 4. Chrome lab | Complete | Interactive and initial `ht` scenarios pass |
 | 5. Commands and focus | Not started | Effective binding matrix matches dispatch |
 | 6. Surfaces and contextual Help | Not started | One z-order/input router owns active surfaces |
 | 7. Declarative Preferences | Not started | No rendered-text geometry recovery remains |
@@ -583,15 +583,15 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 4: chrome lab
 
-- [ ] Add `internal/tui/cmd/chrome-lab` without importing editor business logic.
-- [ ] Add scenario selection for layout, pane, viewport, menu, density, and
+- [x] Add `internal/tui/cmd/chrome-lab` without importing editor business logic.
+- [x] Add scenario selection for layout, pane, viewport, menu, density, and
   overflow combinations.
-- [ ] Add an on-screen diagnostics pane.
-- [ ] Add a headless-terminal runner with named sessions and guaranteed cleanup.
-- [ ] Exercise keyboard, resize, wheel, click, drag, and raw SGR mouse input.
-- [ ] Capture JSON for assertions and PNG only on failure.
-- [ ] Keep initial scenarios limited to capabilities completed through Phase 3.
-- [ ] Document one interactive command and one automated smoke command.
+- [x] Add an on-screen diagnostics pane.
+- [x] Add a headless-terminal runner with named sessions and guaranteed cleanup.
+- [x] Exercise keyboard, resize, wheel, click, drag, and raw SGR mouse input.
+- [x] Capture JSON for assertions and PNG only on failure.
+- [x] Keep initial scenarios limited to capabilities completed through Phase 3.
+- [x] Document one interactive command and one automated smoke command.
 
 ### Phase 5: semantic commands and focus scopes
 
@@ -803,6 +803,8 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Clip below intrinsic minimum only as an emergency when the physical parent cannot contain minimums. | This keeps every arranged rectangle inside its parent while preserving minimum sizes whenever the terminal can satisfy them. |
 | 2026-07-28 | Reserve scrollbar cells and converge monotonically from required bars to automatic bars. | Reserving one bar can induce overflow on the other axis; monotonic addition reaches the least stable arrangement without oscillation. |
 | 2026-07-28 | Use `█` thumbs with `│` and `─` tracks for the initial viewport. | These single-cell glyphs remain legible at constrained sizes and make thumb bounds deterministic; the chrome lab can provide evidence for later theme tokens. |
+| 2026-07-28 | Keep the headless chrome-lab smoke as an explicit integration command for now. | The smoke depends on the external `ht` daemon; deterministic model tests remain in the default Go suite while CI placement stays open for operational evidence. |
+| 2026-07-28 | Test resize through `WindowSizeMsg` plus separate real PTYs at each required size. | The installed `ht` version has no live resize command; this combination verifies in-process reflow and real terminal composition without sleeps. |
 
 ## Changed-File Ledger
 
@@ -814,6 +816,7 @@ Update this table after each completed phase or reviewable slice.
 | 1 | `internal/tui/keymap.go`, `internal/tui/CHROME_PLAN.md` | Align enhanced copy help with the registered Super chord and record the baseline. |
 | 2 | `internal/tui/chrome/AGENTS.md`, `internal/tui/chrome/{geometry,layout,menu,text}.go`, `internal/tui/chrome/{layout,menu}_test.go`, `internal/tui/nav/{nav.go,nav_test.go}`, `internal/tui/{model,view,modal}.go`, `internal/tui/CHROME_PLAN.md` | Add retained chrome geometry and menu mechanics, migrate navigation and root placement, and remove duplicated toolbar geometry. |
 | 3 | `internal/tui/chrome/{pane,viewport}.go`, `internal/tui/chrome/{pane,viewport}_test.go`, `internal/tui/CHROME_PLAN.md` | Add sticky panes, finite scrolling viewports, convergent reserved scrollbars, reveal, pointer translation, and nested independent scroll regions. |
+| 4 | `internal/tui/cmd/chrome-lab/{main.go,main_test.go,README.md,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add the interactive chrome lab, stable diagnostics, responsive scenarios, and failure-artifact PTY smoke runner. |
 
 ## Verification Ledger
 
@@ -855,3 +858,14 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 3 | `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed with 0 issues after fixes. |
 | 2026-07-28 | 3 | `ht run` and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed: exact dimensions, toolbar, status, and hidden cursor confirmed. All sessions stopped and removed. |
 | 2026-07-28 | 3 | `dd-gopls check <phase-3-go-file>` for all four Phase 3 Go files | Passed with no diagnostics. |
+| 2026-07-28 | 4 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/cmd/chrome-lab -count=1` | Passed interaction and resize-before-view tests. |
+| 2026-07-28 | 4 | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed at `100x30`, `80x16`, and `80x12`; exercised keyboard, wheel, click, drag, and raw SGR input with wait-coupled sends and cleaned all sessions. |
+| 2026-07-28 | 4 | Full test, race, vet, and lint gate | Tests, race, and vet passed; lint failed on three repeated scenario-name literals. Replaced them with semantic constants and re-ran the complete gate and smoke. |
+| 2026-07-28 | 4 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...` | Passed all packages after lint fixes. |
+| 2026-07-28 | 4 | `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...` | Passed all packages after lint fixes. |
+| 2026-07-28 | 4 | `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...` | Passed after lint fixes. |
+| 2026-07-28 | 4 | `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed with 0 issues after fixes. |
+| 2026-07-28 | 4 | `./internal/tui/cmd/chrome-lab/smoke.sh` (post-fix) | Passed all three sizes. |
+| 2026-07-28 | 4 | Root `ht run` and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed: toolbar and status visible, cursor hidden. All sessions stopped and removed. |
+| 2026-07-28 | 4 | `dd-gopls check internal/tui/cmd/chrome-lab/{main.go,main_test.go}` | Passed with no diagnostics. |
+| 2026-07-28 | 4 | `bash -n internal/tui/cmd/chrome-lab/smoke.sh` | Passed. |
