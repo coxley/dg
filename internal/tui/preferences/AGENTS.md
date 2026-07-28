@@ -13,6 +13,8 @@ navigation, and the current form value. `Model` implements `tea.Model`.
 - Commands from Huh and numeric children return as `UpdateMsg`; route those
   messages back to `Model.Update`.
 - `Completed` distinguishes Save from Cancel after the form finishes.
+- The form uses its natural content height when space permits. `SetHeight`
+  constrains only terminals or explicitly resized modal bodies.
 
 ## Verification
 

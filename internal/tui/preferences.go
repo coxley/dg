@@ -341,14 +341,11 @@ func (m *Model) syncPreferenceForm() {
 }
 
 func (m *Model) preferenceFormHeight() int {
-	const (
-		preferenceCount = 9
-		modalFrameRows  = 4
-	)
+	const modalFrameRows = 4
 	if m.height == 0 {
-		return preferenceCount + 1
+		return 0
 	}
-	return min(preferenceCount+1, max(m.diagramHeight()-modalFrameRows, 1))
+	return max(m.diagramHeight()-modalFrameRows, 1)
 }
 
 func (m *Model) resizePreferenceForm() {

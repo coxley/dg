@@ -195,6 +195,19 @@ func (m Model) Overlay() Overlay {
 	return m.overlay
 }
 
+// BodyHeight returns the rows available after shell, tab, and body framing.
+func (m Model) BodyHeight() int {
+	geo := m.normal
+	if m.variant == Notice {
+		geo = m.notice
+	}
+	height := m.overlay.Height - geo.frameHeight
+	if len(m.tabs) != 0 {
+		height -= lipgloss.Height(m.tabsView()) + m.body.frameHeight
+	}
+	return max(height, 1)
+}
+
 // Dragging reports whether pointer motion is moving the modal.
 func (m Model) Dragging() bool {
 	return m.dragging

@@ -128,6 +128,7 @@ func TestModelResizesFromNearestCornerAfterPointerMotion(t *testing.T) {
 	model := New(testStyles())
 	model.Configure(80, 24, 0, 40, "one\ntwo\nthree", Standard, nil, 0)
 	before := model.Overlay()
+	bodyHeight := model.BodyHeight()
 	mouse := tea.Mouse{
 		X:      before.Left + before.Width - 4,
 		Y:      before.Top + before.Height - 2,
@@ -149,6 +150,7 @@ func TestModelResizesFromNearestCornerAfterPointerMotion(t *testing.T) {
 	require.Equal(t, before.Top, model.Overlay().Top)
 	require.Equal(t, before.Width+5, model.Overlay().Width)
 	require.Equal(t, before.Height+2, model.Overlay().Height)
+	require.Equal(t, bodyHeight+2, model.BodyHeight())
 }
 
 func TestModelNorthwestResizeKeepsOppositeCornerFixed(t *testing.T) {

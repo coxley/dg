@@ -86,6 +86,9 @@ func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
 	wasCaptured := m.dialog.CapturesPointer()
 	m.dialog, _ = m.dialog.Update(tea.MouseMotionMsg(mouse))
 	if wasCaptured || m.dialog.CapturesPointer() {
+		if m.modal == modalPreferences && m.dialog.Resizing() {
+			m.preferenceForm.SetHeight(m.dialog.BodyHeight())
+		}
 		return nil
 	}
 	switch m.modal {

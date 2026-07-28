@@ -627,7 +627,7 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 40})
 	model.openPreferences()
 	before := model.geo.Router()
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
@@ -663,7 +663,7 @@ func TestSettingsModalCanResize(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 40})
 	model.openPreferences()
 	before := model.currentModalOverlay()
 	mouse := tea.Mouse{

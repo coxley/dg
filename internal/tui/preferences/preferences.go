@@ -8,6 +8,7 @@ import (
 	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/coxley/dg/internal/tui/numinput"
 	"github.com/coxley/dg/layout"
 )
@@ -53,13 +54,14 @@ type UpdateMsg struct {
 
 // Model owns the preferences form and its editable value.
 type Model struct {
-	value  Value
-	input  formValue
-	form   *huh.Form
-	fields []numericField
-	width  int
-	height int
-	styles Styles
+	value         Value
+	input         formValue
+	form          *huh.Form
+	fields        []numericField
+	width         int
+	height        int
+	naturalHeight int
+	styles        Styles
 }
 
 // New returns a preferences model.
@@ -105,7 +107,7 @@ func (m *Model) View() tea.View {
 func (m *Model) Reset(value Value) {
 	m.value = value
 	m.input = formValueFrom(value)
-	m.form, m.fields = newForm(
+	m.form, m.fields, m.naturalHeight = newForm(
 		&m.input,
 		m.width,
 		m.height,
@@ -126,7 +128,10 @@ func (m *Model) Completed() (save, completed bool) {
 // SetHeight replaces the available form height.
 func (m *Model) SetHeight(height int) {
 	m.height = height
-	m.form.WithHeight(height)
+	if height <= 0 {
+		height = m.naturalHeight
+	}
+	m.form.WithHeight(min(height, m.naturalHeight))
 }
 
 // SetStyles replaces all visual styles.
@@ -181,7 +186,7 @@ func newForm(
 	value *formValue,
 	width, height int,
 	styles Styles,
-) (*huh.Form, []numericField) {
+) (*huh.Form, []numericField, int) {
 	keymap := keyMap()
 	inputs := []numericField{
 		numinput.NewField("Step cost", &value.step, uint32(math.MaxUint32), styles.NumInput),
@@ -232,12 +237,16 @@ func newForm(
 	}
 	form := huh.NewForm(huh.NewGroup(fields...)).
 		WithWidth(width).
-		WithHeight(height).
 		WithShowHelp(false).
 		WithKeyMap(keymap).
 		WithTheme(styles.Form)
 	_ = form.Init()
-	return form, inputs
+	naturalHeight := lipgloss.Height(form.View())
+	if height <= 0 {
+		height = naturalHeight
+	}
+	form.WithHeight(min(height, naturalHeight))
+	return form, inputs, naturalHeight
 }
 
 func keyMap() *huh.KeyMap {

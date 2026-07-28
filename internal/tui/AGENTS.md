@@ -79,7 +79,8 @@ The preferences model reports editable values; root applies router changes
 live and owns the layout history transaction. Cancel, close, outside click, or
 lost focus restores the original values. Numeric fields change only with Left
 and Right and briefly highlight the pressed arrow. The directory field uses
-`huh.NewFilePicker`.
+`huh.NewFilePicker`. The form renders at its natural height when the terminal
+allows it and follows explicit modal resizing.
 
 Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 100 ms. A second copy in that

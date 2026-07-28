@@ -36,6 +36,17 @@ func TestModelReachesCompletion(t *testing.T) {
 	require.Contains(t, model.View().Content, "Cancel")
 }
 
+func TestModelExpandsFromViewportToNaturalHeight(t *testing.T) {
+	t.Parallel()
+
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 5, testStyles())
+	require.NotContains(t, model.View().Content, "Save")
+
+	model.SetHeight(100)
+	require.Contains(t, model.View().Content, "Save")
+	require.Contains(t, model.View().Content, "Cancel")
+}
+
 func TestModelImplementsTeaModel(t *testing.T) {
 	t.Parallel()
 
