@@ -102,11 +102,11 @@ func (f *stepperField) clearFlash(generation uint64) {
 }
 
 func (f *stepperField) View() string {
-	title := f.theme.Tab.Padding(0).Render(f.title)
+	title := f.theme.StepperTitle.Render(f.title)
 	if !f.focused {
 		return title + "  " + *f.value
 	}
-	title = f.theme.TabActive.Padding(0).Render(f.title)
+	title = f.theme.StepperTitleFocus.Render(f.title)
 	left, right := f.theme.Button.Render("⇽"), f.theme.Button.Render("⇾")
 	if f.flash < 0 {
 		left = f.theme.ButtonActive.Render("⇽")

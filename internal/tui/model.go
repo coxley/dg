@@ -12,8 +12,10 @@ import (
 	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	modalview "github.com/coxley/dg/internal/tui/modal"
+	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/layout"
-	"github.com/coxley/dg/render"
 )
 
 type mode uint8
@@ -68,11 +70,6 @@ func (m mode) String() string {
 	}
 }
 
-type rowSpan struct {
-	start int
-	end   int
-}
-
 // Model coordinates terminal interaction with a layout.
 type Model struct {
 	geo     *layout.Layout
@@ -101,17 +98,12 @@ type Model struct {
 	duplicateStart    layout.Point
 	duplicatePoint    layout.Point
 	duplicateGeo      *layout.Layout
-	toolbarHover      mode
-	hasToolbarHover   bool
+	nav               nav.Model
+	dialog            modalview.Model
+	canvas            canvasview.Model
 
 	mode             mode
 	modal            modal
-	modalLeft        int
-	modalTop         int
-	modalPositioned  bool
-	modalDragging    bool
-	modalDragOffsetX int
-	modalDragOffsetY int
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
@@ -128,23 +120,11 @@ type Model struct {
 	lastClick     layout.Point
 	hasLastClick  bool
 
-	frame              render.Frame
-	connectFrame       render.Frame
-	duplicateFrame     render.Frame
-	encoder            render.Encoder
-	duplicateEncoder   render.Encoder
 	duplicateHighlight []bool
 	moveHighlight      []bool
-	frameRows          []rowSpan
-	connectFrameRows   []rowSpan
-	duplicateRows      []rowSpan
 	viewBuffer         []byte
 	statusText         []byte
 	styledRuns         map[styledRunKey]string
-	toolbarLines       []string
-	toolbarMode        mode
-	toolbarHoverMode   mode
-	toolbarHasHover    bool
 
 	// Bubble Tea compares consecutive cursor pointers, so each View writes the
 	// cursor value that the previous View does not reference.
@@ -214,6 +194,9 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		clipboardFallback: writeFallbackClipboard,
 		styledRuns:        make(map[styledRunKey]string),
 	}
+	m.nav = nav.New(m.theme.Nav)
+	m.dialog = modalview.New(m.theme.Modal)
+	m.canvas = canvasview.New(m.theme.Canvas)
 	m.help.ShowAll = true
 	m.help.Styles = m.theme.helpStyles(true)
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
@@ -259,12 +242,17 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if command, handled := m.updatePresentation(message); handled {
+		return m, command
+	}
 	switch message := message.(type) {
 	case tea.BackgroundColorMsg:
 		m.theme = DefaultTheme(message.IsDark())
+		m.nav.SetStyles(m.theme.Nav)
+		m.dialog.SetStyles(m.theme.Modal)
+		m.canvas.SetStyles(m.theme.Canvas)
 		m.help.Styles = m.theme.helpStyles(message.IsDark())
 		clear(m.styledRuns)
-		m.toolbarLines = nil
 		if m.preferenceForm != nil {
 			m.preferenceForm.WithTheme(m.theme.formTheme())
 			for _, field := range m.preferenceFields {
@@ -278,6 +266,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 0)
 		m.height = max(message.Height, 0)
+		m.nav.SetWidth(m.width)
 		m.resizePreferenceForm()
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
@@ -297,11 +286,16 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modal != modalNone {
 			return m, m.updateModalMouseClick(message.Mouse())
 		}
+		if m.nav.Contains(message.X, message.Y) {
+			var command tea.Cmd
+			m.nav, command = m.nav.Update(message)
+			return m, command
+		}
 		m.updateMouseClick(message.Mouse())
 	case tea.MouseReleaseMsg:
 		m.cancelPendingCopy()
 		if m.modal != modalNone {
-			m.modalDragging = false
+			m.dialog, _ = m.dialog.Update(message)
 			return m, nil
 		}
 		m.updateMouseRelease(message.Mouse())
@@ -310,7 +304,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.modal != modalNone {
 			return m, m.updateModalMouseMotion(message.Mouse())
 		}
-		m.updateToolbarHover(message.Mouse())
+		m.nav, _ = m.nav.Update(message)
 		m.updateMouseMotion(message.Mouse())
 	case tea.MouseWheelMsg:
 		m.cancelPendingCopy()
@@ -334,6 +328,37 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
+	switch message := message.(type) {
+	case nav.ActivateMsg:
+		m.nav, _ = m.nav.Update(message)
+		switch message.Tool {
+		case nav.Cursor:
+			m.cancelMode()
+		case nav.Rectangle:
+			m.activateTool(modeRectangle)
+		case nav.Line:
+			m.activateTool(modeConnect)
+		}
+		return nil, true
+	case modalview.SwitchTabMsg:
+		m.dialog, _ = m.dialog.Update(message)
+		switch modal(message.ID) {
+		case modalHelp:
+			m.selectSettingsTab(modalHelp)
+		case modalPreferences:
+			m.openPreferences()
+		case modalNone, modalSave, modalExport, modalNotice:
+		}
+		return nil, true
+	case modalview.CloseMsg:
+		m.closeModal()
+		return nil, true
+	default:
+		return nil, false
+	}
+}
+
 func (m *Model) updateComponent(message componentMsg) tea.Cmd {
 	if flash, ok := message.message.(stepperFlashMsg); ok {
 		flash.field.clearFlash(flash.generation)
@@ -354,7 +379,7 @@ func (m *Model) updateComponent(message componentMsg) tea.Cmd {
 
 func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 	overlay := m.currentModalOverlay()
-	if m.modal == modalPreferences && overlay.contains(message.X, message.Y) {
+	if m.modal == modalPreferences && overlay.Contains(message.X, message.Y) {
 		return m.updateSettingsWheel(message)
 	}
 	if m.modal == modalNone {
@@ -737,7 +762,7 @@ func (m *Model) moveSelectedNodes(
 		m.moveHighlight = appendSelectionHighlight(
 			m.moveHighlight,
 			m.geo,
-			m.frame,
+			m.canvas.Frame(canvasview.BaseFrame),
 		)
 	} else if err := m.rebuildSelection(); err != nil {
 		return false, errors.Join(err, m.restoreMovedNodes())
@@ -1168,33 +1193,24 @@ func (m *Model) rebuildSelection() error {
 
 func (m *Model) render() error {
 	if !hasGeometry(m.geo) {
-		m.frame = render.Frame{}
-		m.frameRows = m.frameRows[:0]
+		m.canvas.Clear(canvasview.BaseFrame)
 		return nil
 	}
-	frame, err := m.encoder.EncodeFrame(m.frame.Text[:0], m.geo)
-	if err != nil {
+	if err := m.canvas.Render(canvasview.BaseFrame, m.geo); err != nil {
 		return fmt.Errorf("render layout: %w", err)
 	}
-	m.frame = frame
-	m.frameRows = indexFrameRows(m.frameRows, m.frame.Text)
 	return nil
 }
 
 func (m *Model) renderConnectionBase() error {
-	frame, err := m.encoder.EncodeFrameWithoutEdge(
-		m.connectFrame.Text[:0],
+	err := m.canvas.RenderWithoutEdge(
+		canvasview.ConnectionFrame,
 		m.geo,
 		m.connectEdge,
 	)
 	if err != nil {
 		return fmt.Errorf("render connection base: %w", err)
 	}
-	m.connectFrame = frame
-	m.connectFrameRows = indexFrameRows(
-		m.connectFrameRows,
-		m.connectFrame.Text,
-	)
 	return nil
 }
 
@@ -1236,21 +1252,6 @@ func (m *Model) ensureCursorVisible() {
 
 func (m *Model) diagramHeight() int {
 	return max(m.height-1, 0)
-}
-
-func indexFrameRows(rows []rowSpan, text []byte) []rowSpan {
-	rows = rows[:0]
-	start := 0
-	for i, value := range text {
-		if value == '\n' {
-			rows = append(rows, rowSpan{start: start, end: i})
-			start = i + 1
-		}
-	}
-	if start < len(text) {
-		rows = append(rows, rowSpan{start: start, end: len(text)})
-	}
-	return rows
 }
 
 func hasGeometry(geo *layout.Layout) bool {

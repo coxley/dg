@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	tea "charm.land/bubbletea/v2"
+	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/layout"
 )
 
@@ -48,16 +49,10 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 		}
 	}
 	m.duplicatePoint = point
-	frame, err := m.duplicateEncoder.EncodeFrame(
-		m.duplicateFrame.Text[:0],
-		m.duplicateGeo,
-	)
-	if err != nil {
+	if err := m.canvas.Render(canvasview.DuplicateFrame, m.duplicateGeo); err != nil {
 		m.setError(err.Error())
 		return
 	}
-	m.duplicateFrame = frame
-	m.duplicateRows = indexFrameRows(m.duplicateRows, frame.Text)
 	m.refreshDuplicateHighlight()
 	m.cursor = point
 	m.ensureCursorVisible()
@@ -150,9 +145,7 @@ func (m *Model) cancelDuplicateDrag() {
 	m.duplicatePending = false
 	m.duplicateDragging = false
 	m.duplicateGeo = nil
-	m.duplicateFrame.Bounds = layout.Rect{}
-	m.duplicateFrame.Text = m.duplicateFrame.Text[:0]
-	m.duplicateRows = m.duplicateRows[:0]
+	m.canvas.Clear(canvasview.DuplicateFrame)
 	m.duplicateHighlight = m.duplicateHighlight[:0]
 }
 
@@ -160,7 +153,7 @@ func (m *Model) refreshDuplicateHighlight() {
 	m.duplicateHighlight = appendSelectionHighlight(
 		m.duplicateHighlight,
 		m.duplicateGeo,
-		m.duplicateFrame,
+		m.canvas.Frame(canvasview.DuplicateFrame),
 	)
 }
 

@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/layout"
 	"github.com/rivo/uniseg"
 	"golang.design/x/clipboard"
@@ -336,16 +337,18 @@ func (m *Model) selectionBounds() (layout.Rect, bool) {
 }
 
 func (m *Model) selectionRow(start, end, y uint32) string {
-	if y < m.frame.Bounds.Min.Y || y >= m.frame.Bounds.Max().Y {
+	frame := m.canvas.Frame(canvasview.BaseFrame)
+	if y < frame.Bounds.Min.Y || y >= frame.Bounds.Max().Y {
 		return ""
 	}
-	rowID := int(y - m.frame.Bounds.Min.Y)
-	if rowID >= len(m.frameRows) {
+	rowID := int(y - frame.Bounds.Min.Y)
+	rows := m.canvas.Rows(canvasview.BaseFrame)
+	if rowID >= len(rows) {
 		return ""
 	}
-	span := m.frameRows[rowID]
-	row := m.frame.Text[span.start:span.end]
-	documentX := m.frame.Bounds.Min.X
+	span := rows[rowID]
+	row := frame.Text[span.Start:span.End]
+	documentX := frame.Bounds.Min.X
 	outputX := start
 	state := -1
 	var line strings.Builder

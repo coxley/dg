@@ -11,10 +11,6 @@ import (
 const reconnectDragRadius = 3
 
 func (m *Model) updateMouseClick(mouse tea.Mouse) {
-	if m.toolbarContains(mouse.X, mouse.Y) {
-		m.updateToolbarClick(mouse)
-		return
-	}
 	point, ok := m.documentPoint(mouse.X, mouse.Y)
 	if !ok {
 		return
@@ -104,55 +100,6 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.beginTransaction()
 	m.rigidMoving = m.geo.SelectionMovesRigidly()
 	m.dragging = true
-}
-
-func (m *Model) updateToolbarClick(mouse tea.Mouse) bool {
-	if mouse.Button != tea.MouseLeft ||
-		mouse.Y != toolbarToolRow ||
-		m.modal != modalNone {
-		return false
-	}
-	x := mouse.X - max((m.width-toolbarBoxWidth)/2, 0) - 2
-	switch {
-	case x >= 0 && x < len(" Cursor "):
-		m.cancelMode()
-	case x < len(" Cursor ")+len(" Rectangle "):
-		m.activateTool(modeRectangle)
-	case x < toolbarToolsWidth:
-		m.activateTool(modeConnect)
-	default:
-		return false
-	}
-	return true
-}
-
-func (m *Model) updateToolbarHover(mouse tea.Mouse) {
-	m.hasToolbarHover = false
-	if mouse.Y != toolbarToolRow || !m.toolbarContains(mouse.X, mouse.Y) {
-		return
-	}
-	x := mouse.X - max((m.width-toolbarBoxWidth)/2, 0) - 2
-	switch {
-	case x >= 0 && x < len(" Cursor "):
-		m.toolbarHover = modeNavigate
-	case x < len(" Cursor ")+len(" Rectangle "):
-		m.toolbarHover = modeRectangle
-	case x < toolbarToolsWidth:
-		m.toolbarHover = modeConnect
-	default:
-		return
-	}
-	m.hasToolbarHover = true
-}
-
-func (m *Model) toolbarContains(x, y int) bool {
-	if m.width < toolbarBoxWidth ||
-		y < toolbarTop ||
-		y >= toolbarTop+toolbarBoxHeight {
-		return false
-	}
-	left := (m.width - toolbarBoxWidth) / 2
-	return x >= left && x < left+toolbarBoxWidth
 }
 
 func (m *Model) beginResize(point layout.Point) {

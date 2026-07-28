@@ -8,18 +8,24 @@ semantics must remain outside this package.
 
 ## Architecture
 
-`Model` owns frontend state:
+The root `Model` owns editor coordination:
 
 - viewport, cursor, active tool, focus, and modal state
 - mouse, drag, resize, label-edit, and reconnect interactions
-- committed and preview frames
-- reusable encoders, highlights, row spans, and view buffers
 - save, preferences, clipboard, and notice state
 
-`Theme` in `theme.go` owns terminal-facing colors and styles. Lip Gloss layers
-and a compositor place modals over the canvas. Bubbles help renders shortcuts.
-Tabs use small local state based on the official Bubble Tea example.
-Save, export, and preferences use `huh/v2`.
+Composable presentation models live in sub-packages:
+
+- `canvas` owns canvas styles, encoders, retained frames, and row indexes.
+- `nav` owns floating tool navigation styles, geometry, hover, and activation.
+- `modal` owns modal and tab styles, sizing, full-screen fallback, movement,
+  and pointer hit testing.
+
+The root configures these models and translates their semantic `tea.Msg`
+values into editor actions. Component interactions cross boundaries through
+`tea.Msg` and `tea.Cmd`; do not reach into child state from root.
+
+Bubbles help renders shortcuts. Save, export, and preferences use `huh/v2`.
 
 The sparse canvas renderer remains custom. Generic viewports do not model
 document coordinates, occlusion, preview ownership, or its hot-path needs.
@@ -50,8 +56,11 @@ Node-only duplicate previews layer over committed frames without routing.
 Rigid committed moves skip routing when static edges cannot be affected.
 Keep preview geometry separate from committed geometry.
 
-Cache Lip Gloss-rendered toolbar and highlight spans. Rendering every cell
-through `lipgloss.Style` causes large allocation and latency regressions.
+Each component defines its own `Styles`; root `Theme` configures them. Derive
+component dimensions from border and padding geometry. Cache Lip
+Gloss-rendered navigation and highlight spans. Rendering every cell through
+`lipgloss.Style` causes large allocation and latency regressions.
+
 Profile drag changes with the existing TUI benchmarks and `go tool pprof`.
 
 ## Settings and clipboard

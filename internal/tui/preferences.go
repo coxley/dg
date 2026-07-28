@@ -11,6 +11,7 @@ import (
 	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/layout"
 )
 
@@ -192,16 +193,13 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 	}
 	if key.Code == tea.KeyTab && (key.Mod == 0 || key.Mod == tea.ModShift) {
 		if m.modal == modalHelp {
-			m.beginPreferenceEdit()
-			m.modal = modalPreferences
-		} else {
-			m.modal = modalHelp
+			return modalview.SwitchTab(modalview.TabID(modalPreferences))
 		}
-		return nil
+		return modalview.SwitchTab(modalview.TabID(modalHelp))
 	} else if m.modal == modalHelp && key.Code == '1' && key.Mod == 0 {
-		m.modal = modalHelp
+		return modalview.SwitchTab(modalview.TabID(modalHelp))
 	} else if m.modal == modalHelp && key.Code == '2' && key.Mod == 0 {
-		m.openPreferences()
+		return modalview.SwitchTab(modalview.TabID(modalPreferences))
 	}
 	return m.updateSettingsTabs(message)
 }

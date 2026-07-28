@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	modalview "github.com/coxley/dg/internal/tui/modal"
 )
 
 const (
@@ -12,85 +12,62 @@ const (
 	preferenceModalWidth = 68
 )
 
-type modalOverlay struct {
-	lines []string
-	left  int
-	top   int
-	width int
+var settingsTabs = []modalview.Tab{
+	{ID: modalview.TabID(modalHelp), Label: "Shortcuts"},
+	{ID: modalview.TabID(modalPreferences), Label: "Preferences"},
 }
 
-func (m *Model) currentModalOverlay() modalOverlay {
+func (m *Model) currentModalOverlay() modalview.Overlay {
 	if m.modal == modalNone || m.width < 2 {
-		return modalOverlay{}
+		m.dialog.Hide()
+		return modalview.Overlay{}
 	}
 	width := min(settingsModalWidth, m.width)
+	var (
+		content string
+		variant modalview.Variant
+		tabs    []modalview.Tab
+	)
 	switch m.modal {
 	case modalSave:
 		width = min(68, m.width)
+		content = m.saveForm.View()
 	case modalExport:
 		width = min(50, m.width)
-	case modalPreferences:
-		width = min(preferenceModalWidth, m.width)
+		content = m.exportForm.View()
 	case modalNotice:
 		width = min(max(28, displayWidth([]byte(m.notice))+4), m.width)
-	case modalNone, modalHelp:
+		content = " " + m.notice
+		variant = modalview.Notice
+	case modalHelp, modalPreferences:
+		content = m.settingsBody(width)
+		tabs = settingsTabs
+	case modalNone:
 	}
-	lines := m.modalLines(width)
-	height := m.diagramHeight()
-	top := max((height-len(lines))/2, 0)
-	belowToolbar := toolbarTop + toolbarBoxHeight
-	if belowToolbar+len(lines) <= height {
-		top = max(top, belowToolbar)
-	}
-	left := max((m.width-width)/2, 0)
-	if m.modalPositioned {
-		left = min(max(m.modalLeft, 0), max(m.width-width, 0))
-		top = min(max(m.modalTop, 0), max(height-len(lines), 0))
-	}
-	return modalOverlay{
-		lines: lines,
-		left:  left,
-		top:   top,
-		width: width,
-	}
-}
-
-func (o modalOverlay) contains(x, y int) bool {
-	return x >= o.left && x < o.left+o.width &&
-		y >= o.top && y < o.top+len(o.lines)
+	m.dialog.Configure(
+		m.width,
+		m.height,
+		toolbarTop+m.nav.Height(),
+		width,
+		strings.TrimSuffix(content, "\n"),
+		variant,
+		tabs,
+		modalview.TabID(m.modal),
+	)
+	return m.dialog.Overlay()
 }
 
 func (m *Model) openModal(next modal) {
 	m.modal = next
-	m.modalPositioned = false
-	m.modalDragging = false
+	m.dialog.Hide()
 }
 
 func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
-	overlay := m.currentModalOverlay()
-	if !overlay.contains(mouse.X, mouse.Y) {
-		m.closeModal()
-		return nil
-	}
-	if mouse.Button != tea.MouseLeft {
-		return nil
-	}
-	if mouse.Y == overlay.top {
-		m.modalDragging = true
-		m.modalDragOffsetX = mouse.X - overlay.left
-		m.modalDragOffsetY = mouse.Y - overlay.top
-		return nil
-	}
-	if (m.modal == modalHelp || m.modal == modalPreferences) &&
-		mouse.Y == overlay.top+1 {
-		x := mouse.X - overlay.left - 1
-		shortcutsWidth := lipgloss.Width(m.settingsTab("Shortcuts", modalHelp))
-		if x >= shortcutsWidth {
-			m.openPreferences()
-		} else if x >= 0 {
-			m.modal = modalHelp
-		}
-		return nil
+	m.currentModalOverlay()
+	var command tea.Cmd
+	m.dialog, command = m.dialog.Update(tea.MouseClickMsg(mouse))
+	if command != nil || m.dialog.Dragging() || mouse.Button != tea.MouseLeft {
+		return command
 	}
 	switch m.modal {
 	case modalPreferences:
@@ -106,10 +83,9 @@ func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
 }
 
 func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
-	if m.modalDragging {
-		m.modalLeft = mouse.X - m.modalDragOffsetX
-		m.modalTop = mouse.Y - m.modalDragOffsetY
-		m.modalPositioned = true
+	wasDragging := m.dialog.Dragging()
+	m.dialog, _ = m.dialog.Update(tea.MouseMotionMsg(mouse))
+	if wasDragging || m.dialog.Dragging() {
 		return nil
 	}
 	switch m.modal {
@@ -139,57 +115,18 @@ func (m *Model) closeModal() {
 		m.dismissNotice()
 	case modalNone:
 	}
-	m.modalDragging = false
+	m.dialog.Hide()
 }
 
-func (m *Model) modalLines(width int) []string {
+func (m *Model) settingsBody(width int) string {
 	switch m.modal {
-	case modalSave:
-		return m.componentModalLines(m.saveForm.View(), width)
-	case modalExport:
-		return m.componentModalLines(m.exportForm.View(), width)
-	case modalNotice:
-		style := m.theme.Modal.Border(lipgloss.RoundedBorder())
-		return strings.Split(style.Width(max(width-2, 0)).Render(" "+m.notice), "\n")
+	case modalHelp:
+		innerWidth := max(width-m.theme.Modal.Container.GetHorizontalFrameSize(), 0)
+		m.help.SetWidth(innerWidth)
+		return m.help.View(m.keys)
+	case modalPreferences:
+		return m.preferenceForm.View()
 	default:
-		return m.settingsModalLines(width)
+		return ""
 	}
-}
-
-func (m *Model) settingsModalLines(width int) []string {
-	return m.componentModalLines(m.settingsView(width-2), width)
-}
-
-func (m *Model) settingsView(width int) string {
-	m.help.SetWidth(width)
-	body := m.help.View(m.keys)
-	if m.modal == modalPreferences {
-		body = m.preferenceForm.View()
-	}
-	tabs := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		m.settingsTab("Shortcuts", modalHelp),
-		m.settingsTab("Preferences", modalPreferences),
-	)
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		tabs,
-		lipgloss.NewStyle().PaddingTop(1).MaxWidth(width).Render(body),
-	)
-}
-
-func (m *Model) settingsTab(label string, tab modal) string {
-	style := m.theme.Tab
-	if m.modal == tab {
-		style = m.theme.TabActive
-	}
-	return style.Render(label)
-}
-
-func (m *Model) componentModalLines(content string, width int) []string {
-	rendered := m.theme.Modal.
-		Width(max(width-2, 0)).
-		MaxWidth(width).
-		Render(strings.TrimSuffix(content, "\n"))
-	return strings.Split(rendered, "\n")
 }

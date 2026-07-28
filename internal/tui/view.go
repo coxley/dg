@@ -10,27 +10,37 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
 	"github.com/rivo/uniseg"
 )
 
 const (
-	toolbarTop        = 1
-	toolbarBoxHeight  = 5
-	toolbarToolRow    = toolbarTop + 2
-	toolbarToolsWidth = len(" Cursor ") + len(" Rectangle ") + len(" Line ")
-	toolbarBoxWidth   = toolbarToolsWidth + 4
+	toolbarTop = 1
 )
 
 func (m *Model) View() tea.View {
-	frame, rows := m.frame, m.frameRows
-	if m.reconnecting && m.connectDragging {
-		frame, rows = m.connectFrame, m.connectFrameRows
-	} else if m.duplicateDragging {
-		frame, rows = m.duplicateFrame, m.duplicateRows
+	tool := nav.Cursor
+	switch m.mode {
+	case modeRectangle:
+		tool = nav.Rectangle
+	case modeConnect:
+		tool = nav.Line
+	case modeNavigate, modeMove, modeEditLabel:
 	}
-	toolbar := m.currentToolbarLines()
+	if m.nav.Active() != tool {
+		m.nav, _ = m.nav.Update(nav.ActivateMsg{Tool: tool})
+	}
+	frameID := canvasview.BaseFrame
+	if m.reconnecting && m.connectDragging {
+		frameID = canvasview.ConnectionFrame
+	} else if m.duplicateDragging {
+		frameID = canvasview.DuplicateFrame
+	}
+	frame, rows := m.canvas.Frame(frameID), m.canvas.Rows(frameID)
+	toolbar := m.nav.Lines()
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
 		frame,
@@ -39,21 +49,22 @@ func (m *Model) View() tea.View {
 		m.width,
 		m.diagramHeight(),
 		toolbar,
+		m.nav.Width(),
 	)
 	if m.height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
 		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
 	}
 
-	content := strings.TrimSuffix(string(m.viewBuffer), "\n")
 	overlay := m.currentModalOverlay()
-	if len(overlay.lines) != 0 {
+	content := strings.TrimSuffix(string(m.viewBuffer), "\n")
+	if overlay.Content != "" {
 		content = lipgloss.NewCompositor(
 			lipgloss.NewLayer(content),
-			lipgloss.NewLayer(strings.Join(overlay.lines, "\n")).
+			lipgloss.NewLayer(overlay.Content).
 				ID("modal").
-				X(overlay.left).
-				Y(overlay.top).
+				X(overlay.Left).
+				Y(overlay.Top).
 				Z(1),
 		).Render()
 	}
@@ -77,44 +88,6 @@ func (m *Model) View() tea.View {
 	return view
 }
 
-func (m *Model) toolbarView() string {
-	tools := [...]struct {
-		label string
-		mode  mode
-	}{
-		{" Cursor ", modeNavigate},
-		{" Rectangle ", modeRectangle},
-		{" Line ", modeConnect},
-	}
-	var content strings.Builder
-	content.Grow(toolbarToolsWidth)
-	for _, tool := range tools {
-		text := tool.label
-		switch {
-		case m.mode == tool.mode:
-			text = m.theme.ToolbarActive.Render(text)
-		case m.hasToolbarHover && m.toolbarHover == tool.mode:
-			text = m.theme.ToolbarHover.Render(text)
-		}
-		content.WriteString(text)
-	}
-	return m.theme.Toolbar.Render(content.String())
-}
-
-func (m *Model) currentToolbarLines() []string {
-	if m.toolbarLines != nil &&
-		m.toolbarMode == m.mode &&
-		m.toolbarHasHover == m.hasToolbarHover &&
-		(!m.hasToolbarHover || m.toolbarHoverMode == m.toolbarHover) {
-		return m.toolbarLines
-	}
-	m.toolbarMode = m.mode
-	m.toolbarHasHover = m.hasToolbarHover
-	m.toolbarHoverMode = m.toolbarHover
-	m.toolbarLines = strings.Split(m.toolbarView(), "\n")
-	return m.toolbarLines
-}
-
 type styledRunKey struct {
 	text string
 	port bool
@@ -123,7 +96,7 @@ type styledRunKey struct {
 func (m *Model) appendStatusText(dst []byte) []byte {
 	if m.status != "" {
 		if m.status == m.statusError {
-			return append(dst, m.theme.Error.Render(m.status)...)
+			return append(dst, m.theme.Canvas.Error.Render(m.status)...)
 		}
 		return append(dst, m.status...)
 	}
@@ -191,10 +164,11 @@ func (m *Model) cursorPosition() (int, int, bool) {
 func (m *Model) appendViewport(
 	dst []byte,
 	frame render.Frame,
-	rows []rowSpan,
+	rows []canvasview.Span,
 	origin layout.Point,
 	width, height int,
 	toolbar []string,
+	toolbarWidth int,
 ) []byte {
 	for screenY := range height {
 		documentY := uint64(origin.Y) + uint64(screenY)
@@ -210,13 +184,14 @@ func (m *Model) appendViewport(
 				width,
 				screenY,
 				toolbar,
+				toolbarWidth,
 			)
 			continue
 		}
 		rowID := int(documentY - uint64(frame.Bounds.Min.Y))
 		if rowID < len(rows) {
 			span := rows[rowID]
-			row = frame.Text[span.start:span.end]
+			row = frame.Text[span.Start:span.End]
 		}
 		dst = m.appendViewportLine(
 			dst,
@@ -227,6 +202,7 @@ func (m *Model) appendViewport(
 			width,
 			screenY,
 			toolbar,
+			toolbarWidth,
 		)
 	}
 	return dst
@@ -239,12 +215,13 @@ func (m *Model) appendViewportLine(
 	width int,
 	screenY int,
 	toolbar []string,
+	toolbarWidth int,
 ) []byte {
 	toolbarRow := screenY - toolbarTop
-	if width >= toolbarBoxWidth &&
+	if width >= toolbarWidth &&
 		toolbarRow >= 0 &&
 		toolbarRow < len(toolbar) {
-		left := (width - toolbarBoxWidth) / 2
+		left := (width - toolbarWidth) / 2
 		dst = appendViewportSegment(
 			dst,
 			row,
@@ -255,12 +232,12 @@ func (m *Model) appendViewportLine(
 			m,
 		)
 		dst = append(dst, toolbar[toolbarRow]...)
-		right := width - left - toolbarBoxWidth
+		right := width - left - toolbarWidth
 		dst = appendViewportSegment(
 			dst,
 			row,
 			rowOrigin,
-			uint64(viewportOrigin)+uint64(left+toolbarBoxWidth),
+			uint64(viewportOrigin)+uint64(left+toolbarWidth),
 			documentY,
 			right,
 			m,
@@ -436,12 +413,16 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 	if m.duplicateDragging {
 		return highlightContains(
 			m.duplicateHighlight,
-			m.duplicateFrame,
+			m.canvas.Frame(canvasview.DuplicateFrame),
 			point,
 		)
 	}
 	if m.rigidMoving {
-		return highlightContains(m.moveHighlight, m.frame, point)
+		return highlightContains(
+			m.moveHighlight,
+			m.canvas.Frame(canvasview.BaseFrame),
+			point,
+		)
 	}
 	if m.selecting && m.marqueeArea().contains(point) {
 		return true
@@ -569,7 +550,7 @@ func (m *Model) refreshConnectionPreview() {
 		portID != m.connectSource {
 		destination = portID
 	}
-	m.connectRaster, err = m.encoder.RasterizeEdge(
+	m.connectRaster, err = m.canvas.RasterizeEdge(
 		m.connectRaster[:0],
 		m.geo,
 		layout.RasterEdge{
@@ -675,9 +656,9 @@ func appendHighlightedSpaces(
 
 func (m *Model) highlightStyle() lipgloss.Style {
 	if m != nil && m.mode == modeConnect {
-		return m.theme.Port
+		return m.canvas.PortStyle()
 	}
-	return m.theme.Selection
+	return m.canvas.SelectionStyle()
 }
 
 func previewGlyph(model *Model, x, y uint64) (rune, bool) {
@@ -709,8 +690,7 @@ func (m *Model) connectionPreviewStyle() layout.EdgeStyle {
 	style, _ := m.geo.EdgeStyle(m.connectEdge)
 	portA, _, err := m.geo.EdgePorts(m.connectEdge)
 	if err == nil && m.connectSource != portA {
-		style.PortAArrow, style.PortBArrow =
-			style.PortBArrow, style.PortAArrow
+		style.PortAArrow, style.PortBArrow = style.PortBArrow, style.PortAArrow
 	}
 	return style
 }
