@@ -89,10 +89,12 @@ func (m *Model) preferenceLines() []string {
 		fmt.Sprintf("Apply to future diagrams? [%s]", checkbox(m.preferences.applyToFuture)),
 		"Default save directory: " + m.preferences.saveDirectory,
 	}
-	lines := []string{
+	lines := make([]string, 0, 2+len(values)+2)
+	lines = append(
+		lines,
 		"┌──────────────────────────────────────────────────────────┐",
 		"│ Preferences                                              │",
-	}
+	)
 	for i, value := range values {
 		prefix := "  "
 		if i == m.preferenceRow {

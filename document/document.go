@@ -376,6 +376,7 @@ func documentNodeStyle(style layout.NodeStyle) NodeStyle {
 	}
 	var horizontal HorizontalAlign
 	switch style.Horizontal {
+	case layout.AlignLeft:
 	case layout.AlignCenter:
 		horizontal = AlignCenter
 	case layout.AlignRight:
@@ -383,6 +384,7 @@ func documentNodeStyle(style layout.NodeStyle) NodeStyle {
 	}
 	var vertical VerticalAlign
 	switch style.Vertical {
+	case layout.AlignTop:
 	case layout.AlignMiddle:
 		vertical = AlignMiddle
 	case layout.AlignBottom:

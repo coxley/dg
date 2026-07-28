@@ -136,32 +136,6 @@ func (m *Model) appendStatusText(dst []byte) []byte {
 	return strconv.AppendInt(dst, int64(len(m.hits)), 10)
 }
 
-func (m *Model) helpLine() string {
-	switch m.mode {
-	case modeMove:
-		return "arrows move selection • enter/m/esc finish • left-drag move • right-drag resize • ctrl+c quit"
-	case modeEditLabel:
-		return "type • enter newline • ctrl-enter/esc save • arrows move • ctrl-a/e ends • alt-b back word • ctrl-w/u delete"
-	case modeConnect:
-		if m.reconnecting {
-			return "drag to replacement port • enter move endpoint • esc cancel"
-		}
-		return "drag between ports • enter connects selected port • esc cancel"
-	case modeRectangle:
-		return "left-drag creates rectangle • esc cancel"
-	case modeSavePath:
-		if m.status != "" {
-			return m.status
-		}
-		if m.saveHint != "" {
-			return m.saveHint
-		}
-		return "type path • ctrl-a/e/u/w • alt-b • tab complete • enter/ctrl+s save • esc cancel"
-	default:
-		return "? help • tab focus • arrows move • r rectangle • l line • e edit"
-	}
-}
-
 func hitKindName(kind layout.HitKind) string {
 	switch kind {
 	case layout.HitNode:

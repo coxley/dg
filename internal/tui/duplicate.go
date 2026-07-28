@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/layout"
 )
 
@@ -22,37 +23,28 @@ func (m *Model) beginDuplicateDrag(point layout.Point, hit layout.Hit) {
 	m.status = ""
 }
 
+func (m *Model) updateDuplicateMotion(mouse tea.Mouse) bool {
+	if !m.duplicatePending && !m.duplicateDragging ||
+		mouse.Button != tea.MouseLeft {
+		return false
+	}
+	if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+		m.updateDuplicateDrag(point)
+	}
+	return true
+}
+
 func (m *Model) updateDuplicateDrag(point layout.Point) {
 	if point == m.duplicatePoint {
 		return
 	}
 	if !m.duplicateDragging {
-		cloned, err := m.geo.Clone()
-		if err != nil {
-			m.cancelDuplicateDrag()
-			m.status = err.Error()
+		if !m.startDuplicatePreview(point) {
 			return
 		}
-		dx, dy := pointDelta(m.duplicateStart, point)
-		if err := cloned.DuplicateSelection(dx, dy); err != nil {
-			m.cancelDuplicateDrag()
-			m.status = err.Error()
-			return
-		}
-		m.duplicateGeo = cloned
-		m.duplicateDragging = true
 	} else {
-		dx, dy := pointDelta(m.duplicatePoint, point)
-		for nodeID := range m.duplicateGeo.Selection().Nodes() {
-			origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
-			next, ok := movePoint64(origin, dx, dy)
-			if !ok {
-				return
-			}
-			if err := m.duplicateGeo.PlaceNode(nodeID, next); err != nil {
-				m.status = err.Error()
-				return
-			}
+		if !m.moveDuplicatePreview(point) {
+			return
 		}
 	}
 	m.duplicatePoint = point
@@ -74,6 +66,38 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 	} else {
 		m.status = ""
 	}
+}
+
+func (m *Model) startDuplicatePreview(point layout.Point) bool {
+	cloned, err := m.geo.Clone()
+	if err == nil {
+		dx, dy := pointDelta(m.duplicateStart, point)
+		err = cloned.DuplicateSelection(dx, dy)
+	}
+	if err != nil {
+		m.cancelDuplicateDrag()
+		m.status = err.Error()
+		return false
+	}
+	m.duplicateGeo = cloned
+	m.duplicateDragging = true
+	return true
+}
+
+func (m *Model) moveDuplicatePreview(point layout.Point) bool {
+	dx, dy := pointDelta(m.duplicatePoint, point)
+	for nodeID := range m.duplicateGeo.Selection().Nodes() {
+		origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
+		next, ok := movePoint64(origin, dx, dy)
+		if !ok {
+			return false
+		}
+		if err := m.duplicateGeo.PlaceNode(nodeID, next); err != nil {
+			m.status = err.Error()
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Model) finishDuplicateDrag(point layout.Point) {

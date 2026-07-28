@@ -93,6 +93,7 @@ func (m *Model) openPreferences() {
 func (m *Model) updateModal(message tea.KeyPressMsg) {
 	key := message.Key()
 	switch m.modal {
+	case modalNone:
 	case modalHelp:
 		switch {
 		case key.Code == tea.KeyEscape || key.Code == '?' || key.Code == tea.KeyEnter:

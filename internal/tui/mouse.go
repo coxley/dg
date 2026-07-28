@@ -237,50 +237,10 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 	if m.updateRectangleMotion(mouse) {
 		return
 	}
-	if (m.duplicatePending || m.duplicateDragging) &&
-		mouse.Button == tea.MouseLeft {
-		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
-			m.updateDuplicateDrag(point)
-		}
+	if m.updateDuplicateMotion(mouse) {
 		return
 	}
-	if m.edgeDragPending && mouse.Button == tea.MouseLeft {
-		point, ok := m.documentPoint(mouse.X, mouse.Y)
-		if !ok || point == m.edgeDragStart {
-			return
-		}
-		hit := m.edgeDragHit
-		start := m.edgeDragStart
-		m.clearConnection()
-		m.cursor = start
-		if err := m.startConnection(hit); err != nil {
-			m.status = err.Error()
-			return
-		}
-		if err := m.renderConnectionBase(); err != nil {
-			m.clearConnection()
-			m.status = err.Error()
-			return
-		}
-		m.mode = modeConnect
-		m.connectDragging = true
-		m.cursor = point
-		m.refreshHits()
-		m.refreshConnectionPreview()
-		m.ensureCursorVisible()
-		m.status = ""
-		return
-	}
-	if m.mode == modeConnect &&
-		m.connectDragging &&
-		mouse.Button == tea.MouseLeft {
-		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
-			m.cursor = point
-			m.refreshHits()
-			m.refreshConnectionPreview()
-			m.ensureCursorVisible()
-			m.status = ""
-		}
+	if m.updateConnectionMotion(mouse) {
 		return
 	}
 	if m.selecting && mouse.Button == tea.MouseLeft {
@@ -318,6 +278,49 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 	}
 	origin := layout.NewPoint(point.X-m.dragOffset.X, point.Y-m.dragOffset.Y)
 	m.placeNode(m.target.ID, origin, point)
+}
+
+func (m *Model) updateConnectionMotion(mouse tea.Mouse) bool {
+	if m.edgeDragPending && mouse.Button == tea.MouseLeft {
+		point, ok := m.documentPoint(mouse.X, mouse.Y)
+		if !ok || point == m.edgeDragStart {
+			return true
+		}
+		hit := m.edgeDragHit
+		start := m.edgeDragStart
+		m.clearConnection()
+		m.cursor = start
+		if err := m.startConnection(hit); err != nil {
+			m.status = err.Error()
+			return true
+		}
+		if err := m.renderConnectionBase(); err != nil {
+			m.clearConnection()
+			m.status = err.Error()
+			return true
+		}
+		m.mode = modeConnect
+		m.connectDragging = true
+		m.cursor = point
+		m.refreshHits()
+		m.refreshConnectionPreview()
+		m.ensureCursorVisible()
+		m.status = ""
+		return true
+	}
+	if m.mode == modeConnect &&
+		m.connectDragging &&
+		mouse.Button == tea.MouseLeft {
+		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+			m.cursor = point
+			m.refreshHits()
+			m.refreshConnectionPreview()
+			m.ensureCursorVisible()
+			m.status = ""
+		}
+		return true
+	}
+	return false
 }
 
 func (m *Model) updateRectangleMotion(mouse tea.Mouse) bool {
