@@ -244,11 +244,25 @@ The settings overlay preserves the diagram underneath it:
 - `?` opens Shortcuts.
 - Tab and Shift-Tab switch Shortcuts and Preferences.
 - Esc or `q` closes either settings tab.
-- Preference text inputs use Up/Down to change fields.
+- Numeric router fields change only with Left/Right and briefly highlight the
+  pressed arrow.
+- Preference fields use Up/Down to change fields.
 - Preference selects use Up/Down to change fields and Left/Right to change the
   selected value.
+- The default directory uses the `huh/v2` file picker.
+- Preferences end with explicit Save and Cancel actions.
 - Router preferences apply live to the current diagram.
+- Cancel, Esc, `q`, an outside click, or lost terminal focus restores the
+  router values from before the modal opened.
 - “Apply to future diagrams?” controls whether they become defaults.
+
+`Theme` in `internal/tui/theme.go` owns every terminal-facing color and style.
+Lip Gloss layers and its compositor place modals over the canvas. The Bubbles
+help model renders shortcut columns; local tab state follows Bubble Tea's
+official tabs example. The sparse canvas renderer remains custom because its
+viewport and preview behavior are diagram-specific. Cache Lip Gloss-rendered
+toolbar and highlight spans: invoking the general renderer for every cell
+causes a measurable drag regression.
 
 Success notices remain visible for one second or until the next key press.
 Errors render in red.
@@ -277,16 +291,20 @@ Current editing shortcuts:
 | `u` / Ctrl-Z | undo |
 | Ctrl-R / Ctrl-Y / Ctrl-Shift-Z | redo |
 | Ctrl-S | save |
-| Ctrl-C or `c` | copy selection |
+| Super-C or Ctrl-C | copy selection |
 | `q` | quit when no modal is open |
 
 Two successive copy commands open an export form. Export supports preferred
 line comments (`// `, `# `, or block comments) and Markdown code fences.
-Trailing whitespace is removed from copied rows.
+Trailing whitespace is removed from copied rows. On first use, the editor
+probes terminal clipboard reads for 100 ms. A response selects Bubble Tea's
+OSC52 clipboard commands for the session; a timeout selects
+`golang.design/x/clipboard`. Advertise Super-C only after Bubble Tea reports
+keyboard enhancements.
 
-Save and export use `huh` forms. New diagrams use a `huh` file picker on first
-save. Existing paths save directly. Preferences persist separately from
-documents and history.
+Save, export, and preferences use `huh/v2` forms. New diagrams use a `huh`
+file picker on first save. Existing paths save directly. Preferences persist
+separately from documents and history.
 
 Run the editor with:
 
