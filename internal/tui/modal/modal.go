@@ -25,6 +25,11 @@ const (
 	Notice
 )
 
+const (
+	minimumWidth  = 12
+	minimumHeight = 3
+)
+
 // Styles defines all modal-owned appearance.
 type Styles struct {
 	Container lipgloss.Style
@@ -80,7 +85,7 @@ func Close() tea.Cmd {
 	}
 }
 
-// Model owns modal styles, geometry, position, dragging, and tabs.
+// Model owns modal styles, geometry, position, pointer interaction, and tabs.
 type Model struct {
 	styles Styles
 	normal geometry
@@ -105,7 +110,21 @@ type Model struct {
 	dragging    bool
 	dragOffsetX int
 	dragOffsetY int
+	resized     bool
+	height      int
+	resize      resizeState
 	overlay     Overlay
+}
+
+type resizeState struct {
+	pending bool
+	active  bool
+	east    bool
+	south   bool
+	fixedX  int
+	fixedY  int
+	offsetX int
+	offsetY int
 }
 
 // New returns a modal model.
@@ -134,7 +153,18 @@ func (m *Model) Configure(
 	m.screenWidth = max(screenWidth, 0)
 	m.screenHeight = max(screenHeight, 0)
 	m.avoidTop = max(avoidTop, 0)
-	m.width = min(max(width, 0), m.screenWidth)
+	if !m.resized {
+		m.width = min(max(width, 0), m.screenWidth)
+	} else {
+		m.width = min(
+			max(m.width, min(minimumWidth, m.screenWidth)),
+			m.screenWidth,
+		)
+		m.height = min(
+			max(m.height, min(minimumHeight, m.screenHeight)),
+			m.screenHeight,
+		)
+	}
 	m.content = strings.TrimSuffix(content, "\n")
 	m.variant = variant
 	m.tabs = tabs
@@ -143,11 +173,14 @@ func (m *Model) Configure(
 	m.layout()
 }
 
-// Hide removes the modal and resets transient pointer state.
+// Hide removes the modal and resets its placement and pointer state.
 func (m *Model) Hide() {
 	m.visible = false
 	m.dragPending = false
 	m.dragging = false
+	m.resized = false
+	m.height = 0
+	m.resize = resizeState{}
 	m.positioned = false
 	m.overlay = Overlay{}
 }
@@ -167,9 +200,15 @@ func (m Model) Dragging() bool {
 	return m.dragging
 }
 
+// Resizing reports whether pointer motion is resizing the modal.
+func (m Model) Resizing() bool {
+	return m.resize.active
+}
+
 // CapturesPointer reports whether the modal owns the current pointer gesture.
 func (m Model) CapturesPointer() bool {
-	return m.dragPending || m.dragging
+	return m.dragPending || m.dragging ||
+		m.resize.pending || m.resize.active
 }
 
 // Update handles tab commands and modal pointer interaction.
@@ -179,8 +218,15 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 		m.activeTab = message.ID
 	case tea.MouseClickMsg:
 		m.dragPending = false
+		m.resize.pending = false
 		if !m.overlay.Contains(message.X, message.Y) {
 			return m, Close()
+		}
+		if message.Button == tea.MouseRight {
+			if !m.fullscreen && m.variant != Notice {
+				m.beginResize(message.X, message.Y)
+			}
+			return m, nil
 		}
 		if message.Button != tea.MouseLeft {
 			return m, nil
@@ -197,6 +243,14 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 			m.dragOffsetY = message.Y - m.overlay.Top
 		}
 	case tea.MouseMotionMsg:
+		if m.resize.pending && message.Button == tea.MouseRight {
+			m.resize.pending = false
+			m.resize.active = true
+		}
+		if m.resize.active && message.Button == tea.MouseRight {
+			m.resizeTo(message.X, message.Y)
+			return m, nil
+		}
 		if m.dragPending {
 			m.dragPending = false
 			m.dragging = true
@@ -210,6 +264,8 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		m.dragPending = false
 		m.dragging = false
+		m.resize.pending = false
+		m.resize.active = false
 	}
 	return m, nil
 }
@@ -240,13 +296,18 @@ func (m *Model) layout() {
 		)
 	}
 	contentHeight := lipgloss.Height(content)
+	height := contentHeight + geo.frameHeight
+	if m.resized {
+		height = min(max(m.height, minimumHeight), m.screenHeight)
+	}
 	style = style.
 		Width(m.width).
-		Height(contentHeight + geo.frameHeight).
-		MaxWidth(m.width)
+		Height(height).
+		MaxWidth(m.width).
+		MaxHeight(height)
 	rendered := style.Render(content)
 	width, height := lipgloss.Width(rendered), lipgloss.Height(rendered)
-	m.fullscreen = lipgloss.Height(content) > 3 &&
+	m.fullscreen = !m.resized && lipgloss.Height(content) > 3 &&
 		height+m.avoidTop > m.screenHeight
 	if m.fullscreen {
 		style = style.
@@ -274,6 +335,63 @@ func (m *Model) layout() {
 		ContentLeft: left + geo.contentLeft,
 		ContentTop:  top + geo.contentTop,
 	}
+}
+
+func (m *Model) beginResize(x, y int) {
+	right := m.overlay.Left + m.overlay.Width - 1
+	bottom := m.overlay.Top + m.overlay.Height - 1
+	east := x-m.overlay.Left >= m.overlay.Width/2
+	south := y-m.overlay.Top >= m.overlay.Height/2
+	cornerX, fixedX := m.overlay.Left, right
+	if east {
+		cornerX, fixedX = right, m.overlay.Left
+	}
+	cornerY, fixedY := m.overlay.Top, bottom
+	if south {
+		cornerY, fixedY = bottom, m.overlay.Top
+	}
+	m.resize = resizeState{
+		pending: true,
+		east:    east,
+		south:   south,
+		fixedX:  fixedX,
+		fixedY:  fixedY,
+		offsetX: x - cornerX,
+		offsetY: y - cornerY,
+	}
+}
+
+func (m *Model) resizeTo(x, y int) {
+	cornerX := min(max(x-m.resize.offsetX, 0), m.screenWidth-1)
+	cornerY := min(max(y-m.resize.offsetY, 0), m.screenHeight-1)
+	left, width := resizeAxis(
+		cornerX,
+		m.resize.fixedX,
+		m.resize.east,
+		min(minimumWidth, m.screenWidth),
+	)
+	top, height := resizeAxis(
+		cornerY,
+		m.resize.fixedY,
+		m.resize.south,
+		min(minimumHeight, m.screenHeight),
+	)
+	m.left = left
+	m.top = top
+	m.width = width
+	m.height = height
+	m.positioned = true
+	m.resized = true
+	m.layout()
+}
+
+func resizeAxis(point, fixed int, positive bool, minimum int) (origin, size int) {
+	if positive {
+		point = max(point, fixed+minimum-1)
+		return fixed, point - fixed + 1
+	}
+	point = min(point, fixed-(minimum-1))
+	return point, fixed - point + 1
 }
 
 func (m Model) tabsView() string {

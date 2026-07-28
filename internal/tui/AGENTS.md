@@ -71,9 +71,9 @@ Profile drag changes with the existing TUI benchmarks and `go tool pprof`.
 
 ## Settings and clipboard
 
-The settings modal overlays the diagram and can move by dragging its top
-border. Tab and Shift-Tab switch Shortcuts and Preferences. Esc, `q`, or an
-outside click closes it.
+The settings modal overlays the diagram. Left-dragging empty modal cells moves
+it; right-dragging resizes from the nearest corner. Tab and Shift-Tab switch
+Shortcuts and Preferences. Esc, `q`, or an outside click closes it.
 
 The preferences model reports editable values; root applies router changes
 live and owns the layout history transaction. Cancel, close, outside click, or

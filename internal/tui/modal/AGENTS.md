@@ -2,8 +2,9 @@
 
 ## Responsibility
 
-`modal` owns the movable modal shell, container and tab styles, cell geometry,
-positioning, drag state, outside-click detection, and optional tabs.
+`modal` owns the movable and resizable modal shell, container and tab styles,
+cell geometry, positioning, pointer state, outside-click detection, and
+optional tabs.
 
 ## Boundaries
 
@@ -15,6 +16,8 @@ positioning, drag state, outside-click detection, and optional tabs.
   `tea.Cmd`. Use `SwitchTab` and `Close` rather than mutating the model from a
   parent.
 - Modal placement reserves `avoidTop` rows for higher-priority floating UI.
+- Left-drag moves from empty cells. Right-drag resizes from the nearest corner.
+- Resize preserves the pointer-to-corner offset and clamps to the terminal.
 
 ## Verification
 

@@ -659,6 +659,31 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 	require.Equal(t, before, model.geo.Router())
 }
 
+func TestSettingsModalCanResize(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	model.openPreferences()
+	before := model.currentModalOverlay()
+	mouse := tea.Mouse{
+		X:      before.Left + before.Width - 1,
+		Y:      before.Top + before.Height - 1,
+		Button: tea.MouseRight,
+	}
+
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	mouse.X += 4
+	mouse.Y += 2
+	updateModel(t, model, tea.MouseMotionMsg(mouse))
+	after := model.currentModalOverlay()
+	require.Equal(t, before.Width+4, after.Width)
+	require.Equal(t, before.Height+2, after.Height)
+
+	updateModel(t, model, tea.MouseReleaseMsg(mouse))
+	require.False(t, model.dialog.Resizing())
+}
+
 func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	t.Parallel()
 

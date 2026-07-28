@@ -122,6 +122,116 @@ func TestModelReleasesPendingDragWithoutMoving(t *testing.T) {
 	require.Equal(t, before, model.Overlay())
 }
 
+func TestModelResizesFromNearestCornerAfterPointerMotion(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(80, 24, 0, 40, "one\ntwo\nthree", Standard, nil, 0)
+	before := model.Overlay()
+	mouse := tea.Mouse{
+		X:      before.Left + before.Width - 4,
+		Y:      before.Top + before.Height - 2,
+		Button: tea.MouseRight,
+	}
+
+	model, command := model.Update(tea.MouseClickMsg(mouse))
+	require.Nil(t, command)
+	require.True(t, model.CapturesPointer())
+	require.False(t, model.Resizing())
+	require.Equal(t, before, model.Overlay())
+
+	mouse.X += 5
+	mouse.Y += 2
+	model, command = model.Update(tea.MouseMotionMsg(mouse))
+	require.Nil(t, command)
+	require.True(t, model.Resizing())
+	require.Equal(t, before.Left, model.Overlay().Left)
+	require.Equal(t, before.Top, model.Overlay().Top)
+	require.Equal(t, before.Width+5, model.Overlay().Width)
+	require.Equal(t, before.Height+2, model.Overlay().Height)
+}
+
+func TestModelNorthwestResizeKeepsOppositeCornerFixed(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(80, 24, 0, 40, "one\ntwo\nthree", Standard, nil, 0)
+	before := model.Overlay()
+	right := before.Left + before.Width
+	bottom := before.Top + before.Height
+	mouse := tea.Mouse{
+		X:      before.Left,
+		Y:      before.Top,
+		Button: tea.MouseRight,
+	}
+
+	model, _ = model.Update(tea.MouseClickMsg(mouse))
+	mouse.X -= 3
+	mouse.Y -= 2
+	model, _ = model.Update(tea.MouseMotionMsg(mouse))
+
+	after := model.Overlay()
+	require.Equal(t, before.Left-3, after.Left)
+	require.Equal(t, before.Top-2, after.Top)
+	require.Equal(t, right, after.Left+after.Width)
+	require.Equal(t, bottom, after.Top+after.Height)
+}
+
+func TestModelResizeHonorsMinimumAndSurvivesConfigure(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(
+		80, 24, 0, 40,
+		"one\ntwo\nthree\nfour\nfive",
+		Standard,
+		nil,
+		0,
+	)
+	before := model.Overlay()
+	mouse := tea.Mouse{
+		X:      before.Left + before.Width - 1,
+		Y:      before.Top + before.Height - 1,
+		Button: tea.MouseRight,
+	}
+	model, _ = model.Update(tea.MouseClickMsg(mouse))
+	model, _ = model.Update(tea.MouseMotionMsg{
+		X:      before.Left,
+		Y:      before.Top,
+		Button: tea.MouseRight,
+	})
+	resized := model.Overlay()
+	require.Equal(t, minimumWidth, resized.Width)
+	require.Equal(t, minimumHeight, resized.Height)
+
+	model.Configure(
+		80, 24, 0, 40,
+		"one\ntwo\nthree\nfour\nfive",
+		Standard,
+		nil,
+		0,
+	)
+	require.Equal(t, resized, model.Overlay())
+}
+
+func TestModelReleasesPendingResizeWithoutChangingSize(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(80, 24, 0, 40, "body", Standard, nil, 0)
+	before := model.Overlay()
+	model, _ = model.Update(tea.MouseClickMsg{
+		X:      before.ContentLeft,
+		Y:      before.ContentTop,
+		Button: tea.MouseRight,
+	})
+	model, command := model.Update(tea.MouseReleaseMsg{Button: tea.MouseRight})
+
+	require.Nil(t, command)
+	require.False(t, model.CapturesPointer())
+	require.Equal(t, before, model.Overlay())
+}
+
 func testStyles() Styles {
 	return Styles{
 		Container: lipgloss.NewStyle().Border(lipgloss.NormalBorder()),
