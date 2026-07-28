@@ -791,10 +791,10 @@ func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
 func TestFormCommandScopesComponentMessages(t *testing.T) {
 	t.Parallel()
 
-	require.Nil(t, componentCommand(exportComponent, func() tea.Msg { return nil })())
+	require.Nil(t, componentCommand(saveComponent, func() tea.Msg { return nil })())
 
 	type opaqueMsg struct{ value int }
-	command := componentCommand(exportComponent, tea.Batch(
+	command := componentCommand(saveComponent, tea.Batch(
 		func() tea.Msg { return opaqueMsg{value: 1} },
 		func() tea.Msg { return opaqueMsg{value: 2} },
 	))
@@ -805,7 +805,7 @@ func TestFormCommandScopesComponentMessages(t *testing.T) {
 	for i, command := range batch {
 		message, ok := command().(componentMsg)
 		require.True(t, ok)
-		require.Equal(t, exportComponent, message.kind)
+		require.Equal(t, saveComponent, message.kind)
 		require.Equal(t, opaqueMsg{value: i + 1}, message.message)
 	}
 }

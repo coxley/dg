@@ -36,8 +36,7 @@ type preferenceState struct {
 type componentKind uint8
 
 const (
-	exportComponent componentKind = iota
-	saveComponent
+	saveComponent componentKind = iota
 )
 
 type componentMsg struct {
@@ -85,7 +84,9 @@ func (m *Model) loadPreferences() {
 	m.preferences.path = path
 	m.preferences.applyToFuture = preferences.ApplyToFuture
 	m.preferences.saveDirectory = preferences.SaveDirectory
-	m.preferences.commentPrefix = normalizeCommentPrefix(preferences.CommentPrefix)
+	m.preferences.commentPrefix = preferencesview.NormalizeCommentPrefix(
+		preferences.CommentPrefix,
+	)
 }
 
 // PreferredRouter returns the persisted router for newly created diagrams.
@@ -159,10 +160,10 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 	case modalExport:
 		if key.Code == tea.KeyEscape {
 			m.modal = modalNone
-			m.exportText = ""
+			m.clipboard.CancelExport()
 			return nil
 		}
-		return m.updateExportForm(message)
+		return m.updateClipboard(message)
 	case modalSave:
 		if key.Code == tea.KeyEscape {
 			m.closeSaveForm()

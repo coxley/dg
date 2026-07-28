@@ -4,280 +4,38 @@ import (
 	"errors"
 	"math"
 	"strings"
-	"sync"
-	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	"github.com/coxley/dg/layout"
 	"github.com/rivo/uniseg"
-	"golang.design/x/clipboard"
-)
-
-const (
-	clipboardProbeTimeout = 100 * time.Millisecond
-	copyDebounceDuration  = 100 * time.Millisecond
-)
-
-type clipboardMode uint8
-
-const (
-	clipboardUnknown clipboardMode = iota
-	clipboardTerminal
-	clipboardFallback
-)
-
-type clipboardProbeExpiredMsg struct {
-	generation uint64
-}
-
-type copyDebounceExpiredMsg struct {
-	generation uint64
-}
-
-type clipboardFallbackMsg struct {
-	err error
-}
-
-var (
-	clipboardInitOnce sync.Once
-	errClipboardInit  error
-)
-
-func writeFallbackClipboard(text string) error {
-	clipboardInitOnce.Do(func() {
-		errClipboardInit = clipboard.Init()
-	})
-	if errClipboardInit != nil {
-		return errClipboardInit
-	}
-	clipboard.Write(clipboard.FmtText, []byte(text))
-	return nil
-}
-
-type exportStyle uint8
-
-const (
-	exportLineSlash exportStyle = iota
-	exportLineHash
-	exportBlock
-	exportMarkdown
 )
 
 func (m *Model) copySelection() tea.Cmd {
 	if !m.hasSelection() {
 		m.setError("select something to copy")
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 		return nil
 	}
 	text, err := m.selectionText()
 	if err != nil {
 		m.setError(err.Error())
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 		return nil
 	}
-	if m.copyArmed {
-		m.cancelPendingCopy()
-		m.openExport(text)
-		return nil
-	}
-	m.copyArmed = true
-	m.copyPending = text
-	m.copyGeneration++
-	generation := m.copyGeneration
 	m.status = ""
-	return tea.Tick(copyDebounceDuration, func(time.Time) tea.Msg {
-		return copyDebounceExpiredMsg{generation: generation}
-	})
+	return m.updateClipboard(clipboardview.RequestCopy(
+		text,
+		m.preferences.commentPrefix,
+	))
 }
 
-func (m *Model) handleCopyDebounce(message copyDebounceExpiredMsg) tea.Cmd {
-	if !m.copyArmed ||
-		m.copyPending == "" ||
-		message.generation != m.copyGeneration {
-		return nil
-	}
-	text := m.copyPending
-	m.copyArmed = false
-	m.copyPending = ""
-	return m.writeClipboard(text)
-}
-
-func (m *Model) cancelPendingCopy() {
-	if !m.copyArmed && m.copyPending == "" {
-		return
-	}
-	m.copyArmed = false
-	m.copyPending = ""
-	m.copyGeneration++
-}
-
-func (m *Model) openExport(text string) {
-	m.exportText = text
-	m.exportStyle = exportStyleForPrefix(m.preferences.commentPrefix)
-	m.exportForm = huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[exportStyle]().
-				Title("Copy selection as").
-				Options(exportOptions(m.exportStyle)...).
-				Value(&m.exportStyle),
-		),
-	).
-		WithWidth(46).
-		WithHeight(7).
-		WithShowHelp(true).
-		WithTheme(m.theme.formTheme())
-	_ = m.exportForm.Init()
-	m.openModal(modalExport)
-	m.status = ""
-}
-
-func normalizeCommentPrefix(prefix string) string {
-	switch prefix {
-	case "# ", "/* */":
-		return prefix
-	default:
-		return "// "
-	}
-}
-
-func exportStyleForPrefix(prefix string) exportStyle {
-	switch normalizeCommentPrefix(prefix) {
-	case "# ":
-		return exportLineHash
-	case "/* */":
-		return exportBlock
-	default:
-		return exportLineSlash
-	}
-}
-
-func exportOptions(preferred exportStyle) []huh.Option[exportStyle] {
-	labels := [...]string{
-		"Line comments  //",
-		"Line comments  #",
-		"Block comment  /* ... */",
-	}
-	options := make([]huh.Option[exportStyle], 0, len(labels)+1)
-	options = append(options, huh.NewOption(labels[preferred], preferred))
-	for style, label := range labels {
-		value := exportStyle(style)
-		if value != preferred {
-			options = append(options, huh.NewOption(label, value))
-		}
-	}
-	return append(options, huh.NewOption("Markdown code block", exportMarkdown))
-}
-
-func (m *Model) updateExportForm(message tea.Msg) tea.Cmd {
-	form, command := m.exportForm.Update(message)
-	m.exportForm = form.(*huh.Form)
-	if m.exportForm.State != huh.StateCompleted {
-		return componentCommand(exportComponent, command)
-	}
-	text := formatExport(m.exportText, m.exportStyle)
-	m.modal = modalNone
-	m.exportText = ""
-	m.status = ""
-	return m.writeClipboard(text)
-}
-
-func (m *Model) writeClipboard(text string) tea.Cmd {
-	switch m.clipboardMode {
-	case clipboardTerminal:
-		return tea.Batch(
-			tea.SetClipboard(text),
-			m.showNotice("Copied to clipboard", modalNone),
-		)
-	case clipboardFallback:
-		return m.writeFallbackClipboard(text)
-	case clipboardUnknown:
-		m.clipboardPending = text
-		m.clipboardProbe++
-		generation := m.clipboardProbe
-		return tea.Batch(
-			func() tea.Msg { return tea.ReadClipboard() },
-			tea.Tick(clipboardProbeTimeout, func(time.Time) tea.Msg {
-				return clipboardProbeExpiredMsg{generation: generation}
-			}),
-		)
-	default:
-		return nil
-	}
-}
-
-func (m *Model) handleClipboardResponse() tea.Cmd {
-	if m.clipboardMode != clipboardUnknown || m.clipboardPending == "" {
-		return nil
-	}
-	text := m.clipboardPending
-	m.clipboardPending = ""
-	m.clipboardMode = clipboardTerminal
-	return tea.Batch(
-		tea.SetClipboard(text),
-		m.showNotice("Copied to clipboard", modalNone),
-	)
-}
-
-func (m *Model) handleClipboardTimeout(message clipboardProbeExpiredMsg) tea.Cmd {
-	if m.clipboardMode != clipboardUnknown ||
-		m.clipboardPending == "" ||
-		message.generation != m.clipboardProbe {
-		return nil
-	}
-	text := m.clipboardPending
-	m.clipboardPending = ""
-	m.clipboardMode = clipboardFallback
-	return m.writeFallbackClipboard(text)
-}
-
-func (m *Model) writeFallbackClipboard(text string) tea.Cmd {
-	return func() tea.Msg {
-		return clipboardFallbackMsg{err: m.clipboardFallback(text)}
-	}
-}
-
-func (m *Model) handleClipboardFallback(message clipboardFallbackMsg) tea.Cmd {
-	if message.err != nil {
-		m.setError("copy selection: " + message.err.Error())
-		m.cancelPendingCopy()
-		return nil
-	}
-	return m.showNotice("Copied to clipboard", modalNone)
-}
-
-func formatExport(text string, style exportStyle) string {
-	text = trimTrailingWhitespace(text)
-	switch style {
-	case exportLineSlash:
-		return prefixLines(text, "// ")
-	case exportLineHash:
-		return prefixLines(text, "# ")
-	case exportBlock:
-		return "/*\n" + text + "\n*/"
-	case exportMarkdown:
-		return "```\n" + text + "\n```"
-	default:
-		return text
-	}
-}
-
-func prefixLines(text, prefix string) string {
-	lines := strings.Split(text, "\n")
-	for i := range lines {
-		lines[i] = strings.TrimRightFunc(prefix+lines[i], unicode.IsSpace)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func trimTrailingWhitespace(text string) string {
-	lines := strings.Split(text, "\n")
-	for i := range lines {
-		lines[i] = strings.TrimRightFunc(lines[i], unicode.IsSpace)
-	}
-	return strings.Join(lines, "\n")
+func (m *Model) updateClipboard(message tea.Msg) tea.Cmd {
+	model, command := m.clipboard.Update(message)
+	m.clipboard = model.(*clipboardview.Model)
+	return command
 }
 
 func (m *Model) selectionText() (string, error) {
@@ -290,7 +48,7 @@ func (m *Model) selectionText() (string, error) {
 	for y := bounds.Min.Y; y < limit.Y; y++ {
 		lines = append(lines, m.selectionRow(bounds.Min.X, limit.X, y))
 	}
-	return trimTrailingWhitespace(strings.Join(lines, "\n")), nil
+	return clipboardview.TrimTrailingWhitespace(strings.Join(lines, "\n")), nil
 }
 
 func (m *Model) selectionBounds() (layout.Rect, bool) {

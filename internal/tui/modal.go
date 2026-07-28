@@ -34,7 +34,7 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		content = m.saveForm.View()
 	case modalExport:
 		width = min(50, m.width)
-		content = m.exportForm.View()
+		content = m.clipboard.View().Content
 	case modalNotice:
 		width = min(max(28, displayWidth([]byte(m.notice))+4), m.width)
 		content = " " + m.notice
@@ -75,7 +75,7 @@ func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
 	case modalSave:
 		return m.updateSaveForm(tea.MouseClickMsg(mouse))
 	case modalExport:
-		return m.updateExportForm(tea.MouseClickMsg(mouse))
+		return m.updateClipboard(tea.MouseClickMsg(mouse))
 	case modalNone, modalHelp, modalNotice:
 		return nil
 	}
@@ -94,7 +94,7 @@ func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
 	case modalSave:
 		return m.updateSaveForm(tea.MouseMotionMsg(mouse))
 	case modalExport:
-		return m.updateExportForm(tea.MouseMotionMsg(mouse))
+		return m.updateClipboard(tea.MouseMotionMsg(mouse))
 	case modalNone, modalHelp, modalNotice:
 		return nil
 	}
@@ -109,7 +109,7 @@ func (m *Model) closeModal() {
 		m.closeSaveForm()
 	case modalExport:
 		m.modal = modalNone
-		m.exportText = ""
+		m.clipboard.CancelExport()
 	case modalNotice:
 		m.modal = m.noticeReturn
 		m.dismissNotice()

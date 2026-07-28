@@ -158,7 +158,7 @@ func (m *Model) sync() {
 		Router:        router,
 		ApplyToFuture: m.input.applyToFuture,
 		SaveDirectory: m.input.saveDirectory,
-		CommentPrefix: normalizeCommentPrefix(m.input.commentPrefix),
+		CommentPrefix: NormalizeCommentPrefix(m.input.commentPrefix),
 	}
 }
 
@@ -172,7 +172,7 @@ func formValueFrom(value Value) formValue {
 		reroutePasses: strconv.FormatUint(uint64(value.Router.ReroutePasses), 10),
 		applyToFuture: value.ApplyToFuture,
 		saveDirectory: value.SaveDirectory,
-		commentPrefix: normalizeCommentPrefix(value.CommentPrefix),
+		commentPrefix: NormalizeCommentPrefix(value.CommentPrefix),
 		save:          true,
 	}
 }
@@ -269,7 +269,8 @@ func option(title, value string) string {
 	return title + "  " + value
 }
 
-func normalizeCommentPrefix(prefix string) string {
+// NormalizeCommentPrefix returns a supported comment preference.
+func NormalizeCommentPrefix(prefix string) string {
 	switch prefix {
 	case "# ", "/* */":
 		return prefix

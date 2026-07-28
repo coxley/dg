@@ -4,10 +4,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"testing/synctest"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
+	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
 )
@@ -34,148 +33,55 @@ func TestSelectionTextRendersOnlySelectedObjects(t *testing.T) {
 func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct {
-		name string
-		key  tea.Key
-	}{
-		{"legacy control", tea.Key{Code: 'c', Mod: tea.ModCtrl}},
-		{"enhanced super", tea.Key{Code: 'c', Mod: tea.ModSuper}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+	model, nodeID := newTestModel(t)
+	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	var copied string
+	model.clipboard.UseFallback(func(text string) error {
+		copied = text
+		return nil
+	})
 
-			model, nodeID := newTestModel(t)
-			model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-			var copied string
-			model.clipboardMode = clipboardFallback
-			model.clipboardFallback = func(text string) error {
-				copied = text
-				return nil
-			}
+	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	}))
+	require.NotNil(t, command)
+	command = updateModelCommand(t, model, command())
+	require.NotNil(t, command)
+	command = updateModelCommand(t, model, command())
+	require.NotNil(t, command)
+	command = updateModelCommand(t, model, command())
+	require.NotNil(t, command)
 
-			command := updateModelCommand(t, model, tea.KeyPressMsg(test.key))
-			require.NotNil(t, command)
-			command = updateModelCommand(t, model, copyDebounceExpiredMsg{
-				generation: model.copyGeneration,
-			})
-			require.NotNil(t, command)
-			command = updateModelCommand(t, model, command())
-
-			require.Equal(t, strings.Join([]string{
-				"┌──────┐",
-				"│ node │",
-				"└──────┘",
-			}, "\n"), copied)
-			require.Equal(t, modalNotice, model.modal)
-			require.Equal(t, "Copied to clipboard", model.notice)
-			require.NotNil(t, command)
-		})
-	}
+	require.Equal(t, strings.Join([]string{
+		"┌──────┐",
+		"│ node │",
+		"└──────┘",
+	}, "\n"), copied)
+	require.Equal(t, modalNotice, model.modal)
+	require.Equal(t, "Copied to clipboard", model.notice)
 }
 
 func TestSecondCopyOpensExportPrompt(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
-	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.clipboardMode = clipboardFallback
-	copies := 0
-	model.clipboardFallback = func(string) error {
-		copies++
-		return nil
-	}
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
-
-	copyKey := tea.KeyPressMsg(tea.Key{
-		Code: 'c',
-		Mod:  tea.ModSuper,
+	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	model.clipboard.UseFallback(func(string) error {
+		require.Fail(t, "second copy must not write")
+		return nil
 	})
+
+	copyKey := tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModSuper})
+	require.NotNil(t, updateModelCommand(t, model, copyKey))
 	command := updateModelCommand(t, model, copyKey)
 	require.NotNil(t, command)
-	generation := model.copyGeneration
-	updateModelCommand(t, model, copyKey)
-	require.Nil(t, updateModelCommand(t, model, copyDebounceExpiredMsg{
-		generation: generation,
-	}))
+	updateModel(t, model, command())
 
 	require.Equal(t, modalExport, model.modal)
-	require.Zero(t, copies)
-	require.Equal(t, exportLineSlash, model.exportStyle)
+	require.Equal(t, clipboardview.LineSlash, model.clipboard.Style())
 	require.Contains(t, model.View().Content, "Line comments")
-}
-
-func TestCopyDebounceWaitsForInactivity(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		model, nodeID := newTestModel(t)
-		model.geo.Selection().SelectOnly(layout.Hit{
-			ID:   nodeID,
-			Kind: layout.HitNode,
-		})
-		model.clipboardMode = clipboardFallback
-		var copied string
-		model.clipboardFallback = func(text string) error {
-			copied = text
-			return nil
-		}
-
-		command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
-			Code: 'c',
-			Mod:  tea.ModCtrl,
-		}))
-		messages := make(chan tea.Msg, 1)
-		go func() {
-			messages <- command()
-		}()
-
-		time.Sleep(copyDebounceDuration - time.Millisecond)
-		require.Empty(t, messages)
-		require.Empty(t, copied)
-		time.Sleep(time.Millisecond)
-		command = updateModelCommand(t, model, <-messages)
-		require.NotNil(t, command)
-		updateModelCommand(t, model, command())
-		require.NotEmpty(t, copied)
-	})
-}
-
-func TestCopyDebounceIgnoresStaleTimerAfterInterruption(t *testing.T) {
-	t.Parallel()
-
-	model, nodeID := newTestModel(t)
-	model.geo.Selection().SelectOnly(layout.Hit{
-		ID:   nodeID,
-		Kind: layout.HitNode,
-	})
-	model.clipboardMode = clipboardFallback
-	copies := 0
-	model.clipboardFallback = func(string) error {
-		copies++
-		return nil
-	}
-
-	require.NotNil(t, updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
-		Code: 'c',
-		Mod:  tea.ModCtrl,
-	})))
-	generation := model.copyGeneration
-	updateModel(t, model, tea.BlurMsg{})
-
-	require.Nil(t, updateModelCommand(t, model, copyDebounceExpiredMsg{
-		generation: generation,
-	}))
-	require.Zero(t, copies)
-}
-
-func TestExportPromptStartsWithPreferredComments(t *testing.T) {
-	t.Parallel()
-
-	model, _ := newTestModel(t)
-	model.preferences.commentPrefix = "# "
-	model.openExport("diagram")
-
-	require.Equal(t, exportLineHash, model.exportStyle)
-	options := exportOptions(model.exportStyle)
-	require.Equal(t, exportLineHash, options[0].Value)
 }
 
 func TestCopySelectionReportsClipboardFailure(t *testing.T) {
@@ -183,84 +89,20 @@ func TestCopySelectionReportsClipboardFailure(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.clipboardMode = clipboardFallback
-	model.clipboardFallback = func(string) error { return errors.New("unavailable") }
+	model.clipboard.UseFallback(func(string) error {
+		return errors.New("unavailable")
+	})
 
 	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
 		Code: 'c',
 		Mod:  tea.ModCtrl,
 	}))
+	for range 2 {
+		require.NotNil(t, command)
+		command = updateModelCommand(t, model, command())
+	}
 	require.NotNil(t, command)
-	command = updateModelCommand(t, model, copyDebounceExpiredMsg{
-		generation: model.copyGeneration,
-	})
-	require.NotNil(t, command)
-	updateModel(t, model, command())
+	require.Nil(t, updateModelCommand(t, model, command()))
 
 	require.Equal(t, "copy selection: unavailable", model.status)
-	require.False(t, model.copyArmed)
-}
-
-func TestClipboardProbeSelectsTerminalOrFallback(t *testing.T) {
-	t.Parallel()
-
-	t.Run("terminal response", func(t *testing.T) {
-		t.Parallel()
-
-		model, _ := newTestModel(t)
-		model.clipboardPending = "diagram"
-		command := model.handleClipboardResponse()
-
-		require.Equal(t, clipboardTerminal, model.clipboardMode)
-		require.Empty(t, model.clipboardPending)
-		require.Equal(t, modalNotice, model.modal)
-		require.NotNil(t, command)
-	})
-
-	t.Run("timeout", func(t *testing.T) {
-		t.Parallel()
-
-		model, _ := newTestModel(t)
-		model.clipboardPending = "diagram"
-		model.clipboardProbe = 2
-		var copied string
-		model.clipboardFallback = func(text string) error {
-			copied = text
-			return nil
-		}
-
-		require.Nil(t, model.handleClipboardTimeout(
-			clipboardProbeExpiredMsg{generation: 1},
-		))
-		command := model.handleClipboardTimeout(
-			clipboardProbeExpiredMsg{generation: 2},
-		)
-		require.Equal(t, clipboardFallback, model.clipboardMode)
-		require.NotNil(t, command)
-		require.NotNil(t, updateModelCommand(t, model, command()))
-		require.Equal(t, "diagram", copied)
-		require.Equal(t, modalNotice, model.modal)
-	})
-}
-
-func TestFormatExport(t *testing.T) {
-	t.Parallel()
-
-	const diagram = "one   \ntwo\t\n"
-	tests := []struct {
-		name  string
-		style exportStyle
-		want  string
-	}{
-		{"slash", exportLineSlash, "// one\n// two\n//"},
-		{"hash", exportLineHash, "# one\n# two\n#"},
-		{"block", exportBlock, "/*\none\ntwo\n\n*/"},
-		{"markdown", exportMarkdown, "```\none\ntwo\n\n```"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, test.want, formatExport(diagram, test.style))
-		})
-	}
 }

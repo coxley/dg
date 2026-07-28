@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
@@ -138,22 +139,13 @@ type Model struct {
 	statusError string
 	path        string
 
-	clipboardFallback func(string) error
-	clipboardMode     clipboardMode
-	clipboardPending  string
-	clipboardProbe    uint64
-	copyArmed         bool
-	copyPending       string
-	copyGeneration    uint64
-	exportForm        *huh.Form
-	exportText        string
-	exportStyle       exportStyle
-	saveForm          *huh.Form
-	saveDirectory     string
-	saveName          string
-	notice            string
-	noticeID          uint64
-	noticeReturn      modal
+	clipboard     *clipboardview.Model
+	saveForm      *huh.Form
+	saveDirectory string
+	saveName      string
+	notice        string
+	noticeID      uint64
+	noticeReturn  modal
 
 	preferences    preferenceState
 	preferenceEdit bool
@@ -184,15 +176,15 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		return nil, errors.New("nil layout")
 	}
 	m := &Model{
-		geo:               geo,
-		history:           geo.History(),
-		path:              path,
-		theme:             DefaultTheme(true),
-		help:              help.New(),
-		keys:              newKeyMap(),
-		clipboardFallback: writeFallbackClipboard,
-		styledRuns:        make(map[styledRunKey]string),
+		geo:        geo,
+		history:    geo.History(),
+		path:       path,
+		theme:      DefaultTheme(true),
+		help:       help.New(),
+		keys:       newKeyMap(),
+		styledRuns: make(map[styledRunKey]string),
 	}
+	m.clipboard = clipboardview.New(m.theme.formTheme())
 	m.nav = nav.New(m.theme.Nav)
 	m.dialog = modalview.New(m.theme.Modal)
 	m.canvas = canvasview.New(m.theme.Canvas)
@@ -255,10 +247,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.preferenceForm != nil {
 			m.preferenceForm.SetStyles(m.theme.preferenceStyles())
 		}
+		m.clipboard.SetTheme(m.theme.formTheme())
 	case tea.KeyboardEnhancementsMsg:
 		m.keys.setKeyboardEnhancements(true)
 	case tea.ClipboardMsg:
-		return m, m.handleClipboardResponse()
+		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 0)
 		m.height = max(message.Height, 0)
@@ -278,7 +271,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 		}
 	case tea.MouseClickMsg:
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 		if m.modal != modalNone {
 			return m, m.updateModalMouseClick(message.Mouse())
 		}
@@ -289,21 +282,21 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateMouseClick(message.Mouse())
 	case tea.MouseReleaseMsg:
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 		if m.modal != modalNone {
 			m.dialog, _ = m.dialog.Update(message)
 			return m, nil
 		}
 		m.updateMouseRelease(message.Mouse())
 	case tea.MouseMotionMsg:
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 		if m.modal != modalNone {
 			return m, m.updateModalMouseMotion(message.Mouse())
 		}
 		m.nav, _ = m.nav.Update(message)
 		m.updateMouseMotion(message.Mouse())
 	case tea.MouseWheelMsg:
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 		return m, m.updateMouseWheelMessage(message)
 	case tea.BlurMsg:
 		m.interruptInteraction()
@@ -311,17 +304,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateComponent(message)
 	case preferencesview.UpdateMsg:
 		return m, m.updateSettingsTabs(message)
+	case clipboardview.UpdateMsg:
+		return m, m.updateClipboard(message)
 	case noticeExpiredMsg:
 		if m.modal == modalNotice && message.id == m.noticeID {
 			m.modal = m.noticeReturn
 			m.dismissNotice()
 		}
-	case clipboardProbeExpiredMsg:
-		return m, m.handleClipboardTimeout(message)
-	case copyDebounceExpiredMsg:
-		return m, m.handleCopyDebounce(message)
-	case clipboardFallbackMsg:
-		return m, m.handleClipboardFallback(message)
 	}
 	return m, nil
 }
@@ -352,6 +341,18 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 	case modalview.CloseMsg:
 		m.closeModal()
 		return nil, true
+	case clipboardview.OpenExportMsg:
+		m.openModal(modalExport)
+		m.status = ""
+		return nil, true
+	case clipboardview.CloseExportMsg:
+		m.modal = modalNone
+		return nil, true
+	case clipboardview.CopiedMsg:
+		return m.showNotice("Copied to clipboard", modalNone), true
+	case clipboardview.ErrorMsg:
+		m.setError("copy selection: " + message.Err.Error())
+		return nil, true
 	default:
 		return nil, false
 	}
@@ -359,8 +360,6 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 
 func (m *Model) updateComponent(message componentMsg) tea.Cmd {
 	switch {
-	case message.kind == exportComponent && m.modal == modalExport:
-		return m.updateExportForm(message.message)
 	case message.kind == saveComponent && m.modal == modalSave:
 		return m.updateSaveForm(message.message)
 	default:
@@ -392,7 +391,7 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	if !copyKey {
-		m.cancelPendingCopy()
+		m.clipboard.CancelPending()
 	}
 	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
 		return m.copySelection()
@@ -1090,7 +1089,7 @@ func (m *Model) finishMove() {
 }
 
 func (m *Model) interruptInteraction() {
-	m.cancelPendingCopy()
+	m.clipboard.CancelPending()
 	if m.preferenceEdit {
 		m.closeSettingsModal()
 	}
