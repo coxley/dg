@@ -17,6 +17,7 @@ type actionField struct {
 	styles    Styles
 	focused   bool
 	selected  Action
+	width     int
 }
 
 func newActionField(
@@ -62,6 +63,14 @@ func (f *actionField) Update(message tea.Msg) (huh.Model, tea.Cmd) {
 }
 
 func (f *actionField) View() string {
+	view := f.content()
+	return strings.Repeat(
+		" ",
+		max(f.width-lipgloss.Width(view), 0),
+	) + view
+}
+
+func (f *actionField) content() string {
 	var view strings.Builder
 	for action := ActionSave; action <= ActionCancel; action++ {
 		view.WriteString(f.button(action))
@@ -92,8 +101,11 @@ func (*actionField) Zoom() bool                         { return false }
 func (*actionField) KeyBinds() []keybinding.Binding     { return nil }
 func (f *actionField) WithTheme(huh.Theme) huh.Field    { return f }
 func (f *actionField) WithKeyMap(*huh.KeyMap) huh.Field { return f }
-func (f *actionField) WithWidth(int) huh.Field          { return f }
-func (f *actionField) WithHeight(int) huh.Field         { return f }
+func (f *actionField) WithWidth(width int) huh.Field {
+	f.width = max(width, 0)
+	return f
+}
+func (f *actionField) WithHeight(int) huh.Field { return f }
 func (f *actionField) WithPosition(huh.FieldPosition) huh.Field {
 	return f
 }
@@ -101,6 +113,7 @@ func (*actionField) GetKey() string  { return "action" }
 func (f *actionField) GetValue() any { return *f.action }
 
 func (f *actionField) hit(x int) {
+	x -= max(f.width-lipgloss.Width(f.content()), 0)
 	for action := ActionSave; action <= ActionCancel; action++ {
 		width := lipgloss.Width(f.button(action))
 		if x >= 0 && x < width {

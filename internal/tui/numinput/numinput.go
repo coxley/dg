@@ -3,10 +3,12 @@ package numinput
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/exp/constraints"
 )
 
@@ -32,6 +34,7 @@ type Model[T constraints.Integer] struct {
 	value      *T
 	max        T
 	styles     Styles
+	width      int
 	focused    bool
 	flash      int
 	generation uint64
@@ -93,7 +96,7 @@ func (m *Model[T]) Render() string {
 	value := strconv.FormatUint(uint64(*m.value), 10)
 	title := m.styles.Title.Render(m.title)
 	if !m.focused {
-		return title + "  " + value
+		return justifyApart(title, value, m.width)
 	}
 	title = m.styles.FocusedTitle.Render(m.title)
 	left, right := m.styles.Button.Render("⇽"), m.styles.Button.Render("⇾")
@@ -102,12 +105,21 @@ func (m *Model[T]) Render() string {
 	} else if m.flash > 0 {
 		right = m.styles.ActiveButton.Render("⇾")
 	}
-	return title + "  " + left + " " + value + " " + right
+	return justifyApart(
+		title,
+		left+" "+value+" "+right,
+		m.width,
+	)
 }
 
 // SetStyles replaces the input's visual styles.
 func (m *Model[T]) SetStyles(styles Styles) {
 	m.styles = styles
+}
+
+// SetWidth sets the rendered row width.
+func (m *Model[T]) SetWidth(width int) {
+	m.width = max(width, 0)
 }
 
 // SetFocused controls focused rendering.
@@ -154,4 +166,16 @@ func (m *Model[T]) step(delta int) tea.Cmd {
 			generation:        generation,
 		}
 	})
+}
+
+func justifyApart(left, right string, width int) string {
+	if width <= 0 {
+		return left + "  " + right
+	}
+	rightWidth := ansi.StringWidth(right)
+	leftWidth := max(width-rightWidth-1, 0)
+	left = ansi.Truncate(left, leftWidth, "")
+	return left +
+		strings.Repeat(" ", max(width-ansi.StringWidth(left)-rightWidth, 0)) +
+		right
 }

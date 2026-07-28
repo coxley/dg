@@ -208,6 +208,19 @@ func (m Model) BodyHeight() int {
 	return max(height, 1)
 }
 
+// BodyWidth returns the columns available inside the modal body.
+func (m Model) BodyWidth() int {
+	geo := m.normal
+	if m.variant == Notice {
+		geo = m.notice
+	}
+	width := m.overlay.Width - geo.frameWidth
+	if len(m.tabs) != 0 {
+		width -= m.body.frameWidth
+	}
+	return max(width, 0)
+}
+
 // BodyOrigin returns the terminal position of the modal body content.
 func (m Model) BodyOrigin() (x, y int) {
 	x = m.overlay.ContentLeft

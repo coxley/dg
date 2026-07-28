@@ -41,7 +41,16 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		content = " " + m.notice
 		variant = modalview.Notice
 	case modalHelp, modalPreferences:
-		content = m.settingsBody(width)
+		bodyWidth := max(
+			width-
+				m.theme.Modal.Container.GetHorizontalFrameSize()-
+				m.theme.Modal.Body.GetHorizontalFrameSize(),
+			0,
+		)
+		if m.dialog.Overlay().Width != 0 {
+			bodyWidth = m.dialog.BodyWidth()
+		}
+		content = m.settingsBody(bodyWidth)
 		tabs = settingsTabs
 	case modalNone:
 	}
@@ -127,11 +136,11 @@ func (m *Model) closeModal() {
 }
 
 func (m *Model) settingsBody(width int) string {
-	innerWidth := max(width-m.theme.Modal.Container.GetHorizontalFrameSize(), 0)
-	m.help.SetWidth(innerWidth)
+	m.help.SetWidth(width)
 	help := m.help.View(m.keys)
 	preferenceHeight := 0
 	if m.preferenceForm != nil {
+		m.preferenceForm.SetWidth(width)
 		preferenceHeight = m.preferenceForm.NaturalHeight()
 	}
 

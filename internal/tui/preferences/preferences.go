@@ -42,6 +42,10 @@ var actionLabels = [...]string{
 type Styles struct {
 	Form           huh.Theme
 	NumInput       numinput.Styles
+	Title          lipgloss.Style
+	FocusedTitle   lipgloss.Style
+	Value          lipgloss.Style
+	FocusedValue   lipgloss.Style
 	Action         lipgloss.Style
 	SelectedAction lipgloss.Style
 }
@@ -77,7 +81,8 @@ type Model struct {
 	input         formValue
 	form          *huh.Form
 	fields        []numericField
-	directory     *huh.FilePicker
+	rows          []*rowField
+	directory     *directoryField
 	actions       *actionField
 	width         int
 	height        int
@@ -124,7 +129,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, command
 		}
 		if message.Code == tea.KeyEscape && m.directory.Zoom() {
-			m.directory.Picking(false)
+			m.directory.close()
 			form, command := m.form.Update(refreshMsg{})
 			m.form = form.(*huh.Form)
 			return m, wrap(command)
@@ -145,7 +150,7 @@ func (m *Model) View() tea.View {
 func (m *Model) Reset(value Value) {
 	m.value = value
 	m.input = formValueFrom(value)
-	m.form, m.fields, m.directory, m.actions, m.naturalHeight = newForm(
+	m.form, m.fields, m.rows, m.directory, m.actions, m.naturalHeight = newForm(
 		&m.input,
 		m.width,
 		m.height,
@@ -182,12 +187,23 @@ func (m *Model) SetHeight(height int) {
 	m.form.WithHeight(min(height, m.naturalHeight))
 }
 
+// SetWidth replaces the available form width.
+func (m *Model) SetWidth(width int) {
+	m.width = max(width, 0)
+	m.form.WithWidth(m.width)
+	form, _ := m.form.Update(refreshMsg{})
+	m.form = form.(*huh.Form)
+}
+
 // SetStyles replaces all visual styles.
 func (m *Model) SetStyles(styles Styles) {
 	m.styles = styles
 	m.form.WithTheme(styles.Form)
 	for _, field := range m.fields {
 		field.SetStyles(styles.NumInput)
+	}
+	for _, row := range m.rows {
+		row.SetStyles(styles)
 	}
 	m.actions.styles = styles
 }
@@ -233,7 +249,14 @@ func newForm(
 	value *formValue,
 	width, height int,
 	styles Styles,
-) (*huh.Form, []numericField, *huh.FilePicker, *actionField, int) {
+) (
+	*huh.Form,
+	[]numericField,
+	[]*rowField,
+	*directoryField,
+	*actionField,
+	int,
+) {
 	keymap := keyMap()
 	inputs := []numericField{
 		numinput.NewField("Step cost", &value.step, uint32(math.MaxUint32), styles.NumInput),
@@ -255,6 +278,25 @@ func newForm(
 		CurrentDirectory(directory).
 		Picking(false).
 		Value(&value.saveDirectory)
+	directoryField := newDirectoryField(
+		filePicker,
+		styles,
+	)
+	commentSelect := huh.NewSelect[string]().
+		Title("Preferred comments").
+		Options(
+			huh.NewOption("//", "// "),
+			huh.NewOption("#", "# "),
+			huh.NewOption("/* */", "/* */"),
+		).
+		Inline(true).
+		Value(&value.commentPrefix)
+	commentField := newRowField(
+		commentSelect,
+		"Preferred comments",
+		choiceControl,
+		styles,
+	)
 	actions := newActionField(&value.action, &value.submitted, styles)
 	fields := []huh.Field{
 		inputs[0],
@@ -263,15 +305,8 @@ func newForm(
 		inputs[3],
 		inputs[4],
 		inputs[5],
-		filePicker,
-		huh.NewSelect[string]().
-			Options(
-				huh.NewOption(option("Preferred comments", "//"), "// "),
-				huh.NewOption(option("Preferred comments", "#"), "# "),
-				huh.NewOption(option("Preferred comments", "/* */"), "/* */"),
-			).
-			Inline(true).
-			Value(&value.commentPrefix),
+		directoryField,
+		commentField,
 		actions,
 	}
 	form := huh.NewForm(huh.NewGroup(fields...)).
@@ -285,7 +320,10 @@ func newForm(
 		height = naturalHeight
 	}
 	form.WithHeight(min(height, naturalHeight))
-	return form, inputs, filePicker, actions, naturalHeight
+	return form, inputs, []*rowField{
+		directoryField.rowField,
+		commentField,
+	}, directoryField, actions, naturalHeight
 }
 
 func keyMap() *huh.KeyMap {
@@ -367,10 +405,6 @@ func (m *Model) updateCollapsedDirectory(message tea.KeyPressMsg) (bool, tea.Cmd
 		return true, m.scroll(-1)
 	}
 	return false, nil
-}
-
-func option(title, value string) string {
-	return title + "  " + value
 }
 
 // NormalizeCommentPrefix returns a supported comment preference.

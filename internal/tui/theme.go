@@ -115,6 +115,10 @@ func (t Theme) preferenceStyles() preferencesview.Styles {
 	return preferencesview.Styles{
 		Form:           t.formTheme(),
 		NumInput:       t.NumInput,
+		Title:          t.NumInput.Title,
+		FocusedTitle:   t.NumInput.FocusedTitle,
+		Value:          t.HelpDescription,
+		FocusedValue:   t.HelpKey,
 		Action:         t.HelpDescription.Padding(0, 1),
 		SelectedAction: t.HelpKey.Padding(0, 1),
 	}

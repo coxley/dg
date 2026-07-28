@@ -125,6 +125,7 @@ func (f *Field[T]) WithKeyMap(*huh.KeyMap) huh.Field {
 
 func (f *Field[T]) WithWidth(width int) huh.Field {
 	f.width = width
+	f.input.SetWidth(width)
 	return f
 }
 

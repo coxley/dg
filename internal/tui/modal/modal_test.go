@@ -37,6 +37,20 @@ func TestModelKeepsModalBelowAvoidedRows(t *testing.T) {
 	require.GreaterOrEqual(t, model.Overlay().Top, 6)
 }
 
+func TestModelTreatsConfiguredWidthAsOuterWidth(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(
+		80, 24, 0, 40, "body", Standard,
+		[]Tab{{ID: 1, Label: "One"}},
+		1,
+	)
+
+	require.Equal(t, 40, model.Overlay().Width)
+	require.Equal(t, 38, model.BodyWidth())
+}
+
 func TestModelUsesFullScreenWhenLongContentCannotFit(t *testing.T) {
 	t.Parallel()
 

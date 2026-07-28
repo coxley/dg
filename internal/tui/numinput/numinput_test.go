@@ -2,10 +2,12 @@ package numinput
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,6 +78,25 @@ func TestModelRendersFullUint64Range(t *testing.T) {
 	value := uint64(math.MaxUint64)
 	model := New("Cost", &value, uint64(math.MaxUint64), testStyles())
 	require.Contains(t, model.View().Content, "18446744073709551615")
+}
+
+func TestModelJustifiesTitleAndValueAcrossWidth(t *testing.T) {
+	t.Parallel()
+
+	value := uint8(5)
+	model := New("Cost", &value, uint8(10), testStyles())
+	model.SetWidth(20)
+
+	blurred := ansi.Strip(model.View().Content)
+	require.True(t, strings.HasPrefix(blurred, "Cost"))
+	require.True(t, strings.HasSuffix(blurred, "5"))
+	require.Equal(t, 20, ansi.StringWidth(blurred))
+
+	model.SetFocused(true)
+	focused := ansi.Strip(model.View().Content)
+	require.True(t, strings.HasPrefix(focused, "Cost"))
+	require.True(t, strings.HasSuffix(focused, "⇽ 5 ⇾"))
+	require.Equal(t, 20, ansi.StringWidth(focused))
 }
 
 func testStyles() Styles {

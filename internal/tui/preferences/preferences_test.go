@@ -75,6 +75,47 @@ func TestModelImplementsTeaModel(t *testing.T) {
 	require.NotEmpty(t, model.View().Content)
 }
 
+func TestFieldsJustifyTitlesAndValuesAcrossWidth(t *testing.T) {
+	t.Parallel()
+
+	const width = 48
+	model := New(Value{Router: layout.DefaultRouter()}, width, 20, testStyles())
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+
+	requireRow := func(title, suffix string) {
+		t.Helper()
+		for _, line := range lines {
+			if !strings.HasPrefix(line, title) {
+				continue
+			}
+			require.True(t, strings.HasSuffix(line, suffix), line)
+			require.Equal(t, width, ansi.StringWidth(line), line)
+			return
+		}
+		require.Fail(t, "preference row not rendered", title)
+	}
+	requireRow("Step cost", "⇽ 10 ⇾")
+	requireRow("Shared-step cost", "2")
+	requireRow("Default save directory", "[ browse ]")
+	requireRow("Preferred comments", "//")
+}
+
+func TestFieldsFollowFormWidthChanges(t *testing.T) {
+	t.Parallel()
+
+	model := New(Value{Router: layout.DefaultRouter()}, 48, 20, testStyles())
+	model.SetWidth(64)
+
+	for _, line := range strings.Split(ansi.Strip(model.View().Content), "\n") {
+		if strings.HasPrefix(line, "Default save directory") {
+			require.Equal(t, 64, ansi.StringWidth(line))
+			require.True(t, strings.HasSuffix(line, "[ browse ]"))
+			return
+		}
+	}
+	require.Fail(t, "directory row not rendered")
+}
+
 func TestSelectArrowsNavigateConsistently(t *testing.T) {
 	t.Parallel()
 
@@ -178,6 +219,10 @@ func testStyles() Styles {
 			Button:       lipgloss.NewStyle(),
 			ActiveButton: lipgloss.NewStyle().Bold(true),
 		},
+		Title:          lipgloss.NewStyle(),
+		FocusedTitle:   lipgloss.NewStyle().Bold(true),
+		Value:          lipgloss.NewStyle(),
+		FocusedValue:   lipgloss.NewStyle().Bold(true),
 		Action:         lipgloss.NewStyle().Padding(0, 1),
 		SelectedAction: lipgloss.NewStyle().Bold(true).Padding(0, 1),
 	}
