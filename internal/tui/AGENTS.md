@@ -12,14 +12,20 @@ The root `Model` owns editor coordination:
 
 - viewport, cursor, active tool, focus, and modal state
 - mouse, drag, resize, label-edit, and reconnect interactions
-- save, preferences, clipboard, and notice state
+- save, preference transactions, document selection export, and notices
 
 Composable presentation models live in sub-packages:
 
 - `canvas` owns canvas styles, encoders, retained frames, and row indexes.
+- `clipboard` owns copy debounce, export formatting and form state, terminal
+  capability probing, and fallback writes.
 - `nav` owns floating tool navigation styles, geometry, hover, and activation.
 - `modal` owns modal and tab styles, sizing, full-screen fallback, movement,
   and pointer hit testing.
+- `numinput` owns bounded numeric stepping and directional feedback; its Huh
+  adapter keeps form traversal separate.
+- `preferences` owns the Huh preferences form, its numeric children, sizing,
+  navigation, and editable value.
 
 The root configures these models and translates their semantic `tea.Msg`
 values into editor actions. Component interactions cross boundaries through
@@ -69,11 +75,13 @@ The settings modal overlays the diagram and can move by dragging its top
 border. Tab and Shift-Tab switch Shortcuts and Preferences. Esc, `q`, or an
 outside click closes it.
 
-Router preferences apply live. Cancel, close, outside click, or lost focus
-restores their original values. Numeric fields change only with Left and Right
-and briefly highlight the pressed arrow. The directory field uses
+The preferences model reports editable values; root applies router changes
+live and owns the layout history transaction. Cancel, close, outside click, or
+lost focus restores the original values. Numeric fields change only with Left
+and Right and briefly highlight the pressed arrow. The directory field uses
 `huh.NewFilePicker`.
 
+Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 100 ms. A second copy in that
 window cancels the provisional write and opens Export. Stale timers must never
 write after another interaction.

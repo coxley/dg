@@ -44,8 +44,11 @@ saving, clipboard export, preferences, and live previews.
 - `render`: encodes layout raster data as Unicode terminal frames
 - `internal/tui`: implements the Bubble Tea interactive editor
 - `internal/tui/canvas`: retains canvas frames, encoders, and drawing styles
+- `internal/tui/clipboard`: owns copy debounce, export, and clipboard backends
 - `internal/tui/modal`: renders movable or full-screen modal shells and tabs
 - `internal/tui/nav`: renders and handles the floating tool navigation
+- `internal/tui/numinput`: implements bounded arrow-key numeric controls
+- `internal/tui/preferences`: owns the editable preferences form
 
 Each package has a local `AGENTS.md` with its decisions and constraints.
 

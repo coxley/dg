@@ -73,15 +73,15 @@ type ErrorMsg struct {
 
 var (
 	initOnce sync.Once
-	initErr  error
+	errInit  error
 )
 
 func writeFallback(text string) error {
 	initOnce.Do(func() {
-		initErr = systemclipboard.Init()
+		errInit = systemclipboard.Init()
 	})
-	if initErr != nil {
-		return initErr
+	if errInit != nil {
+		return errInit
 	}
 	systemclipboard.Write(systemclipboard.FmtText, []byte(text))
 	return nil
