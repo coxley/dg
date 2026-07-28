@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
@@ -62,44 +64,73 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 	require.Equal(t, "Copied to clipboard", model.notice)
 }
 
-func TestSecondCopyOpensExportPromptForControlAndSuper(t *testing.T) {
-	t.Parallel()
-
-	keys := map[string]tea.KeyPressMsg{
-		"control": {Code: 'c', Mod: tea.ModCtrl},
-		"super":   {Code: 'c', Text: "c", Mod: tea.ModSuper},
+func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
+	keys := []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{"control", tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}},
+		{"super", tea.KeyPressMsg{Code: 'c', Text: "c", Mod: tea.ModSuper}},
 	}
-	for firstName, first := range keys {
-		for secondName, second := range keys {
-			t.Run(firstName+" then "+secondName, func(t *testing.T) {
-				t.Parallel()
+	for _, first := range keys {
+		for _, second := range keys {
+			t.Run(first.name+" then "+second.name, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					model, nodeID := newTestModel(t)
+					updateModel(t, model, tea.WindowSizeMsg{
+						Width:  80,
+						Height: 24,
+					})
+					model.geo.Selection().SelectOnly(layout.Hit{
+						ID:   nodeID,
+						Kind: layout.HitNode,
+					})
+					model.clipboard.UseFallback(func(string) error {
+						require.Fail(t, "second copy must not write")
+						return nil
+					})
 
-				model, nodeID := newTestModel(t)
-				updateModel(t, model, tea.WindowSizeMsg{
-					Width:  80,
-					Height: 24,
-				})
-				model.geo.Selection().SelectOnly(layout.Hit{
-					ID:   nodeID,
-					Kind: layout.HitNode,
-				})
-				model.clipboard.UseFallback(func(string) error {
-					require.Fail(t, "second copy must not write")
-					return nil
-				})
+					firstCommand := updateModelCommand(t, model, first.key)
+					require.NotNil(t, firstCommand)
+					messages := make(chan tea.Msg, 1)
+					go func() {
+						messages <- firstCommand()
+					}()
 
-				require.NotNil(t, updateModelCommand(t, model, first))
-				command := updateModelCommand(t, model, second)
-				require.NotNil(t, command)
-				updateModel(t, model, command())
+					time.Sleep(99 * time.Millisecond)
+					require.Empty(t, messages)
+					updateModel(t, model, tea.MouseMotionMsg{
+						X: 10,
+						Y: 10,
+					})
+					updateModel(t, model, tea.KeyPressMsg{
+						Code: tea.KeyLeftCtrl,
+					})
 
-				require.Equal(t, modalExport, model.modal)
-				require.Equal(
-					t,
-					clipboardview.LineSlash,
-					model.clipboard.Style(),
-				)
-				require.Contains(t, model.View().Content, "Line comments")
+					command := updateModelCommand(t, model, second.key)
+					require.NotNil(t, command)
+					updateModel(t, model, command())
+
+					require.Equal(t, modalExport, model.modal)
+					require.Equal(
+						t,
+						clipboardview.LineSlash,
+						model.clipboard.Style(),
+					)
+					require.Contains(
+						t,
+						model.View().Content,
+						"Line comments",
+					)
+
+					time.Sleep(time.Millisecond)
+					stale := <-messages
+					require.Nil(
+						t,
+						updateModelCommand(t, model, stale),
+					)
+					require.Equal(t, modalExport, model.modal)
+				})
 			})
 		}
 	}

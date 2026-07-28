@@ -120,3 +120,17 @@ func isCopyKey(message tea.KeyPressMsg) bool {
 		return false
 	}
 }
+
+func isModifierKey(message tea.KeyPressMsg) bool {
+	switch message.Key().Code {
+	case tea.KeyLeftShift, tea.KeyRightShift,
+		tea.KeyLeftAlt, tea.KeyRightAlt,
+		tea.KeyLeftCtrl, tea.KeyRightCtrl,
+		tea.KeyLeftMeta, tea.KeyRightMeta,
+		tea.KeyLeftHyper, tea.KeyRightHyper,
+		tea.KeyLeftSuper, tea.KeyRightSuper:
+		return true
+	default:
+		return false
+	}
+}

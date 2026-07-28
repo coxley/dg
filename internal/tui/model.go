@@ -289,7 +289,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.updateMouseRelease(message.Mouse())
 	case tea.MouseMotionMsg:
-		m.clipboard.CancelPending()
 		if m.modal != modalNone {
 			return m, m.updateModalMouseMotion(message.Mouse())
 		}
@@ -390,7 +389,7 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 	}
-	if !copyKey {
+	if !copyKey && !isModifierKey(message) {
 		m.clipboard.CancelPending()
 	}
 	if copyKey && m.modal == modalNone && m.mode == modeNavigate {

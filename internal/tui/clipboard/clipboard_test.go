@@ -62,7 +62,11 @@ func TestFallbackReportsSuccessOrFailure(t *testing.T) {
 func TestCopyDebounceWaitsForInactivity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		model := newTestModel()
-		model.UseFallback(func(string) error { return nil })
+		var copied string
+		model.UseFallback(func(text string) error {
+			copied = text
+			return nil
+		})
 		_, command := model.Update(RequestCopy("diagram", "// "))
 		messages := make(chan tea.Msg, 1)
 		go func() {
@@ -72,7 +76,14 @@ func TestCopyDebounceWaitsForInactivity(t *testing.T) {
 		time.Sleep(debounceDuration - time.Millisecond)
 		require.Empty(t, messages)
 		time.Sleep(time.Millisecond)
-		require.IsType(t, UpdateMsg{}, <-messages)
+		message := <-messages
+		require.IsType(t, UpdateMsg{}, message)
+		_, command = model.Update(message)
+		require.NotNil(t, command)
+		result := command()
+		_, command = model.Update(result)
+		require.IsType(t, CopiedMsg{}, command())
+		require.Equal(t, "diagram", copied)
 	})
 }
 

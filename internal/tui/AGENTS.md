@@ -87,8 +87,9 @@ default size when both fit.
 
 Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 100 ms. A second copy in that
-window cancels the provisional write and opens Export. Stale timers must never
-write after another interaction.
+window cancels the provisional write and opens Export. Passive all-motion
+mouse events and standalone modifier-key events do not cancel this window.
+Stale timers must never write after another interaction.
 
 The first actual clipboard write probes terminal OSC52 support for 100 ms.
 A response selects `tea.SetClipboard`; timeout selects
