@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/help"
+	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/coxley/dg/layout"
@@ -364,8 +365,8 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
-	copyKey := key.Code == 'c' &&
-		(key.Mod == tea.ModCtrl || key.Mod == tea.ModSuper)
+	copyKey := keybinding.Matches(message, m.keys.copy)
+	helpKey := keybinding.Matches(message, m.keys.help)
 	if m.modal == modalNotice {
 		returnModal := m.noticeReturn
 		m.dismissNotice()
@@ -379,6 +380,10 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	}
 	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
 		return m.copySelection()
+	}
+	if helpKey && m.modal == modalNone {
+		m.openHelp()
+		return nil
 	}
 	m.hasLastClick = false
 	switch {

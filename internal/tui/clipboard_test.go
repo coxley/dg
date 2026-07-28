@@ -34,35 +34,42 @@ func TestSelectionTextRendersOnlySelectedObjects(t *testing.T) {
 func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []tea.Key{
-		{Code: 'c', Text: "c", Mod: tea.ModCtrl},
-		{Code: 'c', Text: "c", Mod: tea.ModSuper},
+	for _, test := range []struct {
+		name string
+		key  tea.Key
+	}{
+		{"legacy control", tea.Key{Code: 'c', Mod: tea.ModCtrl}},
+		{"enhanced super", tea.Key{Code: 'c', Mod: tea.ModSuper}},
 	} {
-		model, nodeID := newTestModel(t)
-		model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-		var copied string
-		model.clipboardMode = clipboardFallback
-		model.clipboardFallback = func(text string) error {
-			copied = text
-			return nil
-		}
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-		command := updateModelCommand(t, model, tea.KeyPressMsg(key))
-		require.NotNil(t, command)
-		command = updateModelCommand(t, model, copyDebounceExpiredMsg{
-			generation: model.copyGeneration,
+			model, nodeID := newTestModel(t)
+			model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+			var copied string
+			model.clipboardMode = clipboardFallback
+			model.clipboardFallback = func(text string) error {
+				copied = text
+				return nil
+			}
+
+			command := updateModelCommand(t, model, tea.KeyPressMsg(test.key))
+			require.NotNil(t, command)
+			command = updateModelCommand(t, model, copyDebounceExpiredMsg{
+				generation: model.copyGeneration,
+			})
+			require.NotNil(t, command)
+			command = updateModelCommand(t, model, command())
+
+			require.Equal(t, strings.Join([]string{
+				"┌──────┐",
+				"│ node │",
+				"└──────┘",
+			}, "\n"), copied)
+			require.Equal(t, modalNotice, model.modal)
+			require.Equal(t, "Copied to clipboard", model.notice)
+			require.NotNil(t, command)
 		})
-		require.NotNil(t, command)
-		command = updateModelCommand(t, model, command())
-
-		require.Equal(t, strings.Join([]string{
-			"┌──────┐",
-			"│ node │",
-			"└──────┘",
-		}, "\n"), copied)
-		require.Equal(t, modalNotice, model.modal)
-		require.Equal(t, "Copied to clipboard", model.notice)
-		require.NotNil(t, command)
 	}
 }
 
@@ -79,16 +86,14 @@ func TestSecondCopyOpensExportPrompt(t *testing.T) {
 	}
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+	copyKey := tea.KeyPressMsg(tea.Key{
 		Code: 'c',
-		Mod:  tea.ModCtrl,
-	}))
+		Mod:  tea.ModSuper,
+	})
+	command := updateModelCommand(t, model, copyKey)
 	require.NotNil(t, command)
 	generation := model.copyGeneration
-	updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
-		Code: 'c',
-		Mod:  tea.ModCtrl,
-	}))
+	updateModelCommand(t, model, copyKey)
 	require.Nil(t, updateModelCommand(t, model, copyDebounceExpiredMsg{
 		generation: generation,
 	}))

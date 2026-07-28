@@ -27,7 +27,6 @@ type keyMap struct {
 	close         key.Binding
 	textAlign     key.Binding
 	copy          key.Binding
-	copyWithSuper key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -59,8 +58,10 @@ func newKeyMap() keyMap {
 		addSelection:  binding("ctrl+mouse", "ctrl-click", "add / remove"),
 		close:         binding("esc", "esc / q", "close"),
 		textAlign:     binding("t", "t / T", "text align"),
-		copy:          binding("ctrl+c", "ctrl+c", "copy"),
-		copyWithSuper: binding("super+c", "super+c / ctrl+c", "copy"),
+		copy: key.NewBinding(
+			key.WithKeys("super+c", "ctrl+c"),
+			key.WithHelp("ctrl+c", "copy"),
+		),
 	}
 }
 
@@ -103,7 +104,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 func (k *keyMap) setKeyboardEnhancements(enabled bool) {
 	if enabled {
-		k.copy = k.copyWithSuper
+		k.copy.SetHelp("super+c / ctrl+c", "copy")
 		return
 	}
 	k.copy.SetHelp("ctrl+c", "copy")

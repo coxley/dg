@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strconv"
 
-	"charm.land/bubbles/v2/key"
+	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	"github.com/coxley/dg/layout"
@@ -156,7 +156,9 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case modalHelp:
 		switch {
-		case key.Code == tea.KeyEscape || key.Code == '?' || key.Code == tea.KeyEnter:
+		case key.Code == tea.KeyEscape ||
+			keybinding.Matches(message, m.keys.help) ||
+			key.Code == tea.KeyEnter:
 			m.closeSettingsModal()
 			return nil
 		case key.Code == 'p' && key.Mod == 0:
@@ -438,20 +440,26 @@ func newPreferenceForm(
 
 func preferenceKeyMap() *huh.KeyMap {
 	keymap := huh.NewDefaultKeyMap()
-	keymap.Input.Prev = key.NewBinding(
-		key.WithKeys("up", "shift+tab"),
-		key.WithHelp("↑", "previous"),
+	keymap.Input.Prev = keybinding.NewBinding(
+		keybinding.WithKeys("up", "shift+tab"),
+		keybinding.WithHelp("↑", "previous"),
 	)
-	keymap.Input.Next = key.NewBinding(
-		key.WithKeys("down", "enter", "tab"),
-		key.WithHelp("↓", "next"),
+	keymap.Input.Next = keybinding.NewBinding(
+		keybinding.WithKeys("down", "enter", "tab"),
+		keybinding.WithHelp("↓", "next"),
 	)
 	keymap.Confirm.Prev = keymap.Input.Prev
 	keymap.Confirm.Next = keymap.Input.Next
 	keymap.Select.Prev = keymap.Input.Prev
 	keymap.Select.Next = keymap.Input.Next
-	keymap.Select.Up = key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "choice"))
-	keymap.Select.Down = key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "choice"))
+	keymap.Select.Up = keybinding.NewBinding(
+		keybinding.WithKeys("left"),
+		keybinding.WithHelp("←", "choice"),
+	)
+	keymap.Select.Down = keybinding.NewBinding(
+		keybinding.WithKeys("right"),
+		keybinding.WithHelp("→", "choice"),
+	)
 	return keymap
 }
 

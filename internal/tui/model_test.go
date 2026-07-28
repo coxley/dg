@@ -535,6 +535,23 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	require.Equal(t, modalNone, model.modal)
 }
 
+func TestEnhancedQuestionMarkOpensAndClosesHelp(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	question := tea.KeyPressMsg(tea.Key{
+		Code:        '/',
+		ShiftedCode: '?',
+		Text:        "?",
+		Mod:         tea.ModShift,
+	})
+
+	updateModel(t, model, question)
+	require.Equal(t, modalHelp, model.modal)
+	updateModel(t, model, question)
+	require.Equal(t, modalNone, model.modal)
+}
+
 func TestPreferenceModalFitsShortTerminals(t *testing.T) {
 	t.Parallel()
 
@@ -1491,6 +1508,10 @@ func TestKeyboardEnhancementsAdvertiseSuperCopy(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	require.Equal(t, "ctrl+c", model.keys.copy.Help().Key)
+	require.True(t, key.Matches(
+		tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModSuper}),
+		model.keys.copy,
+	))
 	updateModel(t, model, tea.KeyboardEnhancementsMsg{})
 	require.Equal(t, "super+c / ctrl+c", model.keys.copy.Help().Key)
 }
