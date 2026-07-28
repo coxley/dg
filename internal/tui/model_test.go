@@ -482,19 +482,69 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 20})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	updateModel(t, model, keyPress('?', "?"))
 	require.Equal(t, modalHelp, model.modal)
-	require.Contains(t, model.View().Content, "Shortcuts")
+	view := model.View().Content
+	require.Contains(t, view, "[ Shortcuts ]")
+	require.Contains(t, view, "Cursor")
+	require.Contains(t, view, "node")
+	require.Contains(t, view, "?              Help")
+	require.Contains(t, view, "Backspace      Delete")
 
-	updateModel(t, model, keyPress('p', "p"))
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	require.Equal(t, modalPreferences, model.modal)
+	require.Contains(t, model.View().Content, "[ Preferences ]")
 	before := model.geo.Router()
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyTab,
+		Mod:  tea.ModShift,
+	}))
+	require.Equal(t, modalHelp, model.modal)
+	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, modalPreferences, model.modal)
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, before, model.geo.Router())
-	require.Equal(t, modalHelp, model.modal)
+	require.Equal(t, modalNone, model.modal)
+}
+
+func TestPreferenceModalJustifiesTitlesAndValues(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.openHelp()
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	model.preferenceRow = 7
+	lines := model.modalLines(settingsModalWidth)
+
+	step := lines[2]
+	sharedStep := lines[3]
+	require.Equal(t, strings.Index(step, "Step cost"), strings.Index(sharedStep, "Shared-step cost"))
+	require.Equal(
+		t,
+		len(strings.TrimRight(strings.TrimSuffix(step, "│"), " ")),
+		len(strings.TrimRight(strings.TrimSuffix(sharedStep, "│"), " ")),
+	)
+}
+
+func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.openHelp()
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	before := model.geo.Router()
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	require.NotEqual(t, before, model.geo.Router())
+
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, before, model.geo.Router())
+	require.Equal(t, modalNone, model.modal)
+	require.False(t, model.preferenceEdit)
 }
 
 func TestModelReordersLayersWithUndo(t *testing.T) {

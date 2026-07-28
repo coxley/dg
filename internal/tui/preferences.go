@@ -18,11 +18,13 @@ type preferencesFile struct {
 }
 
 type preferenceState struct {
-	router         layout.Router
-	originalRouter layout.Router
-	applyToFuture  bool
-	saveDirectory  string
-	path           string
+	router                layout.Router
+	originalRouter        layout.Router
+	applyToFuture         bool
+	originalApplyToFuture bool
+	saveDirectory         string
+	originalSaveDirectory string
+	path                  string
 }
 
 func preferencesPath() (string, error) {
@@ -79,25 +81,42 @@ func (m *Model) openHelp() {
 		return
 	}
 	m.modal = modalHelp
+	m.preferenceEdit = false
 	m.status = ""
 }
 
 func (m *Model) openPreferences() {
 	m.modal = modalPreferences
+	if m.preferenceEdit {
+		return
+	}
+	m.preferenceEdit = true
 	m.preferenceRow = 0
 	m.preferences.originalRouter = m.geo.Router()
 	m.preferences.router = m.preferences.originalRouter
+	m.preferences.originalApplyToFuture = m.preferences.applyToFuture
+	m.preferences.originalSaveDirectory = m.preferences.saveDirectory
 	m.beginTransaction()
 }
 
 func (m *Model) updateModal(message tea.KeyPressMsg) {
 	key := message.Key()
+	if (m.modal == modalHelp || m.modal == modalPreferences) &&
+		key.Code == tea.KeyTab &&
+		(key.Mod == 0 || key.Mod == tea.ModShift) {
+		if m.modal == modalHelp {
+			m.openPreferences()
+		} else {
+			m.modal = modalHelp
+		}
+		return
+	}
 	switch m.modal {
 	case modalNone:
 	case modalHelp:
 		switch {
 		case key.Code == tea.KeyEscape || key.Code == '?' || key.Code == tea.KeyEnter:
-			m.modal = modalNone
+			m.closeSettingsModal()
 		case key.Code == 'p' && key.Mod == 0:
 			m.openPreferences()
 		}
@@ -111,14 +130,7 @@ func (m *Model) updateModal(message tea.KeyPressMsg) {
 func (m *Model) updatePreferences(key tea.Key) {
 	const preferenceRows = 8
 	if key.Code == tea.KeyEscape {
-		err := m.cancelTransaction()
-		m.modal = modalHelp
-		if err == nil {
-			err = m.render()
-		}
-		if err != nil {
-			m.status = err.Error()
-		}
+		m.closeSettingsModal()
 		return
 	}
 	if key.Code == tea.KeyEnter {
@@ -128,7 +140,7 @@ func (m *Model) updatePreferences(key tea.Key) {
 	switch key.Code {
 	case tea.KeyUp:
 		m.preferenceRow = (m.preferenceRow - 1 + preferenceRows) % preferenceRows
-	case tea.KeyDown, tea.KeyTab:
+	case tea.KeyDown:
 		m.preferenceRow = (m.preferenceRow + 1) % preferenceRows
 	case tea.KeyLeft:
 		m.adjustPreference(-1)
@@ -151,6 +163,27 @@ func (m *Model) updatePreferences(key tea.Key) {
 				m.preferences.saveDirectory += key.Text
 			}
 		}
+	}
+}
+
+func (m *Model) closeSettingsModal() {
+	var err error
+	if m.preferenceEdit {
+		hadTransaction := m.transactionOpen
+		err = m.cancelTransaction()
+		if !hadTransaction {
+			m.geo.SetRouter(m.preferences.originalRouter)
+			err = errors.Join(err, m.geo.Build())
+		}
+		m.preferences.router = m.preferences.originalRouter
+		m.preferences.applyToFuture = m.preferences.originalApplyToFuture
+		m.preferences.saveDirectory = m.preferences.originalSaveDirectory
+		err = errors.Join(err, m.render())
+	}
+	m.preferenceEdit = false
+	m.modal = modalNone
+	if err != nil {
+		m.status = err.Error()
 	}
 }
 
@@ -196,6 +229,7 @@ func (m *Model) applyPreferences() {
 		m.status = err.Error()
 		return
 	}
+	m.preferenceEdit = false
 	if m.preferences.path == "" {
 		path, err := preferencesPath()
 		if err != nil {

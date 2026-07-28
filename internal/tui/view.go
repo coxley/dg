@@ -25,15 +25,13 @@ const (
 )
 
 func (m *Model) View() tea.View {
-	if m.modal != modalNone {
-		return m.modalView()
-	}
 	frame, rows := m.frame, m.frameRows
 	if m.reconnecting && m.connectDragging {
 		frame, rows = m.connectFrame, m.connectFrameRows
 	} else if m.duplicateDragging {
 		frame, rows = m.duplicateFrame, m.duplicateRows
 	}
+	overlay := m.currentModalOverlay()
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
 		frame,
@@ -41,6 +39,7 @@ func (m *Model) View() tea.View {
 		m.viewport,
 		m.width,
 		m.diagramHeight(),
+		overlay,
 	)
 	if m.height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
@@ -51,8 +50,18 @@ func (m *Model) View() tea.View {
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "dg"
-	switch m.mode {
-	case modeEditLabel:
+	switch {
+	case m.modal == modalSave:
+		x := overlay.left + len("│ Path: ") + displayWidth(m.editBuffer[:m.editCaret])
+		if x < m.width {
+			cursor := &m.viewCursor[m.nextCursor]
+			m.nextCursor ^= 1
+			cursor.X = x
+			cursor.Y = overlay.top + 2
+			view.Cursor = cursor
+		}
+	case m.modal != modalNone:
+	case m.mode == modeEditLabel:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
@@ -60,7 +69,6 @@ func (m *Model) View() tea.View {
 			cursor.Y = y
 			view.Cursor = cursor
 		}
-	default:
 	}
 	return view
 }
@@ -197,6 +205,7 @@ func (m *Model) appendViewport(
 	rows []rowSpan,
 	origin layout.Point,
 	width, height int,
+	overlay modalOverlay,
 ) []byte {
 	for screenY := range height {
 		documentY := uint64(origin.Y) + uint64(screenY)
@@ -211,6 +220,7 @@ func (m *Model) appendViewport(
 				documentY,
 				width,
 				screenY,
+				overlay,
 			)
 			continue
 		}
@@ -227,6 +237,7 @@ func (m *Model) appendViewport(
 			documentY,
 			width,
 			screenY,
+			overlay,
 		)
 	}
 	return dst
@@ -237,7 +248,30 @@ func (m *Model) appendViewportLine(
 	rowOrigin, viewportOrigin uint32,
 	documentY uint64,
 	width, screenY int,
+	overlay modalOverlay,
 ) []byte {
+	if modalLine, ok := overlay.line(screenY); ok {
+		dst = appendViewportSegment(
+			dst,
+			row,
+			rowOrigin,
+			uint64(viewportOrigin),
+			documentY,
+			overlay.left,
+			m,
+		)
+		dst = append(dst, modalLine...)
+		dst = appendViewportSegment(
+			dst,
+			row,
+			rowOrigin,
+			uint64(viewportOrigin)+uint64(overlay.left+overlay.width),
+			documentY,
+			width-overlay.left-overlay.width,
+			m,
+		)
+		return append(dst, '\n')
+	}
 	if width < toolbarBoxWidth ||
 		screenY < toolbarTop ||
 		screenY >= toolbarTop+toolbarBoxHeight {

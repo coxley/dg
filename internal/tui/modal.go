@@ -3,53 +3,55 @@ package tui
 import (
 	"fmt"
 	"strconv"
-
-	tea "charm.land/bubbletea/v2"
 )
 
-func (m *Model) modalView() tea.View {
-	lines := m.modalLines()
-	top := max((m.height-len(lines))/2, 0)
-	m.viewBuffer = m.viewBuffer[:0]
-	for range top {
-		m.viewBuffer = appendStatusLine(m.viewBuffer, nil, m.width)
-	}
-	for _, line := range lines {
-		left := max((m.width-displayWidth([]byte(line)))/2, 0)
-		m.statusText = appendSpaces(m.statusText[:0], left)
-		m.statusText = append(m.statusText, line...)
-		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
-	}
-	for len(m.viewBuffer) != 0 &&
-		countLines(m.viewBuffer) < m.height {
-		m.viewBuffer = appendStatusLine(m.viewBuffer, nil, m.width)
-	}
+const settingsModalWidth = 84
 
-	view := tea.NewView(string(m.viewBuffer))
-	view.AltScreen = true
-	view.MouseMode = tea.MouseModeCellMotion
-	view.WindowTitle = "dg"
-	if m.modal == modalSave && len(lines) >= 3 {
-		prefix := "│ Path: "
-		lineWidth := displayWidth([]byte(lines[2]))
-		left := max((m.width-lineWidth)/2, 0)
-		x := left + len(prefix) + displayWidth(m.editBuffer[:m.editCaret])
-		if x < m.width {
-			cursor := &m.viewCursor[m.nextCursor]
-			m.nextCursor ^= 1
-			cursor.X = x
-			cursor.Y = top + 2
-			view.Cursor = cursor
-		}
-	}
-	return view
+type modalOverlay struct {
+	lines []string
+	left  int
+	top   int
+	width int
 }
 
-func (m *Model) modalLines() []string {
+func (m *Model) currentModalOverlay() modalOverlay {
+	if m.modal == modalNone || m.width < 2 {
+		return modalOverlay{}
+	}
+	width := min(settingsModalWidth, m.width)
+	if m.modal == modalSave {
+		width = min(
+			max(42, displayWidth(m.editBuffer)+10),
+			m.width,
+		)
+	}
+	lines := m.modalLines(width)
+	height := m.diagramHeight()
+	top := max((height-len(lines))/2, 0)
+	belowToolbar := toolbarTop + toolbarBoxHeight
+	if belowToolbar+len(lines) <= height {
+		top = max(top, belowToolbar)
+	}
+	return modalOverlay{
+		lines: lines,
+		left:  max((m.width-width)/2, 0),
+		top:   top,
+		width: width,
+	}
+}
+
+func (o modalOverlay) line(screenY int) (string, bool) {
+	row := screenY - o.top
+	if row < 0 || row >= len(o.lines) {
+		return "", false
+	}
+	return o.lines[row], true
+}
+
+func (m *Model) modalLines(width int) []string {
 	switch m.modal {
 	case modalSave:
 		path := string(m.editBuffer)
-		width := max(42, displayWidth([]byte(path))+10)
 		return []string{
 			"┌" + repeatRune('─', width-2) + "┐",
 			padModalLine("Save diagram", width),
@@ -58,63 +60,122 @@ func (m *Model) modalLines() []string {
 			"└" + repeatRune('─', width-2) + "┘",
 		}
 	case modalPreferences:
-		return m.preferenceLines()
+		return m.preferenceLines(width)
 	default:
-		return []string{
-			"┌──────────────────────────────────────────────────────────┐",
-			"│ Shortcuts                                                │",
-			"│ ? help/preferences   Backspace delete   d duplicate      │",
-			"│ r rectangle          e edit label      l line            │",
-			"│ b border             a/A arrows       t/T text align     │",
-			"│ Tab/Shift-Tab focus  arrows move      Ctrl-A expand      │",
-			"│ [ ] layer step       { } back/front   Ctrl-S save        │",
-			"│ u/Ctrl-Z undo        Ctrl-R/Ctrl-Y redo                  │",
-			"│ Alt-drag duplicate   Ctrl-click add/remove selection     │",
-			"│                                                          │",
-			"│ p preferences                         Esc close           │",
-			"└──────────────────────────────────────────────────────────┘",
-		}
+		return shortcutLines(width)
 	}
 }
 
-func (m *Model) preferenceLines() []string {
-	router := m.preferences.router
-	values := [...]string{
-		"Step cost: " + strconv.FormatUint(uint64(router.Costs.Step), 10),
-		"Shared-step cost: " + strconv.FormatUint(uint64(router.Costs.SharedStep), 10),
-		"Bend cost: " + strconv.FormatUint(uint64(router.Costs.Bend), 10),
-		"Crossing cost: " + strconv.FormatUint(uint64(router.Costs.Crossing), 10),
-		"Endpoint cost: " + strconv.FormatUint(uint64(router.Costs.EndpointStep), 10),
-		"Reroute passes: " + strconv.FormatUint(uint64(router.ReroutePasses), 10),
-		fmt.Sprintf("Apply to future diagrams? [%s]", checkbox(m.preferences.applyToFuture)),
-		"Default save directory: " + m.preferences.saveDirectory,
+func shortcutLines(width int) []string {
+	rows := [][6]string{
+		{"?", "Help", "Backspace", "Delete", "d", "Duplicate"},
+		{"r", "Rectangle", "e", "Edit label", "l", "Line"},
+		{"b", "Border", "a / A", "Arrows", "t / T", "Text align"},
+		{"Tab/Shift-Tab", "Focus", "Arrows", "Move", "Ctrl-A", "Expand"},
+		{"[ / ]", "Layer", "{ / }", "Back/front", "Ctrl-S", "Save"},
+		{"u / Ctrl-Z", "Undo", "Ctrl-R/Ctrl-Y", "Redo", "Alt-drag", "Duplicate"},
+		{"Ctrl-click", "Add/remove", "Esc", "Close", "", ""},
 	}
-	lines := make([]string, 0, 2+len(values)+2)
+	lines := make([]string, 0, len(rows)+4)
 	lines = append(
 		lines,
-		"┌──────────────────────────────────────────────────────────┐",
-		"│ Preferences                                              │",
+		"┌"+repeatRune('─', width-2)+"┐",
+		settingsTabLine(width, modalHelp),
 	)
-	for i, value := range values {
-		prefix := "  "
-		if i == m.preferenceRow {
-			prefix = "▶ "
-		}
-		lines = append(lines, padModalLine(prefix+value, 60))
+	for _, row := range rows {
+		lines = append(lines, shortcutRow(width, row))
 	}
 	lines = append(
 		lines,
-		"│ arrows adjust  Space toggles  Enter apply  Esc cancel    │",
-		"└──────────────────────────────────────────────────────────┘",
+		padModalLine("Tab / Shift-Tab switch tabs", width),
+		"└"+repeatRune('─', width-2)+"┘",
 	)
 	return lines
 }
 
+func shortcutRow(width int, values [6]string) string {
+	const (
+		keyWidth         = 13
+		descriptionWidth = 10
+	)
+	text := fmt.Sprintf(
+		" %-*s  %-*s  %-*s  %-*s  %-*s  %-*s",
+		keyWidth, values[0],
+		descriptionWidth, values[1],
+		keyWidth, values[2],
+		descriptionWidth, values[3],
+		keyWidth, values[4],
+		descriptionWidth, values[5],
+	)
+	return padModalLine(text, width)
+}
+
+func (m *Model) preferenceLines(width int) []string {
+	router := m.preferences.router
+	values := [...]struct {
+		title string
+		value string
+	}{
+		{"Step cost", strconv.FormatUint(uint64(router.Costs.Step), 10)},
+		{"Shared-step cost", strconv.FormatUint(uint64(router.Costs.SharedStep), 10)},
+		{"Bend cost", strconv.FormatUint(uint64(router.Costs.Bend), 10)},
+		{"Crossing cost", strconv.FormatUint(uint64(router.Costs.Crossing), 10)},
+		{"Endpoint cost", strconv.FormatUint(uint64(router.Costs.EndpointStep), 10)},
+		{"Reroute passes", strconv.FormatUint(uint64(router.ReroutePasses), 10)},
+		{"Apply to future diagrams?", "[" + checkbox(m.preferences.applyToFuture) + "]"},
+		{"Default save directory", m.preferences.saveDirectory},
+	}
+	lines := make([]string, 0, len(values)+4)
+	lines = append(
+		lines,
+		"┌"+repeatRune('─', width-2)+"┐",
+		settingsTabLine(width, modalPreferences),
+	)
+	for i, value := range values {
+		lines = append(
+			lines,
+			justifiedModalLine(value.title, value.value, width, i == m.preferenceRow),
+		)
+	}
+	lines = append(
+		lines,
+		padModalLine("↑/↓ select  ←/→ adjust  Space toggle  Enter apply  Esc cancel", width),
+		"└"+repeatRune('─', width-2)+"┘",
+	)
+	return lines
+}
+
+func settingsTabLine(width int, active modal) string {
+	shortcuts, preferences := "  Shortcuts  ", "  Preferences  "
+	if active == modalHelp {
+		shortcuts = "[ Shortcuts ]"
+	} else {
+		preferences = "[ Preferences ]"
+	}
+	return padModalLine(shortcuts+"   "+preferences, width)
+}
+
+func justifiedModalLine(title, value string, width int, selected bool) string {
+	contentWidth := max(width-4, 0)
+	prefix := "  "
+	if selected {
+		prefix = "▶ "
+	}
+	titleWidth := displayWidth([]byte(title))
+	valueWidth := displayWidth([]byte(value))
+	gap := max(contentWidth-titleWidth-valueWidth, 1)
+	return padModalLine(prefix+title+repeatRune(' ', gap)+value, width)
+}
+
 func padModalLine(text string, width int) string {
-	content := width - 2
+	content := max(width-2, 0)
 	textWidth := displayWidth([]byte(text))
 	if textWidth > content {
-		text = string([]rune(text)[:content])
+		runes := []rune(text)
+		for len(runes) != 0 && displayWidth([]byte(string(runes))) > content {
+			runes = runes[:len(runes)-1]
+		}
+		text = string(runes)
 		textWidth = displayWidth([]byte(text))
 	}
 	return "│" + text + repeatRune(' ', content-textWidth) + "│"
@@ -133,14 +194,4 @@ func checkbox(checked bool) string {
 		return "x"
 	}
 	return " "
-}
-
-func countLines(text []byte) int {
-	count := 0
-	for _, value := range text {
-		if value == '\n' {
-			count++
-		}
-	}
-	return count
 }

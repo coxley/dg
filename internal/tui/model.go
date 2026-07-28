@@ -140,8 +140,9 @@ type Model struct {
 
 	saveHint string
 
-	preferences   preferenceState
-	preferenceRow int
+	preferences    preferenceState
+	preferenceRow  int
+	preferenceEdit bool
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -907,6 +908,9 @@ func (m *Model) finishMove() {
 }
 
 func (m *Model) interruptInteraction() {
+	if m.preferenceEdit {
+		m.closeSettingsModal()
+	}
 	if m.history != nil {
 		m.history.Interrupt()
 	}
