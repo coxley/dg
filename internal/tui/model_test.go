@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -660,23 +659,6 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 	require.Equal(t, before, model.geo.Router())
 }
 
-func TestPreferenceSelectArrowsNavigateConsistently(t *testing.T) {
-	t.Parallel()
-
-	keymap := preferenceKeyMap()
-	up := keyPress(tea.KeyUp, "")
-	down := keyPress(tea.KeyDown, "")
-	left := keyPress(tea.KeyLeft, "")
-	right := keyPress(tea.KeyRight, "")
-
-	require.True(t, key.Matches(up, keymap.Select.Prev))
-	require.False(t, key.Matches(up, keymap.Select.Up))
-	require.True(t, key.Matches(down, keymap.Select.Next))
-	require.False(t, key.Matches(down, keymap.Select.Down))
-	require.True(t, key.Matches(left, keymap.Select.Up))
-	require.True(t, key.Matches(right, keymap.Select.Down))
-}
-
 func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	t.Parallel()
 
@@ -691,7 +673,7 @@ func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	require.Equal(t, before, model.geo.Router().Costs.Step)
 	command := updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before+1, model.geo.Router().Costs.Step)
-	require.Equal(t, 1, model.preferenceFields[0].Flash())
+	require.Equal(t, 1, model.preferenceForm.FieldFlash(0))
 	require.NotNil(t, command)
 }
 
@@ -705,7 +687,7 @@ func TestPreferenceFormCanReachSaveAndCancel(t *testing.T) {
 		model.updateSettingsTabs(huh.NextField())
 	}
 
-	view := ansi.Strip(model.preferenceForm.View())
+	view := ansi.Strip(model.preferenceForm.View().Content)
 	require.Contains(t, view, "Save")
 	require.Contains(t, view, "Cancel")
 }
@@ -741,11 +723,7 @@ func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
 
 	model.openPreferences()
 	require.Equal(t, before, model.preferences.router)
-	require.Equal(
-		t,
-		strconv.FormatUint(uint64(before.Costs.Step), 10),
-		model.preferenceInput.step,
-	)
+	require.Equal(t, before.Costs.Step, model.preferenceForm.Value().Router.Costs.Step)
 }
 
 func TestPreferencesSaveShowsNotice(t *testing.T) {
@@ -810,13 +788,13 @@ func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
 	require.NotContains(t, highlight, "[48;")
 }
 
-func TestSettingsCommandScopesComponentMessages(t *testing.T) {
+func TestFormCommandScopesComponentMessages(t *testing.T) {
 	t.Parallel()
 
-	require.Nil(t, componentCommand(settingsComponent, func() tea.Msg { return nil })())
+	require.Nil(t, componentCommand(exportComponent, func() tea.Msg { return nil })())
 
 	type opaqueMsg struct{ value int }
-	command := componentCommand(settingsComponent, tea.Batch(
+	command := componentCommand(exportComponent, tea.Batch(
 		func() tea.Msg { return opaqueMsg{value: 1} },
 		func() tea.Msg { return opaqueMsg{value: 2} },
 	))
@@ -827,7 +805,7 @@ func TestSettingsCommandScopesComponentMessages(t *testing.T) {
 	for i, command := range batch {
 		message, ok := command().(componentMsg)
 		require.True(t, ok)
-		require.Equal(t, settingsComponent, message.kind)
+		require.Equal(t, exportComponent, message.kind)
 		require.Equal(t, opaqueMsg{value: i + 1}, message.message)
 	}
 }

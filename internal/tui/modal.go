@@ -125,7 +125,7 @@ func (m *Model) settingsBody(width int) string {
 		m.help.SetWidth(innerWidth)
 		return m.help.View(m.keys)
 	case modalPreferences:
-		return m.preferenceForm.View()
+		return m.preferenceForm.View().Content
 	default:
 		return ""
 	}

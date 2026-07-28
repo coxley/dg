@@ -8,6 +8,7 @@ import (
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/internal/tui/numinput"
+	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 )
 
 // Theme contains every terminal-facing visual style.
@@ -106,4 +107,11 @@ func (t Theme) formTheme() huh.Theme {
 		styles.Focused.Title = styles.Focused.Title.Bold(true)
 		return styles
 	})
+}
+
+func (t Theme) preferenceStyles() preferencesview.Styles {
+	return preferencesview.Styles{
+		Form:     t.formTheme(),
+		NumInput: t.NumInput,
+	}
 }

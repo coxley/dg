@@ -15,7 +15,7 @@ import (
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
-	"github.com/coxley/dg/internal/tui/numinput"
+	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/layout"
 )
 
@@ -155,13 +155,11 @@ type Model struct {
 	noticeID          uint64
 	noticeReturn      modal
 
-	preferences      preferenceState
-	preferenceEdit   bool
-	preferenceForm   *huh.Form
-	preferenceInput  preferenceFormValues
-	preferenceFields []*numinput.Field
-	help             help.Model
-	keys             keyMap
+	preferences    preferenceState
+	preferenceEdit bool
+	preferenceForm *preferencesview.Model
+	help           help.Model
+	keys           keyMap
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -255,10 +253,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Styles = m.theme.helpStyles(message.IsDark())
 		clear(m.styledRuns)
 		if m.preferenceForm != nil {
-			m.preferenceForm.WithTheme(m.theme.formTheme())
-			for _, field := range m.preferenceFields {
-				field.SetStyles(m.theme.NumInput)
-			}
+			m.preferenceForm.SetStyles(m.theme.preferenceStyles())
 		}
 	case tea.KeyboardEnhancementsMsg:
 		m.keys.setKeyboardEnhancements(true)
@@ -314,6 +309,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.interruptInteraction()
 	case componentMsg:
 		return m, m.updateComponent(message)
+	case preferencesview.UpdateMsg:
+		return m, m.updateSettingsTabs(message)
 	case noticeExpiredMsg:
 		if m.modal == modalNotice && message.id == m.noticeID {
 			m.modal = m.noticeReturn
@@ -361,17 +358,7 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m *Model) updateComponent(message componentMsg) tea.Cmd {
-	if flash, ok := message.message.(numinput.FlashExpiredMsg); ok {
-		for _, field := range m.preferenceFields {
-			if field.HandleFlash(flash) {
-				return nil
-			}
-		}
-	}
 	switch {
-	case message.kind == settingsComponent &&
-		(m.modal == modalHelp || m.modal == modalPreferences):
-		return m.updateSettingsTabs(message.message)
 	case message.kind == exportComponent && m.modal == modalExport:
 		return m.updateExportForm(message.message)
 	case message.kind == saveComponent && m.modal == modalSave:
