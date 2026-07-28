@@ -46,7 +46,15 @@ type preferenceFormValues struct {
 	saveDirectory string
 }
 
-type settingsComponentMsg struct {
+type componentKind uint8
+
+const (
+	settingsComponent componentKind = iota
+	exportComponent
+)
+
+type componentMsg struct {
+	kind    componentKind
 	message tea.Msg
 }
 
@@ -182,6 +190,13 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 			m.closeSettingsModal()
 			return nil
 		}
+	case modalExport:
+		if key.Code == tea.KeyEscape {
+			m.modal = modalNone
+			m.exportText = ""
+			return nil
+		}
+		return m.updateExportForm(message)
 	case modalSave:
 		m.updateSavePath(message)
 		return nil
@@ -303,10 +318,10 @@ func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
 	if m.preferenceForm != nil && m.preferenceForm.State == huh.StateCompleted {
 		m.applyPreferences()
 	}
-	return settingsCommand(command)
+	return componentCommand(settingsComponent, command)
 }
 
-func settingsCommand(command tea.Cmd) tea.Cmd {
+func componentCommand(kind componentKind, command tea.Cmd) tea.Cmd {
 	if command == nil {
 		return nil
 	}
@@ -317,11 +332,11 @@ func settingsCommand(command tea.Cmd) tea.Cmd {
 		}
 		if batch, ok := message.(tea.BatchMsg); ok {
 			for i := range batch {
-				batch[i] = settingsCommand(batch[i])
+				batch[i] = componentCommand(kind, batch[i])
 			}
 			return batch
 		}
-		return settingsComponentMsg{message: message}
+		return componentMsg{kind: kind, message: message}
 	}
 }
 

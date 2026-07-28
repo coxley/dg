@@ -61,13 +61,18 @@ func (m *Model) modalLines(width int) []string {
 			padModalLine("Tab complete  Enter save  Esc cancel", width),
 			"└" + repeatRune('─', width-2) + "┘",
 		}
+	case modalExport:
+		return componentModalLines(m.exportForm.View(), width)
 	default:
 		return m.settingsModalLines(width)
 	}
 }
 
 func (m *Model) settingsModalLines(width int) []string {
-	content := m.settingsTabs.View().Content
+	return componentModalLines(m.settingsTabs.View().Content, width)
+}
+
+func componentModalLines(content string, width int) []string {
 	rows := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	lines := make([]string, 0, len(rows)+2)
 	lines = append(lines, "┌"+repeatRune('─', width-2)+"┐")

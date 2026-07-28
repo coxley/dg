@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"github.com/atotto/clipboard"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
 	bubbletab "github.com/mJehanno/bubble-tab"
@@ -35,6 +36,7 @@ const (
 	modalHelp
 	modalPreferences
 	modalSave
+	modalExport
 )
 
 const (
@@ -142,6 +144,12 @@ type Model struct {
 
 	saveHint string
 
+	clipboardWrite func(string) error
+	copyArmed      bool
+	exportForm     *huh.Form
+	exportText     string
+	exportStyle    exportStyle
+
 	preferences     preferenceState
 	preferenceEdit  bool
 	preferenceForm  *huh.Form
@@ -170,7 +178,12 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 	if geo == nil {
 		return nil, errors.New("nil layout")
 	}
-	m := &Model{geo: geo, history: geo.History(), path: path}
+	m := &Model{
+		geo:            geo,
+		history:        geo.History(),
+		path:           path,
+		clipboardWrite: clipboard.WriteAll,
+	}
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -219,6 +232,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
 		key := message.Key()
+		copyKey := key.Code == 'c' && (key.Mod == 0 || key.Mod == tea.ModCtrl)
+		if !copyKey {
+			m.copyArmed = false
+		}
+		if copyKey && m.modal == modalNone && m.mode == modeNavigate {
+			return m, m.copySelection()
+		}
 		if key.Code == 'c' && key.Mod == tea.ModCtrl {
 			m.interruptInteraction()
 			return m, tea.Quit
@@ -265,9 +285,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.BlurMsg:
 		m.interruptInteraction()
-	case settingsComponentMsg:
-		if m.modal == modalHelp || m.modal == modalPreferences {
+	case componentMsg:
+		switch {
+		case message.kind == settingsComponent &&
+			(m.modal == modalHelp || m.modal == modalPreferences):
 			return m, m.updateSettingsTabs(message.message)
+		case message.kind == exportComponent && m.modal == modalExport:
+			return m, m.updateExportForm(message.message)
 		}
 	}
 	return m, nil
@@ -366,6 +390,8 @@ func (m *Model) updateNavigationCommand(code rune) {
 		m.activateTool(modeConnect)
 	case 'd':
 		m.duplicateSelectionDefault()
+	case 'c':
+		m.copySelection()
 	case tea.KeyBackspace, tea.KeyDelete:
 		m.deleteActive()
 	case tea.KeyEscape:

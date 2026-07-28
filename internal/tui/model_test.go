@@ -559,21 +559,22 @@ func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 func TestSettingsCommandScopesComponentMessages(t *testing.T) {
 	t.Parallel()
 
-	require.Nil(t, settingsCommand(func() tea.Msg { return nil })())
+	require.Nil(t, componentCommand(settingsComponent, func() tea.Msg { return nil })())
 
-	type componentMsg struct{ value int }
-	command := settingsCommand(tea.Batch(
-		func() tea.Msg { return componentMsg{value: 1} },
-		func() tea.Msg { return componentMsg{value: 2} },
+	type opaqueMsg struct{ value int }
+	command := componentCommand(settingsComponent, tea.Batch(
+		func() tea.Msg { return opaqueMsg{value: 1} },
+		func() tea.Msg { return opaqueMsg{value: 2} },
 	))
 	batch, ok := command().(tea.BatchMsg)
 	require.True(t, ok)
 	require.Len(t, batch, 2)
 
 	for i, command := range batch {
-		message, ok := command().(settingsComponentMsg)
+		message, ok := command().(componentMsg)
 		require.True(t, ok)
-		require.Equal(t, componentMsg{value: i + 1}, message.message)
+		require.Equal(t, settingsComponent, message.kind)
+		require.Equal(t, opaqueMsg{value: i + 1}, message.message)
 	}
 }
 
