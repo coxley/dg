@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 1 complete; Phase 2 not started
+- Current phase: Phase 2 complete; Phase 3 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -517,7 +517,7 @@ review, and integration gate before beginning the next phase.
 | --- | --- | --- |
 | 0. Architecture record | Complete | Decisions and boundaries recorded |
 | 1. Baseline characterization | Complete | Baseline tests are green |
-| 2. Geometry and menu | Not started | Existing nav uses chrome geometry |
+| 2. Geometry and menu | Complete | Existing nav uses chrome geometry |
 | 3. Pane and viewport | Not started | Overflow matrix and resize invariants pass |
 | 4. Chrome lab | Not started | Interactive and initial `ht` scenarios pass |
 | 5. Commands and focus | Not started | Effective binding matrix matches dispatch |
@@ -541,25 +541,25 @@ Do not mix baseline repairs with chrome package introduction.
 
 ### Phase 2: geometry and data-driven menu
 
-- [ ] Add `internal/tui/chrome/AGENTS.md` with the settled boundaries.
-- [ ] Define environment, size, rectangle, inset, constraints, metrics, and
+- [x] Add `internal/tui/chrome/AGENTS.md` with the settled boundaries.
+- [x] Define environment, size, rectangle, inset, constraints, metrics, and
   arrangement result types.
-- [ ] Define versioned layout invalidation, retained plans, stable arranged IDs,
+- [x] Define versioned layout invalidation, retained plans, stable arranged IDs,
   and duplicate-ID diagnostics.
-- [ ] Implement the minimum Box, Row, Column, Text, and Menu behavior required
+- [x] Implement the minimum Box, Row, Column, Text, and Menu behavior required
   to replace current navigation geometry.
-- [ ] Implement deterministic grow, shrink-to-minimum, gap, spacer,
+- [x] Implement deterministic grow, shrink-to-minimum, gap, spacer,
   justification, and cross-axis alignment.
-- [ ] Make menu items application-supplied data with stable semantic IDs.
-- [ ] Use the arrangement result for rendering and pointer hit testing.
-- [ ] Migrate `internal/tui/nav` without changing visible behavior.
-- [ ] Remove root assumptions that can be answered by arranged nav geometry.
-- [ ] Add generated layout invariants and state-geometry tests.
-- [ ] Select one ANSI/grapheme/display-cell measurement and wrapping path; cover
+- [x] Make menu items application-supplied data with stable semantic IDs.
+- [x] Use the arrangement result for rendering and pointer hit testing.
+- [x] Migrate `internal/tui/nav` without changing visible behavior.
+- [x] Remove root assumptions that can be answered by arranged nav geometry.
+- [x] Add generated layout invariants and state-geometry tests.
+- [x] Select one ANSI/grapheme/display-cell measurement and wrapping path; cover
   wide glyphs, combining marks, styled content, multiline text, empty lines,
   and truncation.
-- [ ] Verify geometry-dependent input refreshes stale layout before `View`.
-- [ ] Compare the existing root drag/view benchmark before and after migration.
+- [x] Verify geometry-dependent input refreshes stale layout before `View`.
+- [x] Compare the existing root drag/view benchmark before and after migration.
 
 Deliver this phase as three reviewable slices where practical:
 
@@ -798,6 +798,9 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Use deterministic in-process tests plus focused headless-terminal scenarios. | Structural assertions provide broad coverage; a real PTY catches input-decoding and terminal-composition defects. |
 | 2026-07-28 | Advertise the enhanced copy chord as `super+c`, matching Bubble Tea's chord name. | The binding, `Keystroke`, TUI guide, and existing characterization test all use Super; only the help label used `cmd`. |
 | 2026-07-28 | Add no further Phase 1 characterization tests. | Existing tests cover nav geometry and activation, root toolbar placement and hover, resize-before-view behavior, constrained terminals, canvas composition, and cursor placement. |
+| 2026-07-28 | Represent Phase 2 layout as a concrete `Node` tree with retained immutable `Plan` results. | The initial consumers need a small fixed set of mechanics; concrete nodes avoid interface dispatch and keep duplicate-ID validation and stable traversal explicit. |
+| 2026-07-28 | Use `charmbracelet/x/ansi` for display width, wrapping, and truncation at text leaves. | It is already a direct dependency and preserves ANSI sequences, grapheme boundaries, combining marks, and wide cells consistently with existing TUI code. |
+| 2026-07-28 | Clip below intrinsic minimum only as an emergency when the physical parent cannot contain minimums. | This keeps every arranged rectangle inside its parent while preserving minimum sizes whenever the terminal can satisfy them. |
 
 ## Changed-File Ledger
 
@@ -807,6 +810,7 @@ Update this table after each completed phase or reviewable slice.
 | --- | --- | --- |
 | 0 | `internal/tui/CHROME_PLAN.md` | Record architecture, migration gates, deferred sweeps, and verification strategy. |
 | 1 | `internal/tui/keymap.go`, `internal/tui/CHROME_PLAN.md` | Align enhanced copy help with the registered Super chord and record the baseline. |
+| 2 | `internal/tui/chrome/AGENTS.md`, `internal/tui/chrome/{geometry,layout,menu,text}.go`, `internal/tui/chrome/{layout,menu}_test.go`, `internal/tui/nav/{nav.go,nav_test.go}`, `internal/tui/{model,view,modal}.go`, `internal/tui/CHROME_PLAN.md` | Add retained chrome geometry and menu mechanics, migrate navigation and root placement, and remove duplicated toolbar geometry. |
 
 ## Verification Ledger
 
@@ -829,3 +833,13 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...` | Passed all packages. |
 | 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...` | Passed. |
 | 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed with 0 issues. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui/nav ./internal/tui -count=1` | Passed chrome invariants, nav adapter, and root integration tests. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome -run '^$' -bench . -benchmem -count=1` | Apple M4 Max: Measure 4,639 ns/op, 3,952 B/op, 36 allocs/op; Arrange 6,167 ns/op, 4,448 B/op, 39 allocs/op; MenuRender 8,105 ns/op, 2,144 B/op, 89 allocs/op. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: AltDrag 47,952 ns/op, 10,921 B/op, 9 allocs/op; MoveCommittedDuplicate 48,554 ns/op, 10,936 B/op, 11 allocs/op; MoveAndView 4,758 ns/op, 4,680 B/op, 8 allocs/op. Root View allocations are unchanged from Phase 1. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...` | Passed all packages. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...` | Passed all packages. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...` | Passed. |
+| 2026-07-28 | 2 | `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed with 0 issues. |
+| 2026-07-28 | 2 | `ht run` and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed: diagram, centered toolbar, status row, and hidden cursor matched Phase 1 at every size. All sessions stopped and removed. |
+| 2026-07-28 | 2 | `dd-gopls check ./internal/tui/chrome/... ./internal/tui/nav/... ./internal/tui/...` | Did not run diagnostics: `check` accepts file paths, not package patterns. Re-ran against each changed Go file. |
+| 2026-07-28 | 2 | `dd-gopls check <changed-go-file>` for all nine changed Go files | Passed with no diagnostics. |

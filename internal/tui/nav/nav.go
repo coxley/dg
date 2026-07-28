@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 )
 
 // Tool identifies an editor tool.
@@ -17,15 +18,11 @@ const (
 	Line
 )
 
-const top = 1
-
-var items = [...]struct {
-	tool  Tool
-	label string
-}{
-	{Cursor, " Cursor "},
-	{Rectangle, " Rectangle "},
-	{Line, " Line "},
+// Item declares one application-owned tool entry.
+type Item struct {
+	ID    chrome.ID
+	Tool  Tool
+	Label string
 }
 
 // Styles defines the floating navigation appearance.
@@ -35,27 +32,17 @@ type Styles struct {
 	Hover     lipgloss.Style
 }
 
-type geometry struct {
-	frameWidth  int
-	frameHeight int
-	contentLeft int
-	contentTop  int
-	toolsWidth  int
-}
-
 // Model contains floating navigation state and rendered-content caches.
 type Model struct {
-	styles  Styles
-	geo     geometry
-	width   int
-	active  Tool
-	hover   Tool
+	styles Styles
+	menu   *chrome.Menu
+	items  []Item
+	active Tool
+	hover  Tool
+
 	hovered bool
 
-	lines         []string
-	renderActive  Tool
-	renderHover   Tool
-	renderHovered bool
+	lines []string
 }
 
 // ActivateMsg requests activation of Tool.
@@ -71,8 +58,13 @@ func Activate(tool Tool) tea.Cmd {
 }
 
 // New returns a floating navigation model.
-func New(styles Styles) Model {
-	var model Model
+func New(styles Styles, items []Item) Model {
+	model := Model{items: append([]Item(nil), items...)}
+	menuItems := make([]chrome.MenuItem, len(items))
+	for i, item := range items {
+		menuItems[i] = chrome.MenuItem{ID: item.ID, Label: item.Label}
+	}
+	model.menu = chrome.NewMenu("navigation", styles.Container, menuItems)
 	model.SetStyles(styles)
 	return model
 }
@@ -80,23 +72,16 @@ func New(styles Styles) Model {
 // SetStyles replaces all navigation styles and invalidates rendered content.
 func (m *Model) SetStyles(styles Styles) {
 	m.styles = styles
-	m.geo = geometry{
-		frameWidth:  styles.Container.GetHorizontalFrameSize(),
-		frameHeight: styles.Container.GetVerticalFrameSize(),
-		contentLeft: styles.Container.GetBorderLeftSize() +
-			styles.Container.GetPaddingLeft(),
-		contentTop: styles.Container.GetBorderTopSize() +
-			styles.Container.GetPaddingTop(),
+	if m.menu != nil {
+		m.menu.SetStyle(styles.Container)
 	}
-	for _, item := range items {
-		m.geo.toolsWidth += lipgloss.Width(item.label)
-	}
-	m.lines = nil
+	m.render()
 }
 
 // SetWidth sets the terminal width used to center the navigation.
 func (m *Model) SetWidth(width int) {
-	m.width = max(width, 0)
+	m.menu.SetViewport(width, 1)
+	m.render()
 }
 
 // Active returns the active tool.
@@ -110,13 +95,13 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 	case ActivateMsg:
 		if m.active != message.Tool {
 			m.active = message.Tool
-			m.lines = nil
+			m.render()
 		}
 	case tea.MouseMotionMsg:
 		tool, ok := m.toolAt(message.X, message.Y)
 		if m.hovered != ok || ok && m.hover != tool {
 			m.hover, m.hovered = tool, ok
-			m.lines = nil
+			m.render()
 		}
 	case tea.MouseClickMsg:
 		if message.Button == tea.MouseLeft {
@@ -129,94 +114,95 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 }
 
 // View returns the rendered floating navigation.
-func (m *Model) View() string {
-	if m.lines == nil ||
-		m.renderActive != m.active ||
-		m.renderHovered != m.hovered ||
-		m.hovered && m.renderHover != m.hover {
-		m.render()
-	}
+func (m Model) View() string {
 	return strings.Join(m.lines, "\n")
 }
 
 // Lines returns cached rendered rows for cell-aware canvas composition.
-func (m *Model) Lines() []string {
-	if m.lines == nil {
-		m.render()
-	}
+func (m Model) Lines() []string {
 	return m.lines
+}
+
+// LinesFor returns rendered rows with active highlighted without mutating state.
+func (m Model) LinesFor(active Tool) []string {
+	if active == m.active {
+		return m.lines
+	}
+	return m.renderLines(active)
 }
 
 // Width returns the rendered cell width.
 func (m Model) Width() int {
-	return m.geo.toolsWidth + m.geo.frameWidth
+	return m.menu.Bounds().Width
 }
 
 // Height returns the rendered cell height.
 func (m Model) Height() int {
-	return 1 + m.geo.frameHeight
+	return m.menu.Bounds().Height
 }
 
 // Top returns the first rendered row.
 func (m Model) Top() int {
-	return top
+	return m.menu.Bounds().Y
+}
+
+// Bounds returns the rectangle used for rendering and pointer input.
+func (m Model) Bounds() chrome.Rect {
+	return m.menu.Bounds()
 }
 
 // Contains reports whether a terminal cell falls inside the navigation.
 func (m Model) Contains(x, y int) bool {
-	width := m.Width()
-	if m.width < width || y < top || y >= top+m.Height() {
-		return false
-	}
-	left := (m.width - width) / 2
-	return x >= left && x < left+width
+	return m.menu.Contains(chrome.Point{X: x, Y: y})
 }
 
 // Cell returns the first terminal cell occupied by tool's label.
 func (m Model) Cell(tool Tool) (x, y int, ok bool) {
-	if m.width < m.Width() {
-		return 0, 0, false
-	}
-	x = (m.width-m.Width())/2 + m.geo.contentLeft
-	for _, item := range items {
-		if item.tool == tool {
-			return x, top + m.geo.contentTop, true
+	for _, item := range m.items {
+		if item.Tool == tool {
+			rect, found := m.menu.ItemRect(item.ID)
+			return rect.X, rect.Y, found
 		}
-		x += lipgloss.Width(item.label)
 	}
 	return 0, 0, false
 }
 
 func (m Model) toolAt(x, y int) (Tool, bool) {
-	if !m.Contains(x, y) || y != top+m.geo.contentTop {
+	menuItem, ok := m.menu.ItemAt(chrome.Point{X: x, Y: y})
+	if !ok {
 		return 0, false
 	}
-	x -= (m.width-m.Width())/2 + m.geo.contentLeft
-	for _, item := range items {
-		width := lipgloss.Width(item.label)
-		if x >= 0 && x < width {
-			return item.tool, true
+	for _, item := range m.items {
+		if item.ID == menuItem.ID {
+			return item.Tool, true
 		}
-		x -= width
 	}
 	return 0, false
 }
 
 func (m *Model) render() {
-	var content strings.Builder
-	content.Grow(m.geo.toolsWidth)
-	for _, item := range items {
-		text := item.label
+	m.lines = m.renderLines(m.active)
+}
+
+func (m Model) renderLines(active Tool) []string {
+	return m.menu.Lines(func(item chrome.MenuItem) string {
+		declared := m.item(item.ID)
+		text := declared.Label
 		switch {
-		case m.active == item.tool:
+		case active == declared.Tool:
 			text = m.styles.Active.Render(text)
-		case m.hovered && m.hover == item.tool:
+		case m.hovered && m.hover == declared.Tool:
 			text = m.styles.Hover.Render(text)
 		}
-		content.WriteString(text)
+		return text
+	})
+}
+
+func (m Model) item(id chrome.ID) Item {
+	for _, item := range m.items {
+		if item.ID == id {
+			return item
+		}
 	}
-	m.lines = strings.Split(m.styles.Container.Render(content.String()), "\n")
-	m.renderActive = m.active
-	m.renderHover = m.hover
-	m.renderHovered = m.hovered
+	return Item{}
 }

@@ -18,13 +18,18 @@ func TestModelActivatesAndHighlightsTools(t *testing.T) {
 			Padding(1),
 		Active: lipgloss.NewStyle().Bold(true),
 		Hover:  lipgloss.NewStyle().Underline(true),
+	}, []Item{
+		{ID: "cursor", Tool: Cursor, Label: " Cursor "},
+		{ID: "rectangle", Tool: Rectangle, Label: " Rectangle "},
+		{ID: "line", Tool: Line, Label: " Line "},
 	})
 	model.SetWidth(60)
 
-	left := (60-model.Width())/2 + model.geo.contentLeft
+	left, row, ok := model.Cell(Rectangle)
+	require.True(t, ok)
 	next, command := model.Update(tea.MouseClickMsg{
-		X:      left + len(" Cursor "),
-		Y:      top + model.geo.contentTop,
+		X:      left,
+		Y:      row,
 		Button: tea.MouseLeft,
 	})
 	require.NotNil(t, command)

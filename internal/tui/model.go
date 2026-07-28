@@ -185,7 +185,11 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		styledRuns: make(map[styledRunKey]string),
 	}
 	m.clipboard = clipboardview.New(m.theme.formTheme())
-	m.nav = nav.New(m.theme.Nav)
+	m.nav = nav.New(m.theme.Nav, []nav.Item{
+		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
+		{ID: "rectangle", Tool: nav.Rectangle, Label: " Rectangle "},
+		{ID: "line", Tool: nav.Line, Label: " Line "},
+	})
 	m.dialog = modalview.New(m.theme.Modal)
 	m.canvas = canvasview.New(m.theme.Canvas)
 	m.help.ShowAll = true

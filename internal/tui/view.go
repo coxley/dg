@@ -11,14 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
 	"github.com/rivo/uniseg"
-)
-
-const (
-	toolbarTop = 1
 )
 
 func (m *Model) View() tea.View {
@@ -30,9 +27,6 @@ func (m *Model) View() tea.View {
 		tool = nav.Line
 	case modeNavigate, modeMove, modeEditLabel:
 	}
-	if m.nav.Active() != tool {
-		m.nav, _ = m.nav.Update(nav.ActivateMsg{Tool: tool})
-	}
 	frameID := canvasview.BaseFrame
 	if m.reconnecting && m.connectDragging {
 		frameID = canvasview.ConnectionFrame
@@ -40,7 +34,8 @@ func (m *Model) View() tea.View {
 		frameID = canvasview.DuplicateFrame
 	}
 	frame, rows := m.canvas.Frame(frameID), m.canvas.Rows(frameID)
-	toolbar := m.nav.Lines()
+	toolbar := m.nav.LinesFor(tool)
+	toolbarBounds := m.nav.Bounds()
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
 		frame,
@@ -49,7 +44,7 @@ func (m *Model) View() tea.View {
 		m.width,
 		m.diagramHeight(),
 		toolbar,
-		m.nav.Width(),
+		toolbarBounds,
 	)
 	if m.height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
@@ -168,7 +163,7 @@ func (m *Model) appendViewport(
 	origin layout.Point,
 	width, height int,
 	toolbar []string,
-	toolbarWidth int,
+	toolbarBounds chrome.Rect,
 ) []byte {
 	for screenY := range height {
 		documentY := uint64(origin.Y) + uint64(screenY)
@@ -184,7 +179,7 @@ func (m *Model) appendViewport(
 				width,
 				screenY,
 				toolbar,
-				toolbarWidth,
+				toolbarBounds,
 			)
 			continue
 		}
@@ -202,7 +197,7 @@ func (m *Model) appendViewport(
 			width,
 			screenY,
 			toolbar,
-			toolbarWidth,
+			toolbarBounds,
 		)
 	}
 	return dst
@@ -215,13 +210,14 @@ func (m *Model) appendViewportLine(
 	width int,
 	screenY int,
 	toolbar []string,
-	toolbarWidth int,
+	toolbarBounds chrome.Rect,
 ) []byte {
-	toolbarRow := screenY - toolbarTop
-	if width >= toolbarWidth &&
+	toolbarRow := screenY - toolbarBounds.Y
+	if toolbarBounds.Width > 0 &&
+		toolbarBounds.Right() <= width &&
 		toolbarRow >= 0 &&
 		toolbarRow < len(toolbar) {
-		left := (width - toolbarWidth) / 2
+		left := toolbarBounds.X
 		dst = appendViewportSegment(
 			dst,
 			row,
@@ -232,12 +228,12 @@ func (m *Model) appendViewportLine(
 			m,
 		)
 		dst = append(dst, toolbar[toolbarRow]...)
-		right := width - left - toolbarWidth
+		right := width - toolbarBounds.Right()
 		dst = appendViewportSegment(
 			dst,
 			row,
 			rowOrigin,
-			uint64(viewportOrigin)+uint64(left+toolbarWidth),
+			uint64(viewportOrigin)+uint64(toolbarBounds.Right()),
 			documentY,
 			right,
 			m,

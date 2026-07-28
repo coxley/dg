@@ -58,7 +58,7 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 	m.dialog.Configure(
 		m.width,
 		m.height,
-		toolbarTop+m.nav.Height(),
+		m.nav.Bounds().Bottom(),
 		width,
 		strings.TrimSuffix(content, "\n"),
 		variant,
@@ -174,7 +174,7 @@ func (m *Model) settingsBody(width int) string {
 		m.theme.Modal.Body.GetVerticalFrameSize() + 1
 	if bodyHeight > 0 {
 		height = bodyHeight
-	} else if largerHeight+frameHeight+toolbarTop+m.nav.Height() <= m.height {
+	} else if largerHeight+frameHeight+m.nav.Bounds().Bottom() <= m.height {
 		height = largerHeight
 	}
 	return m.theme.SettingsContent.
