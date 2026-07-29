@@ -158,21 +158,23 @@ func newLabModel(scenario string) *labModel {
 			},
 		},
 		Spacer: chrome.FormSpacer{ID: "form-spacer", Grow: 1},
-		Actions: chrome.ActionBar{
+		Actions: chrome.ButtonListDeclaration{
 			ID: "form-actions",
-			Actions: []chrome.FormAction{
+			Buttons: []chrome.Button{
 				{ID: "form-save", Label: "Save"},
 				{ID: "form-cancel", Label: "Cancel"},
 			},
 		},
 	}, chrome.FormStyles{
-		Label:          lipgloss.NewStyle(),
-		FocusedLabel:   lipgloss.NewStyle().Bold(true),
-		Value:          lipgloss.NewStyle(),
-		FocusedValue:   lipgloss.NewStyle().Bold(true),
-		ActiveValue:    lipgloss.NewStyle().Reverse(true),
-		Action:         lipgloss.NewStyle().Padding(0, 1),
-		SelectedAction: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+		Label:        lipgloss.NewStyle(),
+		FocusedLabel: lipgloss.NewStyle().Bold(true),
+		Value:        lipgloss.NewStyle(),
+		FocusedValue: lipgloss.NewStyle().Bold(true),
+		ActiveValue:  lipgloss.NewStyle().Reverse(true),
+		Buttons: chrome.ButtonListStyles{
+			Button:        lipgloss.NewStyle().Padding(0, 1),
+			FocusedButton: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+		},
 		TextInput: chrome.TextInputStyles{
 			Text:        lipgloss.NewStyle(),
 			FocusedText: lipgloss.NewStyle().Bold(true),

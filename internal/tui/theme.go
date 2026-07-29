@@ -102,13 +102,15 @@ func DefaultTheme(dark bool) Theme {
 
 func (t Theme) formStyles() chrome.FormStyles {
 	return chrome.FormStyles{
-		Label:          t.HelpDescription,
-		FocusedLabel:   t.HelpKey,
-		Value:          lipgloss.NewStyle(),
-		FocusedValue:   t.HelpKey,
-		ActiveValue:    t.Nav.Active,
-		Action:         t.Button,
-		SelectedAction: t.FocusedButton,
+		Label:        t.HelpDescription,
+		FocusedLabel: t.HelpKey,
+		Value:        lipgloss.NewStyle(),
+		FocusedValue: t.HelpKey,
+		ActiveValue:  t.Nav.Active,
+		Buttons: chrome.ButtonListStyles{
+			Button:        t.Button,
+			FocusedButton: t.FocusedButton,
+		},
 		TextInput: chrome.TextInputStyles{
 			Text:        lipgloss.NewStyle(),
 			FocusedText: lipgloss.NewStyle().Bold(true),

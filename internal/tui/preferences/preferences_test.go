@@ -41,13 +41,31 @@ func TestKeyboardTraversalSubmitsSaveByDefault(t *testing.T) {
 	require.Equal(t, ActionSave, action)
 }
 
+func TestKeyboardTraversalVisitsEveryActionAndWraps(t *testing.T) {
+	t.Parallel()
+
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+	require.True(t, model.Focus(fieldKeyProfile))
+
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, actionSave, model.FocusID())
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, actionSaveDefaults, model.FocusID())
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, actionCancel, model.FocusID())
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, fieldStep, model.FocusID())
+	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	require.Equal(t, actionCancel, model.FocusID())
+}
+
 func TestConstrainedFormRevealsActions(t *testing.T) {
 	t.Parallel()
 
 	model := New(Value{Router: layout.DefaultRouter()}, 64, 5, testStyles())
 	require.NotContains(t, model.View().Content, "Save as Defaults")
 
-	for range 20 {
+	for range len(preferenceDeclaration(Value{Router: layout.DefaultRouter()}).Fields) + 1 {
 		_, _ = model.Update(ScrollMsg{Delta: 1})
 	}
 
@@ -213,7 +231,7 @@ func TestActionClickSubmitsSelectedAction(t *testing.T) {
 	t.Parallel()
 
 	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, borderedStyles())
-	action := model.form.Plan().Actions[1]
+	action := model.form.Plan().Buttons[1]
 
 	next, command := model.Update(ClickMsg{
 		X: action.Rect.X + 1,
@@ -234,9 +252,9 @@ func TestActionsUseDeclaredBottomLeftGeometry(t *testing.T) {
 	plan := model.form.Plan()
 
 	require.Equal(t, preferenceSpacer, plan.SpacerID)
-	require.Equal(t, preferenceActions, plan.ActionBarID)
-	require.Equal(t, plan.Bounds.X, plan.Actions[0].Rect.X)
-	require.Equal(t, plan.Bounds.Bottom(), plan.Actions[0].Rect.Bottom())
+	require.Equal(t, preferenceActions, plan.ButtonListID)
+	require.Equal(t, plan.Bounds.X, plan.Buttons[0].Rect.X)
+	require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
 	require.Positive(t, plan.Spacer.Height)
 }
 
@@ -276,8 +294,9 @@ func keyPress(code rune, text string) tea.KeyPressMsg {
 
 func borderedStyles() Styles {
 	styles := testStyles()
-	styles.Form.Action = styles.Form.Action.Border(lipgloss.NormalBorder())
-	styles.Form.SelectedAction = styles.Form.SelectedAction.Border(lipgloss.DoubleBorder())
+	styles.Form.Buttons.Button = styles.Form.Buttons.Button.Border(lipgloss.NormalBorder())
+	styles.Form.Buttons.FocusedButton = styles.Form.Buttons.FocusedButton.
+		Border(lipgloss.DoubleBorder())
 	return styles
 }
 
@@ -285,13 +304,15 @@ func testStyles() Styles {
 	return Styles{
 		Picker: directorypicker.Styles{Dark: true},
 		Form: chrome.FormStyles{
-			Label:          lipgloss.NewStyle(),
-			FocusedLabel:   lipgloss.NewStyle().Bold(true),
-			Value:          lipgloss.NewStyle(),
-			FocusedValue:   lipgloss.NewStyle().Bold(true),
-			ActiveValue:    lipgloss.NewStyle().Bold(true),
-			Action:         lipgloss.NewStyle().Padding(0, 1),
-			SelectedAction: lipgloss.NewStyle().Bold(true).Padding(0, 1),
+			Label:        lipgloss.NewStyle(),
+			FocusedLabel: lipgloss.NewStyle().Bold(true),
+			Value:        lipgloss.NewStyle(),
+			FocusedValue: lipgloss.NewStyle().Bold(true),
+			ActiveValue:  lipgloss.NewStyle().Bold(true),
+			Buttons: chrome.ButtonListStyles{
+				Button:        lipgloss.NewStyle().Padding(0, 1),
+				FocusedButton: lipgloss.NewStyle().Bold(true).Padding(0, 1),
+			},
 		},
 	}
 }

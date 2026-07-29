@@ -59,12 +59,12 @@ func TestFormPlanRetainsSemanticGeometry(t *testing.T) {
 	plan := form.Plan()
 
 	require.Equal(t, ID("spacer"), plan.SpacerID)
-	require.Equal(t, ID("actions"), plan.ActionBarID)
+	require.Equal(t, ID("actions"), plan.ButtonListID)
 	require.Len(t, plan.Fields, 3)
-	require.Len(t, plan.Actions, 2)
+	require.Len(t, plan.Buttons, 2)
 	require.Equal(t, ID("directory"), plan.Fields[2].ID)
-	require.Equal(t, plan.Bounds.X, plan.Actions[0].Rect.X)
-	require.Equal(t, plan.Bounds.Bottom(), plan.Actions[0].Rect.Bottom())
+	require.Equal(t, plan.Bounds.X, plan.Buttons[0].Rect.X)
+	require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
 	require.Positive(t, plan.Spacer.Height)
 
 	plan.Fields[0].ID = "mutated"
@@ -80,8 +80,24 @@ func TestFormRevealsFocusedControlInConstrainedBounds(t *testing.T) {
 
 	plan := form.Plan()
 	require.Positive(t, plan.Offset)
-	require.NotZero(t, plan.Actions[1].Rect.Height)
+	require.NotZero(t, plan.Buttons[1].Rect.Height)
 	require.Contains(t, form.View().Content, "Cancel")
+}
+
+func TestFormTraversalIncludesEveryButtonAndWraps(t *testing.T) {
+	t.Parallel()
+
+	form := newTestForm()
+	require.True(t, form.Focus("directory"))
+
+	_, _ = form.Update(formKey(tea.KeyTab, ""))
+	require.Equal(t, testFormSave, form.FocusID())
+	_, _ = form.Update(formKey(tea.KeyTab, ""))
+	require.Equal(t, ID("cancel"), form.FocusID())
+	_, _ = form.Update(formKey(tea.KeyTab, ""))
+	require.Equal(t, ID("number"), form.FocusID())
+	_, _ = form.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	require.Equal(t, ID("cancel"), form.FocusID())
 }
 
 func TestFormPointerEmitsSemanticMessages(t *testing.T) {
@@ -95,7 +111,7 @@ func TestFormPointerEmitsSemanticMessages(t *testing.T) {
 	message := form.Click(Point{X: directory.X, Y: directory.Y})()
 	require.Equal(t, FormActivateMsg{ID: "directory"}, message)
 
-	save := plan.Actions[0].Rect
+	save := plan.Buttons[0].Rect
 	message = form.Click(Point{X: save.X, Y: save.Y})()
 	require.Equal(t, FormSubmitMsg{ID: testFormSave}, message)
 }
@@ -128,7 +144,7 @@ func TestFormClonesApplicationDeclarations(t *testing.T) {
 	declaration := testFormDeclaration()
 	form := NewForm(declaration, testFormStyles())
 	declaration.Fields[1].Options[0].Label = "Changed"
-	declaration.Actions.Actions[0].Label = "Changed"
+	declaration.Actions.Buttons[0].Label = "Changed"
 	form.SetBounds(Rect{Width: 40})
 
 	require.Contains(t, form.View().Content, "One")
@@ -144,9 +160,9 @@ func TestFormTextFieldTypesPastesClicksAndStaysAccessible(t *testing.T) {
 			ID: "name", Label: "File name", Kind: TextField,
 			Text: "diagram", Placeholder: "diagram.json",
 		}},
-		Actions: ActionBar{
+		Actions: ButtonListDeclaration{
 			ID:      "actions",
-			Actions: []FormAction{{ID: testFormSave, Label: "Save"}},
+			Buttons: []Button{{ID: testFormSave, Label: "Save"}},
 		},
 	}
 	form := NewForm(declaration, testFormStyles())
@@ -162,6 +178,24 @@ func TestFormTextFieldTypesPastesClicksAndStaysAccessible(t *testing.T) {
 	require.Equal(t, ID("name"), form.FocusID())
 	require.Contains(t, form.AccessibleLines(), "File name: diagramx.json")
 	require.Equal(t, 30, ansi.StringWidth(strings.Split(form.View().Content, "\n")[0]))
+}
+
+func TestFormTextFieldTypesNavigationAliasesAndUsesArrowsForCaret(t *testing.T) {
+	t.Parallel()
+
+	form := NewForm(FormDeclaration{
+		Fields: []FormField{{ID: "name", Label: "Name", Kind: TextField}},
+	}, testFormStyles())
+	form.SetBounds(Rect{Width: 20, Height: 1})
+
+	_, _ = form.Update(formKey('h', "h"))
+	_, _ = form.Update(formKey('l', "l"))
+	_, _ = form.Update(formKey(tea.KeyLeft, ""))
+	_, _ = form.Update(formKey('x', "x"))
+
+	value, ok := form.Text("name")
+	require.True(t, ok)
+	require.Equal(t, "hxl", value)
 }
 
 func newTestForm() *Form {
@@ -182,9 +216,9 @@ func testFormDeclaration() FormDeclaration {
 			{ID: "directory", Label: "Directory", Kind: DirectoryField},
 		},
 		Spacer: FormSpacer{ID: "spacer", Grow: 1},
-		Actions: ActionBar{
+		Actions: ButtonListDeclaration{
 			ID: "actions",
-			Actions: []FormAction{
+			Buttons: []Button{
 				{ID: testFormSave, Label: "Save"},
 				{ID: "cancel", Label: "Cancel"},
 			},
@@ -194,14 +228,16 @@ func testFormDeclaration() FormDeclaration {
 
 func testFormStyles() FormStyles {
 	return FormStyles{
-		Label:          lipgloss.NewStyle(),
-		FocusedLabel:   lipgloss.NewStyle().Bold(true),
-		Value:          lipgloss.NewStyle(),
-		FocusedValue:   lipgloss.NewStyle().Bold(true),
-		ActiveValue:    lipgloss.NewStyle().Bold(true),
-		Action:         lipgloss.NewStyle().Padding(0, 1),
-		SelectedAction: lipgloss.NewStyle().Bold(true).Padding(0, 1),
-		TextInput:      testTextInputStyles(),
+		Label:        lipgloss.NewStyle(),
+		FocusedLabel: lipgloss.NewStyle().Bold(true),
+		Value:        lipgloss.NewStyle(),
+		FocusedValue: lipgloss.NewStyle().Bold(true),
+		ActiveValue:  lipgloss.NewStyle().Bold(true),
+		Buttons: ButtonListStyles{
+			Button:        lipgloss.NewStyle().Padding(0, 1),
+			FocusedButton: lipgloss.NewStyle().Bold(true).Padding(0, 1),
+		},
+		TextInput: testTextInputStyles(),
 	}
 }
 

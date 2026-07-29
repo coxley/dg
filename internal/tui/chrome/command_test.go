@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,4 +68,54 @@ func TestResolverStandardProfileAndUnavailableSuper(t *testing.T) {
 	require.Equal(t, []EffectiveBinding{
 		{Scope: testScopeGlobal, Chord: "ctrl+s", Command: "save"},
 	}, resolver.Effective([]ScopeID{testScopeGlobal}))
+}
+
+func TestResolveControlIntent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		key       tea.Key
+		textEntry bool
+		want      ControlIntent
+	}{
+		{name: "left", key: tea.Key{Code: tea.KeyLeft}, want: NavigateLeft},
+		{name: "h", key: tea.Key{Code: 'h', Text: "h"}, want: NavigateLeft},
+		{name: "right", key: tea.Key{Code: tea.KeyRight}, want: NavigateRight},
+		{name: "l", key: tea.Key{Code: 'l', Text: "l"}, want: NavigateRight},
+		{name: "up", key: tea.Key{Code: tea.KeyUp}, want: FocusPrevious},
+		{name: "shift tab", key: tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}, want: FocusPrevious},
+		{name: "k", key: tea.Key{Code: 'k', Text: "k"}, want: FocusPrevious},
+		{name: "down", key: tea.Key{Code: tea.KeyDown}, want: FocusNext},
+		{name: "tab", key: tea.Key{Code: tea.KeyTab}, want: FocusNext},
+		{name: "j", key: tea.Key{Code: 'j', Text: "j"}, want: FocusNext},
+		{name: "enter", key: tea.Key{Code: tea.KeyEnter}, want: Activate},
+		{
+			name: "text h", key: tea.Key{Code: 'h', Text: "h"},
+			textEntry: true, want: NoControlIntent,
+		},
+		{
+			name: "text l", key: tea.Key{Code: 'l', Text: "l"},
+			textEntry: true, want: NoControlIntent,
+		},
+		{
+			name: "text left", key: tea.Key{Code: tea.KeyLeft},
+			textEntry: true, want: NavigateLeft,
+		},
+		{
+			name: "modified h", key: tea.Key{Code: 'h', Text: "h", Mod: tea.ModAlt},
+			want: NoControlIntent,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(
+				t,
+				test.want,
+				ResolveControlIntent(tea.KeyPressMsg(test.key), test.textEntry),
+			)
+		})
+	}
 }

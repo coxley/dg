@@ -47,7 +47,7 @@ func (i *TextInput) Update(message tea.Msg) {
 	case tea.PasteMsg:
 		i.insert(sanitizeSingleLine(message.Content))
 	case tea.KeyPressMsg:
-		i.updateKey(message)
+		i.updateKey(message, ResolveControlIntent(message, true))
 	}
 }
 
@@ -132,12 +132,12 @@ func (i *TextInput) View() string {
 	return padLine(ansi.Truncate(before+cursor+after, i.width, ""), i.width)
 }
 
-func (i *TextInput) updateKey(message tea.KeyPressMsg) {
+func (i *TextInput) updateKey(message tea.KeyPressMsg, intent ControlIntent) {
 	switch {
-	case message.Code == tea.KeyLeft:
+	case intent == NavigateLeft:
 		i.selectAll = false
 		i.cursor = max(i.cursor-1, 0)
-	case message.Code == tea.KeyRight:
+	case intent == NavigateRight:
 		i.selectAll = false
 		i.cursor = min(i.cursor+1, len(i.value))
 	case message.Code == 'a' && message.Mod == tea.ModCtrl:

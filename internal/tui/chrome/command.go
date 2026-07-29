@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // ScopeID identifies a command and focus scope.
@@ -13,6 +15,46 @@ type ScopeID string
 
 // CommandID identifies an application-owned action.
 type CommandID string
+
+// ControlIntent identifies one semantic control operation.
+type ControlIntent uint8
+
+const (
+	// NoControlIntent leaves the key available for component-specific input.
+	NoControlIntent ControlIntent = iota
+	// NavigateLeft moves or changes the current control to the left.
+	NavigateLeft
+	// NavigateRight moves or changes the current control to the right.
+	NavigateRight
+	// FocusNext advances to the next control.
+	FocusNext
+	// FocusPrevious returns to the previous control.
+	FocusPrevious
+	// Activate executes the focused control.
+	Activate
+)
+
+// ResolveControlIntent maps one key press to control semantics.
+func ResolveControlIntent(message tea.KeyPressMsg, textEntry bool) ControlIntent {
+	switch {
+	case message.Code == tea.KeyLeft || !textEntry && message.Mod == 0 && message.Text == "h":
+		return NavigateLeft
+	case message.Code == tea.KeyRight || !textEntry && message.Mod == 0 && message.Text == "l":
+		return NavigateRight
+	case message.Code == tea.KeyUp ||
+		message.Code == tea.KeyTab && message.Mod == tea.ModShift ||
+		!textEntry && message.Mod == 0 && message.Text == "k":
+		return FocusPrevious
+	case message.Code == tea.KeyDown ||
+		message.Code == tea.KeyTab && message.Mod == 0 ||
+		!textEntry && message.Mod == 0 && message.Text == "j":
+		return FocusNext
+	case message.Code == tea.KeyEnter:
+		return Activate
+	default:
+		return NoControlIntent
+	}
+}
 
 // KeyProfile controls Primary chord projection.
 type KeyProfile uint8

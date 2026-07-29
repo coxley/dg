@@ -334,9 +334,9 @@ func preferenceDeclaration(value Value) chrome.FormDeclaration {
 			},
 		},
 		Spacer: chrome.FormSpacer{ID: preferenceSpacer, Grow: 1},
-		Actions: chrome.ActionBar{
+		Actions: chrome.ButtonListDeclaration{
 			ID: preferenceActions,
-			Actions: []chrome.FormAction{
+			Buttons: []chrome.Button{
 				{ID: actionSave, Label: "Save"},
 				{ID: actionSaveDefaults, Label: "Save as Defaults"},
 				{ID: actionCancel, Label: "Cancel"},

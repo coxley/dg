@@ -14,8 +14,8 @@ type ConfirmationDeclaration struct {
 	ID      chrome.ID
 	Title   string
 	Message string
-	Confirm chrome.FormAction
-	Cancel  chrome.FormAction
+	Confirm chrome.Button
+	Cancel  chrome.Button
 }
 
 // ConfirmationStyles defines prompt and action appearance.
@@ -155,9 +155,9 @@ func (c *Confirmation) actionDeclaration() chrome.FormDeclaration {
 			ID:   c.declaration.ID + ".spacer",
 			Grow: 1,
 		},
-		Actions: chrome.ActionBar{
+		Actions: chrome.ButtonListDeclaration{
 			ID: c.declaration.ID + ".actions",
-			Actions: []chrome.FormAction{
+			Buttons: []chrome.Button{
 				c.declaration.Confirm,
 				c.declaration.Cancel,
 			},

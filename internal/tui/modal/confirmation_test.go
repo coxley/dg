@@ -19,9 +19,9 @@ func TestConfirmationAnchorsDeclaredActionsAtBottom(t *testing.T) {
 	confirmation.SetBounds(chrome.Rect{X: 2, Y: 3, Width: 32, Height: 8})
 	plan := confirmation.Plan()
 
-	require.Equal(t, chrome.ID("discard.actions"), plan.ActionBarID)
+	require.Equal(t, chrome.ID("discard.actions"), plan.ButtonListID)
 	require.Equal(t, chrome.ID("discard.spacer"), plan.SpacerID)
-	require.Equal(t, plan.Bounds.Bottom(), plan.Actions[0].Rect.Bottom())
+	require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
 	require.Contains(t, confirmation.View().Content, "Discard changes?")
 }
 
@@ -46,7 +46,7 @@ func TestConfirmationPointerUsesRetainedActionGeometry(t *testing.T) {
 
 	confirmation := newTestConfirmation()
 	confirmation.SetBounds(chrome.Rect{Width: 32, Height: 8})
-	cancel := confirmation.Plan().Actions[1].Rect
+	cancel := confirmation.Plan().Buttons[1].Rect
 
 	command := confirmation.Click(chrome.Point{X: cancel.X, Y: cancel.Y})
 
@@ -65,7 +65,7 @@ func TestConfirmationClipsPromptBeforeActions(t *testing.T) {
 	bounds := chrome.Rect{Width: 32, Height: 2}
 	confirmation.SetBounds(bounds)
 
-	for _, action := range confirmation.Plan().Actions {
+	for _, action := range confirmation.Plan().Buttons {
 		require.True(t, bounds.Contains(chrome.Point{
 			X: action.Rect.X,
 			Y: action.Rect.Y,
@@ -94,15 +94,17 @@ func newTestConfirmation() *Confirmation {
 			ID:      "discard",
 			Title:   "Discard changes?",
 			Message: "Closing now loses edits.",
-			Confirm: chrome.FormAction{ID: "discard", Label: "Discard"},
-			Cancel:  chrome.FormAction{ID: keepEditing, Label: "Keep editing"},
+			Confirm: chrome.Button{ID: "discard", Label: "Discard"},
+			Cancel:  chrome.Button{ID: keepEditing, Label: "Keep editing"},
 		},
 		ConfirmationStyles{
 			Title:   lipgloss.NewStyle().Bold(true),
 			Message: lipgloss.NewStyle(),
 			Actions: chrome.FormStyles{
-				Action:         lipgloss.NewStyle().Padding(0, 1),
-				SelectedAction: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+				Buttons: chrome.ButtonListStyles{
+					Button:        lipgloss.NewStyle().Padding(0, 1),
+					FocusedButton: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+				},
 			},
 		},
 	)

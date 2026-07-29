@@ -48,44 +48,31 @@ type FormField struct {
 	Placeholder string
 }
 
-// FormAction declares one ActionBar button.
-type FormAction struct {
-	ID    ID
-	Label string
-}
-
-// FormSpacer declares flexible space before the action bar.
+// FormSpacer declares flexible space before the button list.
 type FormSpacer struct {
 	ID   ID
 	Grow int
-}
-
-// ActionBar declares one horizontally selectable action group.
-type ActionBar struct {
-	ID      ID
-	Actions []FormAction
 }
 
 // FormDeclaration contains application-owned form content.
 type FormDeclaration struct {
 	Fields  []FormField
 	Spacer  FormSpacer
-	Actions ActionBar
+	Actions ButtonListDeclaration
 }
 
 // FormStyles defines geometry-stable semantic form states.
 type FormStyles struct {
-	Label          lipgloss.Style
-	FocusedLabel   lipgloss.Style
-	Value          lipgloss.Style
-	FocusedValue   lipgloss.Style
-	ActiveValue    lipgloss.Style
-	Action         lipgloss.Style
-	SelectedAction lipgloss.Style
-	TextInput      TextInputStyles
+	Label        lipgloss.Style
+	FocusedLabel lipgloss.Style
+	Value        lipgloss.Style
+	FocusedValue lipgloss.Style
+	ActiveValue  lipgloss.Style
+	Buttons      ButtonListStyles
+	TextInput    TextInputStyles
 }
 
-// FormControlPlan records one visible field or action hit target.
+// FormControlPlan records one visible field or button hit target.
 type FormControlPlan struct {
 	ID   ID
 	Kind FieldKind
@@ -94,15 +81,15 @@ type FormControlPlan struct {
 
 // FormPlan is one retained form arrangement.
 type FormPlan struct {
-	Version     uint64
-	Bounds      Rect
-	Content     Rect
-	Offset      int
-	SpacerID    ID
-	Spacer      Rect
-	ActionBarID ID
-	Fields      []FormControlPlan
-	Actions     []FormControlPlan
+	Version      uint64
+	Bounds       Rect
+	Content      Rect
+	Offset       int
+	SpacerID     ID
+	Spacer       Rect
+	ButtonListID ID
+	Fields       []FormControlPlan
+	Buttons      []FormControlPlan
 }
 
 // FormActivateMsg requests application handling for a field.
@@ -129,7 +116,6 @@ type Form struct {
 	hugHeight   bool
 	version     uint64
 	focus       int
-	action      int
 	offset      int
 	flashID     ID
 	flash       int
@@ -137,6 +123,7 @@ type Form struct {
 	plan        FormPlan
 	lines       []string
 	inputs      map[ID]*TextInput
+	buttons     *ButtonList
 }
 
 // NewForm returns a retained declarative form.
@@ -146,6 +133,8 @@ func NewForm(declaration FormDeclaration, styles FormStyles) *Form {
 		styles:      styles,
 		inputs:      make(map[ID]*TextInput),
 	}
+	f.buttons = NewButtonList(f.declaration.Actions, styles.Buttons)
+	f.buttons.SetFocused(false)
 	f.syncInputs()
 	f.normalize()
 	f.arrange()
@@ -195,6 +184,7 @@ func (f *Form) SetBounds(bounds Rect) {
 // SetStyles replaces semantic visual states.
 func (f *Form) SetStyles(styles FormStyles) {
 	f.styles = styles
+	f.buttons.SetStyles(styles.Buttons)
 	for _, input := range f.inputs {
 		input.SetStyles(styles.TextInput)
 	}
@@ -205,17 +195,18 @@ func (f *Form) SetStyles(styles FormStyles) {
 func (f *Form) Plan() FormPlan {
 	plan := f.plan
 	plan.Fields = append([]FormControlPlan(nil), plan.Fields...)
-	plan.Actions = append([]FormControlPlan(nil), plan.Actions...)
+	plan.Buttons = append([]FormControlPlan(nil), plan.Buttons...)
 	return plan
 }
 
-// MoveFocus traverses enabled fields and the action bar.
+// MoveFocus traverses every field and button with wrapping.
 func (f *Form) MoveFocus(delta int) {
-	count := len(f.declaration.Fields) + boolCell(len(f.declaration.Actions.Actions) != 0)
+	count := len(f.declaration.Fields) + len(f.declaration.Actions.Buttons)
 	if count == 0 || delta == 0 {
 		return
 	}
-	f.focus = min(max(f.focus+delta, 0), count-1)
+	f.focus = wrappedIndex(f.focus, delta, count)
+	f.syncButtonFocus()
 	f.revealFocus()
 	f.invalidate()
 }
@@ -230,10 +221,10 @@ func (f *Form) Focus(id ID) bool {
 			return true
 		}
 	}
-	for i, action := range f.declaration.Actions.Actions {
-		if action.ID == id {
-			f.focus = len(f.declaration.Fields)
-			f.action = i
+	for i, button := range f.declaration.Actions.Buttons {
+		if button.ID == id {
+			f.focus = len(f.declaration.Fields) + i
+			f.buttons.Focus(id)
 			f.revealFocus()
 			f.invalidate()
 			return true
@@ -244,13 +235,14 @@ func (f *Form) Focus(id ID) bool {
 
 // Click focuses or activates the control at point.
 func (f *Form) Click(point Point) tea.Cmd {
-	for i, action := range f.plan.Actions {
-		if action.Rect.Contains(point) {
-			f.focus = len(f.declaration.Fields)
-			f.action = i
-			f.invalidate()
-			return emitFormMessage(FormSubmitMsg{ID: action.ID})
+	for index, button := range f.plan.Buttons {
+		if !button.Rect.Contains(point) {
+			continue
 		}
+		f.focus = len(f.declaration.Fields) + index
+		f.buttons.Focus(button.ID)
+		f.invalidate()
+		return emitFormMessage(FormSubmitMsg{ID: button.ID})
 	}
 	for i, field := range f.plan.Fields {
 		if !field.Rect.Contains(point) {
@@ -323,10 +315,7 @@ func (f *Form) FocusID() ID {
 	if f.focus < len(f.declaration.Fields) {
 		return f.declaration.Fields[f.focus].ID
 	}
-	if len(f.declaration.Actions.Actions) != 0 {
-		return f.declaration.Actions.Actions[f.action].ID
-	}
-	return ""
+	return f.buttons.FocusID()
 }
 
 // Flash reports the active direction for id.
@@ -339,7 +328,7 @@ func (f *Form) Flash(id ID) int {
 
 // AccessibleLines describes every field and executable action.
 func (f *Form) AccessibleLines() []string {
-	lines := make([]string, 0, len(f.declaration.Fields)+len(f.declaration.Actions.Actions))
+	lines := make([]string, 0, len(f.declaration.Fields)+len(f.declaration.Actions.Buttons))
 	for _, field := range f.declaration.Fields {
 		value := f.fieldText(field, false)
 		if field.Kind == TextField {
@@ -347,8 +336,8 @@ func (f *Form) AccessibleLines() []string {
 		}
 		lines = append(lines, field.Label+": "+value)
 	}
-	for _, action := range f.declaration.Actions.Actions {
-		lines = append(lines, "action: "+action.Label)
+	for _, button := range f.declaration.Actions.Buttons {
+		lines = append(lines, "action: "+button.Label)
 	}
 	return lines
 }
@@ -364,61 +353,62 @@ func (f *Form) RunAccessible(writer io.Writer) error {
 }
 
 func (f *Form) updateKey(message tea.KeyPressMsg) tea.Cmd {
+	textEntry := f.focus < len(f.declaration.Fields) &&
+		f.declaration.Fields[f.focus].Kind == TextField
+	intent := ResolveControlIntent(message, textEntry)
 	if f.focus >= len(f.declaration.Fields) {
-		switch {
-		case message.Code == tea.KeyUp || message.Code == tea.KeyTab && message.Mod == tea.ModShift ||
-			message.Text == "k":
+		switch intent {
+		case FocusPrevious:
 			f.MoveFocus(-1)
-		case message.Code == tea.KeyLeft || message.Text == "h":
-			f.action = max(f.action-1, 0)
+		case FocusNext:
+			f.MoveFocus(1)
+		case NavigateLeft, NavigateRight:
+			f.buttons.applyIntent(intent)
+			f.focus = len(f.declaration.Fields) + f.buttonFocus()
 			f.invalidate()
-		case message.Code == tea.KeyRight || message.Text == "l":
-			f.action = min(f.action+1, len(f.declaration.Actions.Actions)-1)
-			f.invalidate()
-		case message.Code == tea.KeyEnter:
-			return emitFormMessage(FormSubmitMsg{
-				ID: f.declaration.Actions.Actions[f.action].ID,
-			})
+		case Activate:
+			if id := f.buttons.FocusID(); id != "" {
+				return emitFormMessage(FormSubmitMsg{ID: id})
+			}
+		case NoControlIntent:
 		}
 		return nil
 	}
 
 	field := &f.declaration.Fields[f.focus]
 	if field.Kind == TextField {
-		return f.updateTextField(message)
+		return f.updateTextField(message, intent)
 	}
-	switch {
-	case message.Code == tea.KeyUp || message.Code == tea.KeyTab && message.Mod == tea.ModShift ||
-		message.Text == "k":
+	switch intent {
+	case FocusPrevious:
 		f.MoveFocus(-1)
-	case message.Code == tea.KeyDown || message.Code == tea.KeyTab && message.Mod == 0 ||
-		message.Text == "j":
+	case FocusNext:
 		f.MoveFocus(1)
-	case message.Code == tea.KeyLeft || message.Text == "h":
+	case NavigateLeft:
 		return f.changeField(field, -1)
-	case message.Code == tea.KeyRight || message.Text == "l":
+	case NavigateRight:
 		if field.Kind == DirectoryField {
 			return emitFormMessage(FormActivateMsg{ID: field.ID})
 		}
 		return f.changeField(field, 1)
-	case message.Code == tea.KeyEnter:
+	case Activate:
 		if field.Kind == DirectoryField {
 			return emitFormMessage(FormActivateMsg{ID: field.ID})
 		}
 		f.MoveFocus(1)
+	case NoControlIntent:
 	}
 	return nil
 }
 
-func (f *Form) updateTextField(message tea.KeyPressMsg) tea.Cmd {
-	switch {
-	case message.Code == tea.KeyUp || message.Code == tea.KeyTab && message.Mod == tea.ModShift:
+func (f *Form) updateTextField(message tea.KeyPressMsg, intent ControlIntent) tea.Cmd {
+	switch intent {
+	case FocusPrevious:
 		f.MoveFocus(-1)
-	case message.Code == tea.KeyDown || message.Code == tea.KeyTab && message.Mod == 0 ||
-		message.Code == tea.KeyEnter:
+	case FocusNext, Activate:
 		f.MoveFocus(1)
 	default:
-		f.updateTextInput(message)
+		f.updateTextInputKey(message, intent)
 	}
 	return nil
 }
@@ -433,6 +423,20 @@ func (f *Form) updateTextInput(message tea.Msg) {
 		return
 	}
 	input.Update(message)
+	field.Text = input.Value()
+	f.invalidate()
+}
+
+func (f *Form) updateTextInputKey(message tea.KeyPressMsg, intent ControlIntent) {
+	if f.focus < 0 || f.focus >= len(f.declaration.Fields) {
+		return
+	}
+	field := &f.declaration.Fields[f.focus]
+	input := f.inputs[field.ID]
+	if field.Kind != TextField || input == nil {
+		return
+	}
+	input.updateKey(message, intent)
 	field.Text = input.Value()
 	f.invalidate()
 }
@@ -486,7 +490,9 @@ func (f *Form) normalize() {
 			field.Selected = min(max(field.Selected, 0), len(field.Options)-1)
 		}
 	}
-	f.action = min(max(f.action, 0), max(len(f.declaration.Actions.Actions)-1, 0))
+	count := len(f.declaration.Fields) + len(f.declaration.Actions.Buttons)
+	f.focus = min(max(f.focus, 0), max(count-1, 0))
+	f.syncButtonFocus()
 }
 
 func (f *Form) invalidate() {
@@ -496,10 +502,10 @@ func (f *Form) invalidate() {
 
 func (f *Form) arrange() {
 	f.normalize()
-	actionLines, widths := f.renderActions()
-	actionHeight := len(actionLines)
-	intrinsicHeight := len(f.declaration.Fields) + actionHeight
 	bounds := f.bounds
+	f.buttons.SetBounds(Rect{Width: bounds.Width})
+	buttonHeight := f.buttons.Plan().Bounds.Height
+	intrinsicHeight := len(f.declaration.Fields) + buttonHeight
 	if f.hugHeight {
 		bounds.Height = intrinsicHeight
 	}
@@ -510,13 +516,13 @@ func (f *Form) arrange() {
 	spacerHeight := max(contentHeight-intrinsicHeight, 0)
 	maxOffset := max(contentHeight-bounds.Height, 0)
 	f.offset = min(max(f.offset, 0), maxOffset)
-	actionY := len(f.declaration.Fields) + spacerHeight
+	buttonY := len(f.declaration.Fields) + spacerHeight
 
 	plan := FormPlan{
-		Version:     f.version,
-		Bounds:      bounds,
-		SpacerID:    f.declaration.Spacer.ID,
-		ActionBarID: f.declaration.Actions.ID,
+		Version:      f.version,
+		Bounds:       bounds,
+		SpacerID:     f.declaration.Spacer.ID,
+		ButtonListID: f.declaration.Actions.ID,
 		Content: Rect{
 			X:      bounds.X,
 			Y:      bounds.Y,
@@ -548,23 +554,22 @@ func (f *Form) arrange() {
 			lines[screenY-bounds.Y] = f.renderField(field, i == f.focus, bounds.Width)
 		}
 	}
-	actionScreenY := bounds.Y + actionY - f.offset
-	for row, line := range actionLines {
-		y := actionScreenY + row
-		if y >= bounds.Y && y < bounds.Bottom() {
-			lines[y-bounds.Y] = padLine(ansi.Truncate(line, bounds.Width, ""), bounds.Width)
+	buttonScreenY := bounds.Y + buttonY - f.offset
+	f.buttons.SetBounds(Rect{
+		X: bounds.X, Y: buttonScreenY, Width: bounds.Width, Height: buttonHeight,
+	})
+	if buttonHeight > 0 {
+		for row, line := range strings.Split(f.buttons.View().Content, "\n") {
+			y := buttonScreenY + row
+			if y >= bounds.Y && y < bounds.Bottom() {
+				lines[y-bounds.Y] = padLine(ansi.Truncate(line, bounds.Width, ""), bounds.Width)
+			}
 		}
 	}
-	left := bounds.X
-	for i, action := range f.declaration.Actions.Actions {
-		rect := intersectRect(
-			Rect{X: left, Y: actionScreenY, Width: widths[i], Height: actionHeight},
-			bounds,
-		)
-		plan.Actions = append(plan.Actions, FormControlPlan{
-			ID: action.ID, Rect: rect,
+	for _, button := range f.buttons.Plan().Buttons {
+		plan.Buttons = append(plan.Buttons, FormControlPlan{
+			ID: button.ID, Rect: intersectRect(button.Rect, bounds),
 		})
-		left += widths[i]
 	}
 	f.plan = plan
 	f.lines = lines
@@ -576,14 +581,33 @@ func (f *Form) revealFocus() {
 		top = f.focus
 		height = 1
 	} else {
-		top = f.plan.Content.Height - max(len(f.renderActionLines()), 1)
-		height = max(len(f.renderActionLines()), 1)
+		buttonHeight := max(f.buttons.Plan().Bounds.Height, 1)
+		top = f.plan.Content.Height - buttonHeight
+		height = buttonHeight
 	}
 	if top < f.offset {
 		f.offset = top
 	} else if top+height > f.offset+f.plan.Bounds.Height {
 		f.offset = top + height - f.plan.Bounds.Height
 	}
+}
+
+func (f *Form) syncButtonFocus() {
+	index := f.focus - len(f.declaration.Fields)
+	f.buttons.SetFocused(index >= 0 && index < len(f.declaration.Actions.Buttons))
+	if index >= 0 && index < len(f.declaration.Actions.Buttons) {
+		f.buttons.Focus(f.declaration.Actions.Buttons[index].ID)
+	}
+}
+
+func (f *Form) buttonFocus() int {
+	id := f.buttons.FocusID()
+	for index, button := range f.declaration.Actions.Buttons {
+		if button.ID == id {
+			return index
+		}
+	}
+	return 0
 }
 
 func (f *Form) renderField(field FormField, focused bool, width int) string {
@@ -668,35 +692,13 @@ func (f *Form) clickTextInput(index, x int) {
 	input.Click(x - (rect.Right() - inputWidth))
 }
 
-func (f *Form) renderActions() ([]string, []int) {
-	if len(f.declaration.Actions.Actions) == 0 {
-		return nil, nil
-	}
-	views := make([]string, len(f.declaration.Actions.Actions))
-	widths := make([]int, len(views))
-	for i, action := range f.declaration.Actions.Actions {
-		style := f.styles.Action
-		if f.focus >= len(f.declaration.Fields) && i == f.action {
-			style = f.styles.SelectedAction
-		}
-		views[i] = style.Render(action.Label)
-		widths[i] = lipgloss.Width(views[i])
-	}
-	return strings.Split(lipgloss.JoinHorizontal(lipgloss.Top, views...), "\n"), widths
-}
-
-func (f *Form) renderActionLines() []string {
-	lines, _ := f.renderActions()
-	return lines
-}
-
 func cloneFormDeclaration(declaration FormDeclaration) FormDeclaration {
 	clone := declaration
 	clone.Fields = append([]FormField(nil), declaration.Fields...)
 	for i := range clone.Fields {
 		clone.Fields[i].Options = append([]FormOption(nil), clone.Fields[i].Options...)
 	}
-	clone.Actions.Actions = append([]FormAction(nil), declaration.Actions.Actions...)
+	clone.Actions = cloneButtonListDeclaration(declaration.Actions)
 	return clone
 }
 

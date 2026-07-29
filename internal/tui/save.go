@@ -51,9 +51,9 @@ func (m *Model) openSaveForm() {
 			},
 		},
 		Spacer: chrome.FormSpacer{ID: "save-spacer", Grow: 1},
-		Actions: chrome.ActionBar{
+		Actions: chrome.ButtonListDeclaration{
 			ID: "save-actions",
-			Actions: []chrome.FormAction{
+			Buttons: []chrome.Button{
 				{ID: saveConfirmAction, Label: "Save"},
 				{ID: saveCancelAction, Label: "Cancel"},
 			},

@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 10 complete; follow-up Phase A not started
+- Current phase: Follow-up Phase A complete; Phase B not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -805,7 +805,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 
 | Phase | Status | Review gate |
 | --- | --- | --- |
-| A. Control navigation and ButtonList | Not started | Forms traverse every control and wrap |
+| A. Control navigation and ButtonList | Complete | Forms traverse every control and wrap |
 | B. Settings and construction | Not started | One injected snapshot configures startup |
 | C. Command resolver and shortcut presentation | Not started | Dispatch and Help share one effective binding set |
 | D. Dialog ownership | Not started | Root owns no body-local form state |
@@ -816,21 +816,21 @@ headless-terminal sizes remain defined under Verification Strategy.
 
 ### Follow-up Phase A: control navigation and ButtonList
 
-- [ ] Resolve physical keys once into semantic control intents:
+- [x] Resolve physical keys once into semantic control intents:
   `NavigateLeft`, `NavigateRight`, `FocusNext`, `FocusPrevious`, and
   `Activate`.
-- [ ] Map Left and `h` to `NavigateLeft`; map Right and `l` to
+- [x] Map Left and `h` to `NavigateLeft`; map Right and `l` to
   `NavigateRight`. Consumers must not inspect which physical alias produced the
   intent.
-- [ ] Preserve text-entry precedence so `h` and `l` type while arrow keys move
+- [x] Preserve text-entry precedence so `h` and `l` type while arrow keys move
   the caret in text inputs.
-- [ ] Replace ActionBar mechanics with one horizontal `ButtonList` component.
-- [ ] Give every button a stable focus ID. Tab and Shift-Tab traverse buttons
+- [x] Replace ActionBar mechanics with one horizontal `ButtonList` component.
+- [x] Give every button a stable focus ID. Tab and Shift-Tab traverse buttons
   individually and wrap through the containing form.
-- [ ] Make a standalone ButtonList wrap within itself.
-- [ ] Preserve Left/Right spatial traversal, Enter activation, and
+- [x] Make a standalone ButtonList wrap within itself.
+- [x] Preserve Left/Right spatial traversal, Enter activation, and
   click-to-focus-and-activate behavior.
-- [ ] Keep ButtonList horizontal until another orientation has a concrete
+- [x] Keep ButtonList horizontal until another orientation has a concrete
   consumer.
 
 ### Follow-up Phase B: settings and construction
@@ -1103,6 +1103,7 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Translate and clip a full-width sidebar while keeping navigation screen-anchored. | Stable measurement prevents text reflow, while one visible extent coordinates docked canvas movement and hit testing. |
 | 2026-07-29 | Isolate Harmonica behind a private scalar transition rather than a public animation framework. | Sidebar behavior depends on integer extent, not the interpolation algorithm, so a later easing replacement should remain local. |
 | 2026-07-29 | Pilot `teatest/v2` only for one program-level smoke and retain direct model plus real-PTY tests. | It exercises Bubble Tea program wiring but lacks PTY input decoding and uses real-time polling unsuitable for broad deterministic coverage. |
+| 2026-07-29 | Keep Left/Right button movement bounded while FocusNext/FocusPrevious wrap, and let Form own wrapping across its complete field-and-button order. | This preserves spatial navigation at horizontal edges while standalone and containing traversal both reach every stable button ID. |
 
 ## Changed-File Ledger
 
@@ -1122,6 +1123,7 @@ Update this table after each completed phase or reviewable slice.
 | 9 | `internal/tui/chrome/{AGENTS.md,motion.go,motion_test.go,surface.go,surface_test.go}`, `internal/tui/{bindings,model,sidebar,sidebar_test,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add workspace-owned cell transitions, animated dock/drawer geometry, an application-declared sidebar Pane, placement-aware focus and dismissal, and deterministic lab/root PTY coverage. |
 | 10 | `go.mod`, `internal/tui/{AGENTS.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,theme.go}`, `internal/tui/chrome/{AGENTS.md,command_test.go,form.go,form_test.go,textinput.go,textinput_test.go}`, `internal/tui/clipboard/{AGENTS.md,clipboard.go,clipboard_test.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, deleted `internal/tui/flex/*`, deleted `internal/tui/numinput/*`, `internal/tui/CHROME_PLAN.md` | Add grapheme- and cell-aware text input, migrate Save and Export to declarative forms, isolate Huh filesystem navigation, remove superseded helpers and theme adapters, and record the final chrome architecture. |
 | Follow-up planning | `internal/tui/CHROME_PLAN.md` | Record post-migration ownership, settings, input, dialog, interaction, sidebar, motion, dependency, and verification decisions. |
+| Follow-up A | `internal/tui/CHROME_PLAN.md`, `internal/tui/chrome/{AGENTS.md,buttonlist.go,buttonlist_test.go,command.go,command_test.go,form.go,form_test.go,textinput.go}`, `internal/tui/clipboard/{clipboard.go,clipboard_test.go}`, `internal/tui/cmd/chrome-lab/main.go`, `internal/tui/modal/{confirmation.go,confirmation_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/{save.go,theme.go}` | Resolve physical control keys once into semantic intents, replace ActionBar with one retained horizontal ButtonList, traverse every form button as a stable focus target, and migrate existing form declarations and styles. |
 
 ## Verification Ledger
 
@@ -1234,3 +1236,20 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 10 | First final root `ht` harness attempts | The harness waited for non-rendered modal titles and sent enhanced Ctrl-C instead of the terminal's C0 copy byte. Inspected the live PTY, switched assertions to retained form content, and used the decoded copy sequence. |
 | 2026-07-28 | 10 | Final root `ht` Save/Export sweep at `100x30`, `80x16`, and `80x12` | Passed Save open, nested picker open/Back, form restoration, Cancel, exact node selection, double-copy Export, option input, exact dimensions, and hidden cursor; all sessions stopped and removed. |
 | 2026-07-28 | 10 | Public declaration and dependency audit with `rg` across chrome structs, setters, obsolete wrappers, deleted packages, and Huh imports | Every remaining declaration supports application use, retained diagnostics, or testable policy. No obsolete component wrappers remain; only `directorypicker` imports Huh. |
+| 2026-07-29 | Follow-up A | Initial `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui/preferences` | Chrome passed; Preferences failed because `TestConstrainedFormRevealsActions` scrolled an arbitrary 20 steps and depended on the removed clamped action-group focus. Changed the test to traverse the exact declared control count. |
+| 2026-07-29 | Follow-up A | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui/preferences` | Passed semantic intent, text-entry precedence, standalone ButtonList, form traversal/wrapping, pointer activation, and Preferences integration tests. |
+| 2026-07-29 | Follow-up A | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` | Passed all affected TUI, chrome-lab, adapter, and command packages. |
+| 2026-07-29 | Follow-up A | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...` | Passed all packages. |
+| 2026-07-29 | Follow-up A | `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...` | Passed all packages under the race detector. |
+| 2026-07-29 | Follow-up A | `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...` | Passed. |
+| 2026-07-29 | Follow-up A | Initial `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Failed with four `goconst` findings after new button test IDs crossed the package repetition threshold. Replaced them with stable semantic constants. |
+| 2026-07-29 | Follow-up A | Final narrow tests and `golangci-lint run --path-mode abs` | Chrome and Preferences passed; lint passed with 0 issues. |
+| 2026-07-29 | Follow-up A | Initial sandboxed `./internal/tui/cmd/chrome-lab/smoke.sh` | Failed because the headless-terminal daemon socket was unreachable. Re-ran with local daemon access. |
+| 2026-07-29 | Follow-up A | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed all existing form, dialog, sidebar, surface, focus, paste, and pointer scenarios at `100x30`, `80x16`, and `80x12`. |
+| 2026-07-29 | Follow-up A | Initial root `ht` harness attempts | Separate sandbox contexts did not share the daemon, and the first one-shot harness waited for non-rendered `selected` text. Switched to one idle-coupled command that owns launch, inspection, and cleanup. |
+| 2026-07-29 | Follow-up A | Root `ht run`, `ht wait --idle`, and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, toolbar and status composition, and hidden cursor assertions; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up A | `dd-gopls check <all changed Phase A Go files>` | Passed with no diagnostics. |
+| 2026-07-29 | Follow-up A recovery | `go test ./internal/tui/chrome ./internal/tui/preferences`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Independently passed in the main checkout; lint reported 0 issues. |
+| 2026-07-29 | Follow-up A recovery | Initial sandboxed `dd-gopls check <all changed Phase A Go files>` and `./internal/tui/cmd/chrome-lab/smoke.sh` | Diagnostics could not write Go caches, and the headless-terminal daemon socket was unreachable. Re-ran both with local cache and daemon access. |
+| 2026-07-29 | Follow-up A recovery | `dd-gopls check <all changed Phase A Go files>`; `./internal/tui/cmd/chrome-lab/smoke.sh` | Diagnostics passed with no findings; chrome-lab passed all three terminal sizes. |
+| 2026-07-29 | Follow-up A recovery | Root `ht` matrix at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, toolbar and status composition, and hidden cursor assertions; all sessions stopped and removed. |

@@ -16,7 +16,7 @@ diagnostics used by the chrome lab.
 - Keep arranged IDs stable across resize and reflow; reject duplicates.
 - Treat ANSI-rendered text only as leaf content, never as recovered component
   geometry.
-- Forms expose semantic field, action, spacer, and action-bar IDs through one
+- Forms expose semantic field, button, spacer, and button-list IDs through one
   retained plan. Applications own declarations and value mapping.
 - Text inputs edit grapheme clusters, clip by display cell, and keep typing,
   paste, pointer, and accessible value paths within the form declaration.

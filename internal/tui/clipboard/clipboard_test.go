@@ -199,12 +199,14 @@ func TestExportUsesSemanticFormTraversalAndAccessibleAction(t *testing.T) {
 
 func newTestModel() *Model {
 	return New(chrome.FormStyles{
-		Label:          lipgloss.NewStyle(),
-		FocusedLabel:   lipgloss.NewStyle().Bold(true),
-		Value:          lipgloss.NewStyle(),
-		FocusedValue:   lipgloss.NewStyle().Bold(true),
-		ActiveValue:    lipgloss.NewStyle().Reverse(true),
-		Action:         lipgloss.NewStyle().Padding(0, 1),
-		SelectedAction: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+		Label:        lipgloss.NewStyle(),
+		FocusedLabel: lipgloss.NewStyle().Bold(true),
+		Value:        lipgloss.NewStyle(),
+		FocusedValue: lipgloss.NewStyle().Bold(true),
+		ActiveValue:  lipgloss.NewStyle().Reverse(true),
+		Buttons: chrome.ButtonListStyles{
+			Button:        lipgloss.NewStyle().Padding(0, 1),
+			FocusedButton: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+		},
 	})
 }

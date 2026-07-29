@@ -325,9 +325,9 @@ func (m *Model) openExport(text, preferredPrefix string) {
 			Options: exportOptions(m.style),
 		}},
 		Spacer: chrome.FormSpacer{ID: "export-spacer", Grow: 1},
-		Actions: chrome.ActionBar{
+		Actions: chrome.ButtonListDeclaration{
 			ID: "export-actions",
-			Actions: []chrome.FormAction{{
+			Buttons: []chrome.Button{{
 				ID: exportCopy, Label: "Copy",
 			}},
 		},
