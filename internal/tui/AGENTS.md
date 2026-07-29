@@ -10,29 +10,31 @@ semantics must remain outside this package.
 
 The root `Model` owns editor coordination:
 
-- viewport, cursor, active tool, focus, and modal state
+- viewport, cursor, active tool, focus, workspace surfaces, and dialog state
 - mouse, drag, resize, label-edit, and reconnect interactions
 - save, preference transactions, document selection export, and notices
 
 Composable presentation models live in sub-packages:
 
 - `canvas` owns canvas styles, encoders, retained frames, and row indexes.
-- `clipboard` owns copy debounce, export formatting and form state, terminal
+- `chrome` owns declarative layout, forms, text input, focus, surfaces, panes,
+  viewports, and cell-aware transitions.
+- `clipboard` owns copy debounce, export formatting and chrome form state, terminal
   capability probing, and fallback writes.
-- `flex` allocates ANSI-aware single-line content across horizontal rows.
+- `directorypicker` is the only bounded Huh adapter and owns filesystem
+  navigation.
 - `nav` owns floating tool navigation styles, geometry, hover, and activation.
 - `modal` owns modal and tab styles, sizing, full-screen fallback, movement,
   and pointer hit testing.
-- `numinput` owns bounded numeric stepping and directional feedback; its Huh
-  adapter keeps form traversal separate.
-- `preferences` owns the Huh preferences form, its numeric children, sizing,
-  navigation, and editable value.
+- `preferences` owns preference field declarations, value projection, and
+  persistence-facing actions.
 
 The root configures these models and translates their semantic `tea.Msg`
 values into editor actions. Component interactions cross boundaries through
 `tea.Msg` and `tea.Cmd`; do not reach into child state from root.
 
-Bubbles help renders shortcuts. Save, export, and preferences use `huh/v2`.
+Bubbles help renders shortcuts. Save, Export, and Preferences use chrome forms.
+Only filesystem navigation uses `huh/v2`, behind `directorypicker`.
 
 The sparse canvas renderer remains custom. Generic viewports do not model
 document coordinates, occlusion, preview ownership, or its hot-path needs.
@@ -70,23 +72,27 @@ Gloss-rendered navigation and highlight spans. Rendering every cell through
 
 Profile drag changes with the existing TUI benchmarks and `go tool pprof`.
 
-## Settings and clipboard
+## Dialogs, settings, sidebar, and clipboard
 
-The settings modal overlays the diagram. Left-dragging empty modal cells moves
-it; right-dragging resizes from the nearest corner. Tab and Shift-Tab switch
-Shortcuts and Preferences. Esc, `q`, or an outside click closes it. Esc and
-`q` close an open nested picker before closing the modal.
+Save, Export, Preferences, and Notice declare distinct workspace surfaces
+through one dialog-spec table. Left-dragging empty dialog cells moves a
+floating shell; right-dragging resizes it. Fit alone selects floating or
+full-screen placement. Back and outside-click behavior comes from each
+declaration.
 
 The preferences model reports editable values; root applies router changes
 live and owns the layout history transaction. Cancel, close, outside click, or
 lost focus restores the original values. Numeric fields change only with Left
 and Right or `h` and `l`, and briefly highlight the pressed arrow. The
-directory field opens `huh.NewFilePicker` as a temporary subview. Save applies
-the current form; Save as Defaults also enables the persisted router for new
-diagrams. The form renders at its natural height when the terminal allows it
-and follows explicit modal resizing, with actions anchored to the body bottom.
-Settings tabs share the larger tab's default height when both fit, and the
-settings shell derives its default width from the complete help layout.
+directory field opens the bounded filesystem adapter. Save applies the current
+form; Save as Defaults also enables the persisted router for new diagrams.
+Growing form spacers anchor actions to the body bottom.
+
+The sidebar uses an application-declared Pane. It docks at wide regular sizes
+and becomes a compact overlay drawer at 80 columns or fewer. One workspace
+transition owns the dock boundary and canvas origin. Back leaves a docked
+sidebar visible but returns keyboard focus to the canvas; Back or an outside
+click dismisses a drawer. Ctrl-B opens, focuses, refocuses, or closes it.
 
 Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 300 ms. A second copy in that
@@ -118,6 +124,7 @@ enhancement message.
 - Ctrl-R or Ctrl-Y: redo
 - Ctrl-S: save
 - `?`: help and preferences
+- Ctrl-B: open or close sidebar
 - `q`: quit
 
 ## Areas for improvement

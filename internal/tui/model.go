@@ -9,10 +9,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
+	"github.com/coxley/dg/internal/tui/directorypicker"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
@@ -130,7 +130,8 @@ type Model struct {
 	path        string
 
 	clipboard     *clipboardview.Model
-	saveForm      *huh.Form
+	saveForm      *chrome.Form
+	savePicker    *directorypicker.Model
 	saveDirectory string
 	saveName      string
 	notice        string
@@ -189,7 +190,7 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		},
 		Footer: "Esc canvas  Ctrl+B close",
 	}, m.theme.sidebarStyles())
-	m.clipboard = clipboardview.New(m.theme.formTheme())
+	m.clipboard = clipboardview.New(m.theme.formStyles())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
 		{ID: "rectangle", Tool: nav.Rectangle, Label: " Rectangle "},
@@ -243,9 +244,7 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	syncWorkspace := m.workspaceNeedsSync()
 	defer func() {
-		if syncWorkspace || m.workspaceNeedsSync() {
-			m.syncWorkspace()
-		}
+		m.syncWorkspaceAfterUpdate(syncWorkspace)
 	}()
 	if command, handled := m.updatePresentation(message); handled {
 		return m, command
@@ -262,7 +261,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.preferenceForm != nil {
 			m.preferenceForm.SetStyles(m.theme.preferenceStyles())
 		}
-		m.clipboard.SetTheme(m.theme.formTheme())
+		if m.saveForm != nil {
+			m.saveForm.SetStyles(m.theme.formStyles())
+		}
+		if m.savePicker != nil {
+			m.savePicker.SetStyles(directorypicker.Styles{Dark: m.theme.Dark})
+		}
+		m.clipboard.SetStyles(m.theme.formStyles())
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
 		m.keys.setKeyboardEnhancements(true)
@@ -292,12 +297,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.updateKey(message)
 	case tea.PasteMsg:
-		if m.activeDialog != surfaceNone {
-			return m, m.updateDialog(message)
-		}
-		if m.mode == modeEditLabel {
-			m.insertLabelText(message.Content)
-		}
+		return m, m.updatePaste(message)
 	case tea.MouseClickMsg:
 		m.clipboard.CancelPending()
 		return m, m.updateSurfaceMouseClick(message)
@@ -311,8 +311,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateMouseWheelMessage(message)
 	case tea.BlurMsg:
 		m.interruptInteraction()
-	case componentMsg:
-		return m, m.updateComponent(message)
+	case chrome.FormActivateMsg:
+		return m, m.updateDialog(message)
+	case chrome.FormSubmitMsg:
+		return m, m.updateDialog(message)
+	case chrome.FormFlashExpiredMsg:
+		return m, m.updateDialog(message)
+	case directorypicker.UpdateMsg:
+		return m, m.updateDialog(message)
 	case preferencesview.UpdateMsg:
 		return m, m.updateSettingsTabs(message)
 	case clipboardview.UpdateMsg:
@@ -326,6 +332,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateSidebarMotion(message)
 	}
 	return m, nil
+}
+
+func (m *Model) syncWorkspaceAfterUpdate(sync bool) {
+	if sync || m.workspaceNeedsSync() {
+		m.syncWorkspace()
+	}
 }
 
 func (m *Model) workspaceNeedsSync() bool {
@@ -369,13 +381,14 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 	}
 }
 
-func (m *Model) updateComponent(message componentMsg) tea.Cmd {
-	switch {
-	case message.kind == saveComponent && m.activeDialog == surfaceSave:
-		return m.updateSaveForm(message.message)
-	default:
-		return nil
+func (m *Model) updatePaste(message tea.PasteMsg) tea.Cmd {
+	if m.activeDialog != surfaceNone {
+		return m.updateDialog(message)
 	}
+	if m.mode == modeEditLabel {
+		m.insertLabelText(message.Content)
+	}
+	return nil
 }
 
 func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {

@@ -113,6 +113,13 @@ func TestLabFormsExposeLiveContextAndNestedPicker(t *testing.T) {
 	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
 	require.False(t, model.formPicker)
 	require.Contains(t, model.View().Content, "Save directory")
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	require.Equal(t, labFormName, model.form.FocusID())
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+	updateLab(t, model, tea.PasteMsg{Content: "uick.json\n"})
+	require.Equal(t, "quick.json", model.formName)
+	require.Contains(t, model.View().Content, "file-name: quick.json")
 }
 
 func TestLabDialogsExerciseLifecycleAndDismissalPolicy(t *testing.T) {

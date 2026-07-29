@@ -3,9 +3,9 @@
 ## Responsibility
 
 `chrome` owns reusable terminal UI mechanics: intrinsic measurement,
-arrangement, retained layout plans, menu and form geometry, panes, finite
-viewports, deterministic cell transitions, workspace surfaces, and diagnostics
-used by the chrome lab.
+arrangement, retained layout plans, menu, form, and text-input geometry, panes,
+finite viewports, deterministic cell transitions, workspace surfaces, and
+diagnostics used by the chrome lab.
 
 ## Boundaries
 
@@ -18,6 +18,8 @@ used by the chrome lab.
   geometry.
 - Forms expose semantic field, action, spacer, and action-bar IDs through one
   retained plan. Applications own declarations and value mapping.
+- Text inputs edit grapheme clusters, clip by display cell, and keep typing,
+  paste, pointer, and accessible value paths within the form declaration.
 - Keep keyboard traversal and accessible execution paths aligned with the same
   declared control order.
 - Surface plans retain both full content placement and the terminal-clipped

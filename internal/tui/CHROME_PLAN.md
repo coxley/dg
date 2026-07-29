@@ -1,8 +1,8 @@
 # TUI Chrome Architecture and Migration Plan
 
-- Status: active
+- Status: complete
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 9 complete; Phase 10 not started
+- Current phase: Phase 10 complete; later feature sweeps not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -525,7 +525,7 @@ review, and integration gate before beginning the next phase.
 | 7. Declarative Preferences | Complete | No rendered-text geometry recovery remains |
 | 8. Existing modal migration | Complete | Root modal-type input switches are removed |
 | 9. Adaptive sidebar and motion | Complete | Dock/drawer transition invariants pass |
-| 10. Remaining forms and cleanup | Not started | Superseded paths are audited and minimized |
+| 10. Remaining forms and cleanup | Complete | Superseded paths are audited and minimized |
 
 ### Phase 1: baseline characterization
 
@@ -706,22 +706,22 @@ history, layers, and object-tree behavior remain application feature phases.
 
 ### Phase 10: remaining forms and cleanup
 
-- [ ] Migrate Save and Export away from Huh where chrome controls suffice.
-- [ ] Implement a chrome TextInput before migrating Save.
-- [ ] Either replace the file picker or document a bounded adapter and the
+- [x] Migrate Save and Export away from Huh where chrome controls suffice.
+- [x] Implement a chrome TextInput before migrating Save.
+- [x] Either replace the file picker or document a bounded adapter and the
   remaining reason for its Huh dependency.
-- [ ] Audit `flex`, `modal`, `nav`, `numinput`, and `preferences`; delete only
+- [x] Audit `flex`, `modal`, `nav`, `numinput`, and `preferences`; delete only
   packages whose responsibilities are fully superseded. Retain app-content
   packages that still express clean ownership.
-- [ ] Search all Huh imports and obsolete component-message wrappers; remove
+- [x] Search all Huh imports and obsolete component-message wrappers; remove
   `charm.land/huh/v2` from `go.mod` and `go.sum` only when no bounded adapter
   remains.
-- [ ] Remove obsolete theme adapters and consolidate semantic tokens.
-- [ ] Preserve accessible labels, keyboard traversal, and accessible execution
+- [x] Remove obsolete theme adapters and consolidate semantic tokens.
+- [x] Preserve accessible labels, keyboard traversal, and accessible execution
   paths before removing Huh-backed controls.
-- [ ] Re-run full tests, race, vet, lint, benchmarks, and all headless sizes.
-- [ ] Update `internal/tui/AGENTS.md` to describe the final architecture.
-- [ ] Audit public chrome declarations for unused configurability and delete it.
+- [x] Re-run full tests, race, vet, lint, benchmarks, and all headless sizes.
+- [x] Update `internal/tui/AGENTS.md` to describe the final architecture.
+- [x] Audit public chrome declarations for unused configurability and delete it.
 
 ## Later Feature Sweeps
 
@@ -820,6 +820,10 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Advance workspace transitions every 16 ms with quadratic ease-out when opening and quadratic ease-in when closing. | Each update skips unchanged interpolation frames and exposes only a new integer cell; reversal and resize retarget from the current visible extent. |
 | 2026-07-28 | Retain full surface content placement separately from its clipped pointer rectangle. | Drawers can translate a stable pane partly outside the terminal while input and rendering use the same visible bounds. |
 | 2026-07-28 | Indicate sidebar focus only on its selected item. | Back can leave a docked sidebar visible without suggesting that its commands still own keyboard input. |
+| 2026-07-28 | Keep Huh only behind `directorypicker` as the filesystem-navigation adapter. | Chrome forms now own every ordinary Save, Export, and Preferences control; replacing directory traversal remains a separate bounded change. |
+| 2026-07-28 | Edit TextInput values as grapheme clusters and clip them by display cells. | Combining marks and wide glyphs then share one caret, paste, pointer, and rendering model without leaking Unicode arithmetic into applications. |
+| 2026-07-28 | Delete `flex` and `numinput`, but retain `modal`, `nav`, and `preferences`. | Chrome fully supersedes the former layout and numeric-control mechanics; the retained packages still own distinct application content or presentation policy. |
+| 2026-07-28 | Route concrete child messages separately in root Update. | Grouping message types forced unrelated mouse events to escape; concrete cases preserve semantic routing and the Phase 9 allocation envelope. |
 
 ## Changed-File Ledger
 
@@ -837,6 +841,7 @@ Update this table after each completed phase or reviewable slice.
 | 7 | `internal/tui/chrome/{AGENTS.md,form.go,form_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, deleted `internal/tui/preferences/{actions.go,row.go}`, `internal/tui/{modal.go,model_test.go,preferences.go,theme.go}`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add retained declarative forms, migrate Preferences and persisted key profiles, bound the remaining Huh picker, remove rendered-text geometry recovery, and add form/picker lab coverage. |
 | 8 | `internal/tui/modal/{AGENTS.md,confirmation.go,confirmation_test.go,modal.go,modal_test.go}`, `internal/tui/{bindings,clipboard_test,modal,model,model_test,preferences,save,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Replace the modal enum with declarative dialog specs and distinct surfaces, add fit-driven placement and a reusable confirmation body, preserve application transactions, and cover current dialog lifecycles. |
 | 9 | `internal/tui/chrome/{AGENTS.md,motion.go,motion_test.go,surface.go,surface_test.go}`, `internal/tui/{bindings,model,sidebar,sidebar_test,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add workspace-owned cell transitions, animated dock/drawer geometry, an application-declared sidebar Pane, placement-aware focus and dismissal, and deterministic lab/root PTY coverage. |
+| 10 | `go.mod`, `internal/tui/{AGENTS.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,theme.go}`, `internal/tui/chrome/{AGENTS.md,command_test.go,form.go,form_test.go,textinput.go,textinput_test.go}`, `internal/tui/clipboard/{AGENTS.md,clipboard.go,clipboard_test.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, deleted `internal/tui/flex/*`, deleted `internal/tui/numinput/*`, `internal/tui/CHROME_PLAN.md` | Add grapheme- and cell-aware text input, migrate Save and Export to declarative forms, isolate Huh filesystem navigation, remove superseded helpers and theme adapters, and record the final chrome architecture. |
 
 ## Verification Ledger
 
@@ -933,3 +938,18 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 9 | Post-fix narrow tests and `golangci-lint run --path-mode abs` | Passed affected chrome, lab, and root packages with 0 lint issues. |
 | 2026-07-28 | 9 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
 | 2026-07-28 | 9 | `dd-gopls check <all changed Phase 9 Go files>` | Passed with no diagnostics. |
+| 2026-07-28 | 10 | Narrow chrome, directory-picker, clipboard, Preferences, root, and command tests | Passed TextInput grapheme editing, display-cell clipping, paste sanitization, pointer caret placement, form traversal/accessibility, bounded picker lifecycle, Save/Export routing, and existing TUI integration behavior. |
+| 2026-07-28 | 10 | Sandboxed `go mod tidy` | Failed while resolving module metadata because sandboxed network access could not reach the module proxy. Re-ran with module-cache/network access. |
+| 2026-07-28 | 10 | `go mod tidy` | Passed; removed the unused direct `golang.org/x/exp` requirement and retained Huh because `directorypicker` remains the bounded adapter. |
+| 2026-07-28 | 10 | First `golangci-lint run --path-mode abs` | Reported one incomplete `FieldKind` switch, repeated semantic literals, and root `Update` complexity 31. Completed the switch, consolidated constants, and extracted child routing. |
+| 2026-07-28 | 10 | First root Save/Export `ht` matrix | Save and Export rendered correctly, but the harness clicked a toolbar/status cell and ambiguously matched copy guidance. Corrected the raw node coordinate to row 2, column 7 and required the exact `selected  nodes 1` status. |
+| 2026-07-28 | 10 | Root Save/Export `ht` matrix at `100x30`, `80x16`, and `80x12` | Passed Save fields/actions, nested-picker visibility and Back restoration, text editing and paste, cancel-without-write, node selection, double-copy Export, option changes, exact dimensions, and hidden cursor; all sessions stopped and removed. |
+| 2026-07-28 | 10 | Initial `go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Added one 32-byte AltDrag allocation. An allocation probe isolated a grouped child-message type switch; concrete routing restored the prior hot path. |
+| 2026-07-28 | 10 | Final `go test ./internal/tui/chrome -run '^$' -bench . -benchmem -count=1`; `go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: Measure 4,924 ns/op, Arrange 6,360 ns/op, MenuRender 8,276 ns/op, ViewportArrange 2,432 ns/op. Root AltDrag 47,101 ns/op, 10,921 B/op, 9 allocs/op; MoveCommittedDuplicate 46,487 ns/op, 10,952 B/op, 12 allocs/op; MoveAndView 4,982 ns/op, 4,696 B/op, 9 allocs/op. Allocation counts match or improve on Phase 9. |
+| 2026-07-28 | 10 | First `dd-gopls check <changed files>` | Failed because zsh preserved the newline-delimited path list as one argument. Re-ran with a path array containing every existing changed or untracked Go file. |
+| 2026-07-28 | 10 | `dd-gopls check <all changed Phase 10 Go files>` | Passed with no diagnostics. |
+| 2026-07-28 | 10 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-28 | 10 | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed TextInput typing/paste, forms, bounded picker, dialogs, sidebar, and all prior scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
+| 2026-07-28 | 10 | First final root `ht` harness attempts | The harness waited for non-rendered modal titles and sent enhanced Ctrl-C instead of the terminal's C0 copy byte. Inspected the live PTY, switched assertions to retained form content, and used the decoded copy sequence. |
+| 2026-07-28 | 10 | Final root `ht` Save/Export sweep at `100x30`, `80x16`, and `80x12` | Passed Save open, nested picker open/Back, form restoration, Cancel, exact node selection, double-copy Export, option input, exact dimensions, and hidden cursor; all sessions stopped and removed. |
+| 2026-07-28 | 10 | Public declaration and dependency audit with `rg` across chrome structs, setters, obsolete wrappers, deleted packages, and Huh imports | Every remaining declaration supports application use, retained diagnostics, or testable policy. No obsolete component wrappers remain; only `directorypicker` imports Huh. |

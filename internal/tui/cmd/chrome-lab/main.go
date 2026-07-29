@@ -37,6 +37,7 @@ const (
 	labFormNumber    = chrome.ID("form-number")
 	labFormProfile   = chrome.ID("form-profile")
 	labFormDirectory = chrome.ID("form-directory")
+	labFormName      = chrome.ID("form-name")
 	labKeyBack       = "esc"
 )
 
@@ -81,6 +82,7 @@ type labModel struct {
 	formAction       string
 	formStep         uint64
 	formProfile      string
+	formName         string
 	activeDialog     chrome.SurfaceID
 	sidebarOpen      bool
 	sidebarFocused   bool
@@ -150,6 +152,10 @@ func newLabModel(scenario string) *labModel {
 				ID: labFormDirectory, Label: "Save directory",
 				Kind: chrome.DirectoryField, Directory: "/tmp",
 			},
+			{
+				ID: labFormName, Label: "File name", Kind: chrome.TextField,
+				Placeholder: "diagram.json",
+			},
 		},
 		Spacer: chrome.FormSpacer{ID: "form-spacer", Grow: 1},
 		Actions: chrome.ActionBar{
@@ -167,6 +173,12 @@ func newLabModel(scenario string) *labModel {
 		ActiveValue:    lipgloss.NewStyle().Reverse(true),
 		Action:         lipgloss.NewStyle().Padding(0, 1),
 		SelectedAction: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+		TextInput: chrome.TextInputStyles{
+			Text:        lipgloss.NewStyle(),
+			FocusedText: lipgloss.NewStyle().Bold(true),
+			Placeholder: lipgloss.NewStyle().Faint(true),
+			Cursor:      lipgloss.NewStyle().Reverse(true),
+		},
 	})
 	return &labModel{
 		scenario:        index,
@@ -421,10 +433,17 @@ func (m *labModel) updateFormScenario(message tea.Msg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		if strings.Contains("0123456789", message.String()) ||
-			message.String() == "d" || message.String() == "q" ||
+			m.form.FocusID() != labFormName &&
+				(message.String() == "d" || message.String() == "q") ||
 			message.String() == "ctrl+c" {
 			return false, nil
 		}
+		form, command := m.form.Update(message)
+		m.form = form.(*chrome.Form)
+		m.syncFormContext()
+		m.reflow()
+		return true, command
+	case tea.PasteMsg:
 		form, command := m.form.Update(message)
 		m.form = form.(*chrome.Form)
 		m.syncFormContext()
@@ -438,6 +457,7 @@ func (m *labModel) updateFormScenario(message tea.Msg) (bool, tea.Cmd) {
 func (m *labModel) syncFormContext() {
 	m.formStep, _ = m.form.Number(labFormNumber)
 	m.formProfile, _ = m.form.Selected(labFormProfile)
+	m.formName, _ = m.form.Text(labFormName)
 }
 
 func (m *labModel) updateDialogScenario(message tea.Msg) bool {
@@ -714,6 +734,7 @@ func (m *labModel) refreshDiagnostics() {
 			lines,
 			fmt.Sprintf("router-step: %d", m.formStep),
 			"key-profile: "+m.formProfile,
+			"file-name: "+m.formName,
 			"preference-context: live",
 		)
 		if m.formAction != "" {

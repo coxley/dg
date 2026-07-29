@@ -50,10 +50,12 @@ var dialogSpecs = [...]dialogSpec{
 		Width:          fixedDialogWidth(68),
 		DismissOutside: true,
 		TextEntry:      true,
-		Scopes:         modalDialogScopes,
+		Scopes:         saveDialogScopes,
 		Body:           saveDialogBody,
 		Update:         updateSaveDialog,
 		Click:          clickSaveDialog,
+		Wheel:          wheelSaveDialog,
+		Back:           backSaveDialog,
 		Close:          (*Model).closeSaveForm,
 	},
 	{
@@ -196,6 +198,13 @@ func preferenceDialogScopes(m *Model) []chrome.ScopeID {
 	return []chrome.ScopeID{scopePreferences, scopeGlobal}
 }
 
+func saveDialogScopes(m *Model) []chrome.ScopeID {
+	if m.savePicker != nil && m.savePicker.Opened() {
+		return []chrome.ScopeID{scopeDirectory, scopeModal, scopeGlobal}
+	}
+	return modalDialogScopes(m)
+}
+
 func preferenceDialogBody(m *Model, width int) string {
 	if m.preferenceForm == nil {
 		return ""
@@ -218,15 +227,36 @@ func preferenceDialogBody(m *Model, width int) string {
 	return m.preferenceForm.View().Content
 }
 
-func saveDialogBody(m *Model, _ int) string {
+func saveDialogBody(m *Model, width int) string {
 	if m.saveForm == nil {
 		return ""
 	}
-	return m.saveForm.View()
+	bodyWidth, height := m.dialogBodySize(width)
+	if m.savePicker != nil && m.savePicker.Opened() {
+		m.savePicker.SetBounds(bodyWidth, height)
+		return m.savePicker.View().Content
+	}
+	m.saveForm.SetBounds(chrome.Rect{Width: bodyWidth, Height: height})
+	return m.saveForm.View().Content
 }
 
-func exportDialogBody(m *Model, _ int) string {
+func exportDialogBody(m *Model, width int) string {
+	width, height := m.dialogBodySize(width)
+	m.clipboard.SetBounds(width, height)
 	return m.clipboard.View().Content
+}
+
+func (m *Model) dialogBodySize(width int) (int, int) {
+	bodyWidth := max(
+		width-
+			m.theme.Modal.Container.GetHorizontalFrameSize()-
+			m.theme.Modal.Body.GetHorizontalFrameSize(),
+		0,
+	)
+	if m.dialog.Overlay().Width == 0 {
+		return bodyWidth, 0
+	}
+	return m.dialog.BodyWidth(), m.dialog.BodyHeight()
 }
 
 func noticeDialogBody(m *Model, _ int) string {
@@ -258,11 +288,22 @@ func clickPreferenceDialog(m *Model, mouse tea.Mouse) tea.Cmd {
 }
 
 func clickSaveDialog(m *Model, mouse tea.Mouse) tea.Cmd {
-	return m.updateSaveForm(tea.MouseClickMsg(mouse))
+	x, y := m.dialog.BodyOrigin()
+	if m.savePicker != nil && m.savePicker.Opened() {
+		mouse.X -= x
+		mouse.Y -= y
+		return m.updateSaveForm(tea.MouseClickMsg(mouse))
+	}
+	command := m.saveForm.Click(chrome.Point{X: mouse.X - x, Y: mouse.Y - y})
+	if command == nil {
+		return nil
+	}
+	return m.updateSaveForm(command())
 }
 
 func clickExportDialog(m *Model, mouse tea.Mouse) tea.Cmd {
-	return m.updateClipboard(tea.MouseClickMsg(mouse))
+	x, y := m.dialog.BodyOrigin()
+	return m.clipboard.Click(chrome.Point{X: mouse.X - x, Y: mouse.Y - y})
 }
 
 func wheelPreferenceDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
@@ -271,6 +312,17 @@ func wheelPreferenceDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
 
 func wheelExportDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
 	return m.updateClipboard(message)
+}
+
+func wheelSaveDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
+	if m.savePicker == nil || !m.savePicker.Opened() {
+		return nil
+	}
+	x, y := m.dialog.BodyOrigin()
+	mouse := message.Mouse()
+	mouse.X -= x
+	mouse.Y -= y
+	return m.updateSaveForm(tea.MouseWheelMsg(mouse))
 }
 
 func resizePreferenceDialog(m *Model) {
@@ -282,6 +334,16 @@ func backPreferenceDialog(m *Model) (tea.Cmd, bool) {
 		return nil, false
 	}
 	return m.updateSettingsTabs(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape})), true
+}
+
+func backSaveDialog(m *Model) (tea.Cmd, bool) {
+	if m.savePicker == nil || !m.savePicker.Opened() {
+		return nil, false
+	}
+	m.savePicker.Close()
+	m.saveDirectory = m.savePicker.Value()
+	m.saveForm.SetDirectory(saveDirectoryField, m.saveDirectory)
+	return nil, true
 }
 
 func closeExportDialog(m *Model) {

@@ -7,7 +7,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/stretchr/testify/require"
 )
 
@@ -159,8 +160,8 @@ func TestFormat(t *testing.T) {
 	}{
 		{"slash", LineSlash, "// one\n// two\n//"},
 		{"hash", LineHash, "# one\n# two\n#"},
-		{"block", Block, "/*\none\ntwo\n\n*/"},
-		{"markdown", Markdown, "```\none\ntwo\n\n```"},
+		{styleBlockValue, Block, "/*\none\ntwo\n\n*/"},
+		{styleMarkdownValue, Markdown, "```\none\ntwo\n\n```"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -177,8 +178,33 @@ func TestModelImplementsTeaModel(t *testing.T) {
 	require.Empty(t, model.View().Content)
 }
 
+func TestExportUsesSemanticFormTraversalAndAccessibleAction(t *testing.T) {
+	t.Parallel()
+
+	model := newTestModel()
+	model.UseFallback(func(string) error { return nil })
+	model.openExport("diagram", "// ")
+	require.Contains(t, model.AccessibleLines(), "action: Copy")
+
+	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	require.Equal(t, LineHash, model.Style())
+	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	require.NotNil(t, command)
+	message := command().(UpdateMsg)
+	_, command = model.Update(message)
+	require.NotNil(t, command)
+	require.Nil(t, model.form)
+}
+
 func newTestModel() *Model {
-	return New(huh.ThemeFunc(func(bool) *huh.Styles {
-		return huh.ThemeCharm(true)
-	}))
+	return New(chrome.FormStyles{
+		Label:          lipgloss.NewStyle(),
+		FocusedLabel:   lipgloss.NewStyle().Bold(true),
+		Value:          lipgloss.NewStyle(),
+		FocusedValue:   lipgloss.NewStyle().Bold(true),
+		ActiveValue:    lipgloss.NewStyle().Reverse(true),
+		Action:         lipgloss.NewStyle().Padding(0, 1),
+		SelectedAction: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+	})
 }

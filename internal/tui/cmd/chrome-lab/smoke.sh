@@ -69,6 +69,11 @@ for size in 100x30 80x16 80x12; do
   ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
   ht send --wait-text "NESTED DIRECTORY PICKER" --timeout 5s "$session" "<Enter>" >/dev/null
   ht send --wait-text "Save directory" --timeout 5s "$session" "q" >/dev/null
+  ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
+  ht send --wait-text "file-name: q" --timeout 5s "$session" "q" >/dev/null
+  printf -v form_paste '\e[200~uick.json\n\e[201~'
+  ht send --raw --wait-text "file-name: quick.json" --timeout 5s \
+    "$session" "$form_paste" >/dev/null
   ht send --wait-text "scenario: dialogs" --timeout 5s "$session" "0" >/dev/null
   ht send --wait-text "dialog: dialog.save" --timeout 5s "$session" "s" >/dev/null
   ht send --wait-text "dialog: closed" --timeout 5s "$session" "<Esc>" >/dev/null

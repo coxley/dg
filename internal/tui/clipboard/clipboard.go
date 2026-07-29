@@ -8,7 +8,7 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 	systemclipboard "golang.design/x/clipboard"
 )
 
@@ -34,6 +34,13 @@ const (
 	LineHash
 	Block
 	Markdown
+)
+
+const (
+	exportStyle        chrome.ID = "export-style"
+	exportCopy         chrome.ID = "export-copy"
+	styleBlockValue              = "block"
+	styleMarkdownValue           = "markdown"
 )
 
 type requestCopyMsg struct {
@@ -97,17 +104,17 @@ type Model struct {
 	armed      bool
 	copy       string
 	generation uint64
-	form       *huh.Form
+	form       *chrome.Form
 	exportText string
 	style      Style
-	theme      huh.Theme
+	styles     chrome.FormStyles
 }
 
 // New returns a clipboard model.
-func New(theme huh.Theme) *Model {
+func New(styles chrome.FormStyles) *Model {
 	return &Model{
 		fallback: writeFallback,
-		theme:    theme,
+		styles:   styles,
 	}
 }
 
@@ -141,18 +148,16 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return ErrorMsg{Err: message.err} }
 		}
 		return m, func() tea.Msg { return CopiedMsg{} }
+	case chrome.FormSubmitMsg:
+		if m.form != nil && message.ID == exportCopy {
+			return m, m.completeExport()
+		}
 	default:
 		if m.form != nil {
 			form, command := m.form.Update(message)
-			m.form = form.(*huh.Form)
-			if m.form.State == huh.StateCompleted {
-				text := Format(m.exportText, m.style)
-				m.exportText = ""
-				m.form = nil
-				return m, tea.Batch(
-					func() tea.Msg { return CloseExportMsg{} },
-					m.write(text),
-				)
+			m.form = form.(*chrome.Form)
+			if selected, ok := m.form.Selected(exportStyle); ok {
+				m.style = parseStyle(selected)
 			}
 			return m, wrap(command)
 		}
@@ -165,15 +170,38 @@ func (m *Model) View() tea.View {
 	if m.form == nil {
 		return tea.View{}
 	}
-	return tea.NewView(m.form.View())
+	return m.form.View()
 }
 
-// SetTheme replaces the export form theme.
-func (m *Model) SetTheme(theme huh.Theme) {
-	m.theme = theme
+// SetStyles replaces the export form styles.
+func (m *Model) SetStyles(styles chrome.FormStyles) {
+	m.styles = styles
 	if m.form != nil {
-		m.form.WithTheme(theme)
+		m.form.SetStyles(styles)
 	}
+}
+
+// SetBounds arranges the export form.
+func (m *Model) SetBounds(width, height int) {
+	if m.form != nil {
+		m.form.SetBounds(chrome.Rect{Width: width, Height: height})
+	}
+}
+
+// Click routes a local pointer cell through retained form geometry.
+func (m *Model) Click(point chrome.Point) tea.Cmd {
+	if m.form == nil {
+		return nil
+	}
+	return wrap(m.form.Click(point))
+}
+
+// AccessibleLines returns export fields and executable actions.
+func (m *Model) AccessibleLines() []string {
+	if m.form == nil {
+		return nil
+	}
+	return m.form.AccessibleLines()
 }
 
 // CancelPending invalidates a provisional first copy.
@@ -291,19 +319,20 @@ func (m *Model) handleProbeTimeout(message probeExpiredMsg) tea.Cmd {
 func (m *Model) openExport(text, preferredPrefix string) {
 	m.exportText = text
 	m.style = styleForPrefix(preferredPrefix)
-	m.form = huh.NewForm(
-		huh.NewGroup(
-			huh.NewSelect[Style]().
-				Title("Copy selection as").
-				Options(options(m.style)...).
-				Value(&m.style),
-		),
-	).
-		WithWidth(46).
-		WithHeight(7).
-		WithShowHelp(true).
-		WithTheme(m.theme)
-	_ = m.form.Init()
+	m.form = chrome.NewForm(chrome.FormDeclaration{
+		Fields: []chrome.FormField{{
+			ID: exportStyle, Label: "Copy selection as", Kind: chrome.SelectField,
+			Options: exportOptions(m.style),
+		}},
+		Spacer: chrome.FormSpacer{ID: "export-spacer", Grow: 1},
+		Actions: chrome.ActionBar{
+			ID: "export-actions",
+			Actions: []chrome.FormAction{{
+				ID: exportCopy, Label: "Copy",
+			}},
+		},
+	}, m.styles)
+	m.form.SetBounds(chrome.Rect{Width: 46, Height: 5})
 }
 
 func styleForPrefix(prefix string) Style {
@@ -317,21 +346,63 @@ func styleForPrefix(prefix string) Style {
 	}
 }
 
-func options(preferred Style) []huh.Option[Style] {
+func exportOptions(preferred Style) []chrome.FormOption {
 	labels := [...]string{
 		"Line comments  //",
 		"Line comments  #",
 		"Block comment  /* ... */",
 	}
-	options := make([]huh.Option[Style], 0, len(labels)+1)
-	options = append(options, huh.NewOption(labels[preferred], preferred))
+	options := make([]chrome.FormOption, 0, len(labels)+1)
+	options = append(options, chrome.FormOption{
+		Label: labels[preferred], Value: styleValue(preferred),
+	})
 	for style, label := range labels {
 		value := Style(style)
 		if value != preferred {
-			options = append(options, huh.NewOption(label, value))
+			options = append(options, chrome.FormOption{
+				Label: label, Value: styleValue(value),
+			})
 		}
 	}
-	return append(options, huh.NewOption("Markdown code block", Markdown))
+	return append(options, chrome.FormOption{
+		Label: "Markdown code block", Value: styleValue(Markdown),
+	})
+}
+
+func (m *Model) completeExport() tea.Cmd {
+	text := Format(m.exportText, m.style)
+	m.exportText = ""
+	m.form = nil
+	return tea.Batch(
+		func() tea.Msg { return CloseExportMsg{} },
+		m.write(text),
+	)
+}
+
+func styleValue(style Style) string {
+	switch style {
+	case LineHash:
+		return "line-hash"
+	case Block:
+		return styleBlockValue
+	case Markdown:
+		return styleMarkdownValue
+	default:
+		return "line-slash"
+	}
+}
+
+func parseStyle(value string) Style {
+	switch value {
+	case "line-hash":
+		return LineHash
+	case styleBlockValue:
+		return Block
+	case styleMarkdownValue:
+		return Markdown
+	default:
+		return LineSlash
+	}
 }
 
 // Format trims line endings and applies style.

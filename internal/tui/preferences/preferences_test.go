@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/internal/tui/directorypicker"
 	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
 )
@@ -283,9 +283,7 @@ func borderedStyles() Styles {
 
 func testStyles() Styles {
 	return Styles{
-		Picker: huh.ThemeFunc(func(bool) *huh.Styles {
-			return huh.ThemeCharm(true)
-		}),
+		Picker: directorypicker.Styles{Dark: true},
 		Form: chrome.FormStyles{
 			Label:          lipgloss.NewStyle(),
 			FocusedLabel:   lipgloss.NewStyle().Bold(true),

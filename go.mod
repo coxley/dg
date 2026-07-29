@@ -12,7 +12,6 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.11.1
 	golang.design/x/clipboard v0.8.0
-	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	pgregory.net/rapid v1.3.0
 )
 

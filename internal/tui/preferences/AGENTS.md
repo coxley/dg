@@ -2,9 +2,9 @@
 
 ## Responsibility
 
-`preferences` owns application field/action declarations, editable preference
-values, and the bounded directory-picker adapter. `Model` implements
-`tea.Model`; `chrome.Form` owns generic form geometry and traversal.
+`preferences` owns application field/action declarations and editable
+preference values. `Model` implements `tea.Model`; `chrome.Form` owns generic
+form geometry and traversal, and `directorypicker` owns filesystem navigation.
 
 ## Boundaries
 
@@ -23,8 +23,8 @@ values, and the bounded directory-picker adapter. `Model` implements
   `h`/`j`/`k`/`l` provide equivalent navigation.
 - The directory picker stays collapsed until Right, `l`, or Enter opens its
   zoomed subview. Escape or `q` closes that subview before it closes the modal.
-- Huh remains only inside the bounded directory-picker adapter. Do not add Huh
-  field geometry or traversal back to the preference declaration.
+- Do not add filesystem-picker or generic form geometry back to the preference
+  declaration.
 
 ## Verification
 

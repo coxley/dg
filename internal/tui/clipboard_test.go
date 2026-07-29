@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
@@ -122,7 +123,7 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 					)
 					require.Contains(
 						t,
-						model.View().Content,
+						ansi.Strip(model.View().Content),
 						"Line comments",
 					)
 

@@ -1059,28 +1059,6 @@ func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
 	require.NotContains(t, highlight, "[48;")
 }
 
-func TestFormCommandScopesComponentMessages(t *testing.T) {
-	t.Parallel()
-
-	require.Nil(t, componentCommand(saveComponent, func() tea.Msg { return nil })())
-
-	type opaqueMsg struct{ value int }
-	command := componentCommand(saveComponent, tea.Batch(
-		func() tea.Msg { return opaqueMsg{value: 1} },
-		func() tea.Msg { return opaqueMsg{value: 2} },
-	))
-	batch, ok := command().(tea.BatchMsg)
-	require.True(t, ok)
-	require.Len(t, batch, 2)
-
-	for i, command := range batch {
-		message, ok := command().(componentMsg)
-		require.True(t, ok)
-		require.Equal(t, saveComponent, message.kind)
-		require.Equal(t, opaqueMsg{value: i + 1}, message.message)
-	}
-}
-
 func TestModelReordersLayersWithUndo(t *testing.T) {
 	t.Parallel()
 
@@ -1883,6 +1861,10 @@ func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	model.preferences.saveDirectory = dir
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	require.NotNil(t, command)
+	updateModel(t, model, command())
+	require.True(t, model.savePicker.Opened())
 
 	views := model.View().Content
 	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
@@ -1892,6 +1874,23 @@ func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	require.Contains(t, views, "diagram-one.json")
 	require.Contains(t, views, "diagram-two.json")
 	require.Contains(t, views, "nested")
+}
+
+func TestModelSaveTextInputTypesAndPastesWithoutParentCommands(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	require.Equal(t, saveNameField, model.saveForm.FocusID())
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	updateModel(t, model, keyPress('q', "q"))
+	updateModel(t, model, tea.PasteMsg{Content: "uick.json\n"})
+	require.Equal(t, "quick.json", model.saveName)
+	require.Equal(t, surfaceSave, model.activeDialog)
+	require.Contains(t, model.saveForm.AccessibleLines(), "File name: quick.json")
 }
 
 func TestModelMouseSelectsAndDragsNode(t *testing.T) {

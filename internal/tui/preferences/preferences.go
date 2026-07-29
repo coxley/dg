@@ -3,11 +3,10 @@ package preferences
 
 import (
 	"math"
-	"os"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/internal/tui/directorypicker"
 	"github.com/coxley/dg/layout"
 )
 
@@ -61,7 +60,7 @@ const (
 // Styles defines preferences appearance and the bounded picker adapter.
 type Styles struct {
 	Form   chrome.FormStyles
-	Picker huh.Theme
+	Picker directorypicker.Styles
 }
 
 // UpdateMsg routes a child form command back to Model.Update.
@@ -82,16 +81,15 @@ type ScrollMsg struct {
 
 // Model owns the preference declarations, editable value, and picker adapter.
 type Model struct {
-	value       Value
-	form        *chrome.Form
-	picker      *huh.FilePicker
-	pickerValue string
-	pickerOpen  bool
-	action      Action
-	completed   bool
-	width       int
-	height      int
-	styles      Styles
+	value      Value
+	form       *chrome.Form
+	picker     *directorypicker.Model
+	pickerOpen bool
+	action     Action
+	completed  bool
+	width      int
+	height     int
+	styles     Styles
 }
 
 // New returns a declarative preferences model.
@@ -147,7 +145,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (m *Model) View() tea.View {
 	if m.pickerOpen {
-		return tea.NewView(m.picker.View())
+		return m.picker.View()
 	}
 	return m.form.View()
 }
@@ -184,21 +182,21 @@ func (m *Model) DirectoryOpen() bool {
 func (m *Model) SetHeight(height int) {
 	m.height = max(height, 0)
 	m.form.SetBounds(chrome.Rect{Width: m.width, Height: m.height})
-	m.picker.WithHeight(m.height)
+	m.picker.SetBounds(m.width, m.height)
 }
 
 // SetWidth replaces the available form width.
 func (m *Model) SetWidth(width int) {
 	m.width = max(width, 0)
 	m.form.SetBounds(chrome.Rect{Width: m.width, Height: m.height})
-	m.picker.WithWidth(m.width)
+	m.picker.SetBounds(m.width, m.height)
 }
 
 // SetStyles replaces form and picker styles.
 func (m *Model) SetStyles(styles Styles) {
 	m.styles = styles
 	m.form.SetStyles(styles.Form)
-	m.picker.WithTheme(styles.Picker)
+	m.picker.SetStyles(styles.Picker)
 }
 
 // FieldFlash reports one numeric field's active direction.
@@ -232,43 +230,34 @@ func (m *Model) updatePicker(message tea.Msg) tea.Cmd {
 		return nil
 	}
 	picker, command := m.picker.Update(message)
-	m.picker = picker.(*huh.FilePicker)
-	m.value.SaveDirectory = m.pickerValue
-	if !m.picker.Zoom() {
+	m.picker = picker.(*directorypicker.Model)
+	m.value.SaveDirectory = m.picker.Value()
+	if !m.picker.Opened() {
 		m.closePicker()
 	}
 	return wrap(command)
 }
 
 func (m *Model) openPicker() {
-	m.pickerValue = m.value.SaveDirectory
-	m.picker.Picking(true)
+	m.picker.SetValue(m.value.SaveDirectory)
+	m.picker.SetBounds(m.width, m.height)
+	m.picker.Open()
 	m.pickerOpen = true
 }
 
 func (m *Model) closePicker() {
-	m.picker.Picking(false)
+	m.picker.Close()
 	m.pickerOpen = false
-	m.value.SaveDirectory = m.pickerValue
-	m.form.SetDirectory(fieldDirectory, m.pickerValue)
+	m.value.SaveDirectory = m.picker.Value()
+	m.form.SetDirectory(fieldDirectory, m.value.SaveDirectory)
 }
 
 func (m *Model) resetPicker(directory string) {
-	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
-		directory, _ = os.UserHomeDir()
-	}
-	m.pickerValue = m.value.SaveDirectory
-	m.picker = huh.NewFilePicker().
-		Title("Default save directory").
-		DirAllowed(true).
-		FileAllowed(false).
-		ShowHidden(false).
-		CurrentDirectory(directory).
-		Picking(false).
-		Value(&m.pickerValue)
-	m.picker.WithTheme(m.styles.Picker)
-	m.picker.WithWidth(m.width)
-	m.picker.WithHeight(m.height)
+	m.picker = directorypicker.New(directorypicker.Config{
+		Title: "Default save directory",
+		Value: directory,
+	}, m.styles.Picker)
+	m.picker.SetBounds(m.width, m.height)
 }
 
 func (m *Model) sync() {

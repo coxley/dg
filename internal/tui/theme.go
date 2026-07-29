@@ -1,27 +1,23 @@
 package tui
 
 import (
-	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/internal/tui/directorypicker"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
-	"github.com/coxley/dg/internal/tui/numinput"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 )
 
 // Theme contains every terminal-facing visual style.
 type Theme struct {
+	Dark            bool
 	Canvas          canvasview.Styles
 	Nav             nav.Styles
 	Modal           modalview.Styles
-	NumInput        numinput.Styles
 	HelpKey         lipgloss.Style
 	HelpDescription lipgloss.Style
-	SettingsContent lipgloss.Style
-	FormSeparator   lipgloss.Style
-	FormField       lipgloss.Style
 	Button          lipgloss.Style
 	FocusedButton   lipgloss.Style
 	SidebarHeader   lipgloss.Style
@@ -64,6 +60,7 @@ func DefaultTheme(dark bool) Theme {
 	button := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), true).MarginRight(1)
 	focusedButton := button.Border(lipgloss.DoubleBorder(), true)
 	return Theme{
+		Dark: dark,
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().
 				Background(focus).
@@ -89,27 +86,12 @@ func DefaultTheme(dark bool) Theme {
 			Tab:       tab,
 			ActiveTab: tabActive,
 		},
-		NumInput: numinput.Styles{
-			Title:        tab.Padding(0),
-			FocusedTitle: tabActive.Padding(0),
-			Button: lipgloss.NewStyle().
-				Padding(0),
-			ActiveButton: lipgloss.NewStyle().
-				Background(focus).
-				Foreground(text).
-				Padding(0),
-		},
 		HelpKey:         tabActive.Padding(0),
 		HelpDescription: tab.Padding(0),
-		SettingsContent: lipgloss.NewStyle(),
-		FormSeparator: lipgloss.NewStyle().
-			SetString("\n"),
-		FormField: lipgloss.NewStyle().
-			PaddingLeft(1),
-		Button:        button,
-		FocusedButton: focusedButton,
-		SidebarHeader: tabActive.Padding(0, 1),
-		SidebarItem:   tab.Padding(0, 1),
+		Button:          button,
+		FocusedButton:   focusedButton,
+		SidebarHeader:   tabActive.Padding(0, 1),
+		SidebarItem:     tab.Padding(0, 1),
 		SidebarFocused: lipgloss.NewStyle().
 			Background(focus).
 			Foreground(text).
@@ -118,29 +100,28 @@ func DefaultTheme(dark bool) Theme {
 	}
 }
 
-func (t Theme) formTheme() huh.Theme {
-	return huh.ThemeFunc(func(dark bool) *huh.Styles {
-		styles := huh.ThemeCharm(dark)
-		styles.FieldSeparator = t.FormSeparator
-		styles.Focused.Base = t.FormField
-		styles.Blurred.Base = t.FormField
-		styles.Focused.Title = styles.Focused.Title.Bold(true)
-		return styles
-	})
+func (t Theme) formStyles() chrome.FormStyles {
+	return chrome.FormStyles{
+		Label:          t.HelpDescription,
+		FocusedLabel:   t.HelpKey,
+		Value:          lipgloss.NewStyle(),
+		FocusedValue:   t.HelpKey,
+		ActiveValue:    t.Nav.Active,
+		Action:         t.Button,
+		SelectedAction: t.FocusedButton,
+		TextInput: chrome.TextInputStyles{
+			Text:        lipgloss.NewStyle(),
+			FocusedText: lipgloss.NewStyle().Bold(true),
+			Placeholder: lipgloss.NewStyle().Faint(true),
+			Cursor:      lipgloss.NewStyle().Reverse(true),
+		},
+	}
 }
 
 func (t Theme) preferenceStyles() preferencesview.Styles {
 	return preferencesview.Styles{
-		Picker: t.formTheme(),
-		Form: chrome.FormStyles{
-			Label:          t.NumInput.Title,
-			FocusedLabel:   t.NumInput.FocusedTitle,
-			Value:          t.NumInput.Button,
-			FocusedValue:   t.HelpKey,
-			ActiveValue:    t.NumInput.ActiveButton,
-			Action:         t.Button,
-			SelectedAction: t.FocusedButton,
-		},
+		Picker: directorypicker.Styles{Dark: t.Dark},
+		Form:   t.formStyles(),
 	}
 }
 

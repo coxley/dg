@@ -31,14 +31,19 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeGlobal, Chords: chrome.Keys("ctrl+b"), Command: commandSidebar, Label: "toggle sidebar"},
 }
 
+var (
+	canvasBindingScopes  = [...]chrome.ScopeID{scopeCanvas, scopeGlobal}
+	sidebarBindingScopes = [...]chrome.ScopeID{scopeSidebar, scopeGlobal}
+)
+
 func (m *Model) activeBindingScopes() []chrome.ScopeID {
 	if spec, ok := m.activeDialogSpec(); ok {
 		return spec.Scopes(m)
 	}
 	if m.sidebar.focused {
-		return []chrome.ScopeID{scopeSidebar, scopeGlobal}
+		return sidebarBindingScopes[:]
 	}
-	return []chrome.ScopeID{scopeCanvas, scopeGlobal}
+	return canvasBindingScopes[:]
 }
 
 func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {

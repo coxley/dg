@@ -60,7 +60,7 @@ func TestResolverStandardProfileAndUnavailableSuper(t *testing.T) {
 	t.Parallel()
 
 	resolver, err := NewResolver([]Binding{
-		{Scope: testScopeGlobal, Chords: []Chord{Primary("s"), "super+c"}, Command: "save"},
+		{Scope: testScopeGlobal, Chords: []Chord{Primary("s"), "super+c"}, Command: CommandID(testFormSave)},
 	})
 	require.NoError(t, err)
 	resolver.SetProfile(ProfileStandard)

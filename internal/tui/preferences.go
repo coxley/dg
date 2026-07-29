@@ -35,17 +35,6 @@ type preferenceState struct {
 	path                  string
 }
 
-type componentKind uint8
-
-const (
-	saveComponent componentKind = iota
-)
-
-type componentMsg struct {
-	kind    componentKind
-	message tea.Msg
-}
-
 func preferencesPath() (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
@@ -243,25 +232,6 @@ func (m *Model) updateSettingsWheel(message tea.MouseWheelMsg) tea.Cmd {
 		return nil
 	}
 	return m.updateSettingsTabs(preferencesview.ScrollMsg{Delta: delta})
-}
-
-func componentCommand(kind componentKind, command tea.Cmd) tea.Cmd {
-	if command == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		message := command()
-		if message == nil {
-			return nil
-		}
-		if batch, ok := message.(tea.BatchMsg); ok {
-			for i := range batch {
-				batch[i] = componentCommand(kind, batch[i])
-			}
-			return batch
-		}
-		return componentMsg{kind: kind, message: message}
-	}
 }
 
 func (m *Model) syncPreferenceForm() {

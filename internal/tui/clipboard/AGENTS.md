@@ -3,8 +3,8 @@
 ## Responsibility
 
 `clipboard` owns copy debouncing, terminal clipboard capability probing,
-fallback writes, export formatting, and the export form. `Model` implements
-`tea.Model`.
+fallback writes, export formatting, and the declarative chrome export form.
+`Model` implements `tea.Model`.
 
 ## Boundaries
 
@@ -12,7 +12,7 @@ fallback writes, export formatting, and the export form. `Model` implements
   `RequestCopy`.
 - `OpenExportMsg`, `CloseExportMsg`, `CopiedMsg`, and `ErrorMsg` report
   application-level outcomes to the parent.
-- `UpdateMsg` routes timers, fallback results, and Huh commands back to the
+- `UpdateMsg` routes timers, fallback results, and chrome form commands back to the
   clipboard model.
 - The parent owns modal placement and success/error presentation.
 

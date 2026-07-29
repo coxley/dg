@@ -2,11 +2,13 @@ package chrome
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,6 +136,34 @@ func TestFormClonesApplicationDeclarations(t *testing.T) {
 	require.NotContains(t, form.View().Content, "Changed")
 }
 
+func TestFormTextFieldTypesPastesClicksAndStaysAccessible(t *testing.T) {
+	t.Parallel()
+
+	declaration := FormDeclaration{
+		Fields: []FormField{{
+			ID: "name", Label: "File name", Kind: TextField,
+			Text: "diagram", Placeholder: "diagram.json",
+		}},
+		Actions: ActionBar{
+			ID:      "actions",
+			Actions: []FormAction{{ID: testFormSave, Label: "Save"}},
+		},
+	}
+	form := NewForm(declaration, testFormStyles())
+	form.SetBounds(Rect{Width: 30, Height: 2})
+	_, _ = form.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnd}))
+	_, _ = form.Update(formKey('x', "x"))
+	_, _ = form.Update(tea.PasteMsg{Content: ".json\n"})
+	value, ok := form.Text("name")
+	require.True(t, ok)
+	require.Equal(t, "diagramx.json", value)
+
+	require.Nil(t, form.Click(Point{X: 15, Y: 0}))
+	require.Equal(t, ID("name"), form.FocusID())
+	require.Contains(t, form.AccessibleLines(), "File name: diagramx.json")
+	require.Equal(t, 30, ansi.StringWidth(strings.Split(form.View().Content, "\n")[0]))
+}
+
 func newTestForm() *Form {
 	return NewForm(testFormDeclaration(), testFormStyles())
 }
@@ -171,6 +201,7 @@ func testFormStyles() FormStyles {
 		ActiveValue:    lipgloss.NewStyle().Bold(true),
 		Action:         lipgloss.NewStyle().Padding(0, 1),
 		SelectedAction: lipgloss.NewStyle().Bold(true).Padding(0, 1),
+		TextInput:      testTextInputStyles(),
 	}
 }
 

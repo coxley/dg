@@ -24,6 +24,8 @@ const (
 	SelectField
 	// DirectoryField requests an application-owned directory picker.
 	DirectoryField
+	// TextField edits one single-line string.
+	TextField
 )
 
 // FormOption declares one Select value.
@@ -34,14 +36,16 @@ type FormOption struct {
 
 // FormField declares one application-owned field.
 type FormField struct {
-	ID        ID
-	Label     string
-	Kind      FieldKind
-	Number    uint64
-	Maximum   uint64
-	Options   []FormOption
-	Selected  int
-	Directory string
+	ID          ID
+	Label       string
+	Kind        FieldKind
+	Number      uint64
+	Maximum     uint64
+	Options     []FormOption
+	Selected    int
+	Directory   string
+	Text        string
+	Placeholder string
 }
 
 // FormAction declares one ActionBar button.
@@ -78,6 +82,7 @@ type FormStyles struct {
 	ActiveValue    lipgloss.Style
 	Action         lipgloss.Style
 	SelectedAction lipgloss.Style
+	TextInput      TextInputStyles
 }
 
 // FormControlPlan records one visible field or action hit target.
@@ -131,6 +136,7 @@ type Form struct {
 	generation  uint64
 	plan        FormPlan
 	lines       []string
+	inputs      map[ID]*TextInput
 }
 
 // NewForm returns a retained declarative form.
@@ -138,7 +144,9 @@ func NewForm(declaration FormDeclaration, styles FormStyles) *Form {
 	f := &Form{
 		declaration: cloneFormDeclaration(declaration),
 		styles:      styles,
+		inputs:      make(map[ID]*TextInput),
 	}
+	f.syncInputs()
 	f.normalize()
 	f.arrange()
 	return f
@@ -154,6 +162,8 @@ func (f *Form) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyPressMsg:
 		return f, f.updateKey(message)
+	case tea.PasteMsg:
+		f.updateTextInput(message)
 	case FormFlashExpiredMsg:
 		if message.form == f && message.generation == f.generation {
 			f.flash = 0
@@ -185,6 +195,9 @@ func (f *Form) SetBounds(bounds Rect) {
 // SetStyles replaces semantic visual states.
 func (f *Form) SetStyles(styles FormStyles) {
 	f.styles = styles
+	for _, input := range f.inputs {
+		input.SetStyles(styles.TextInput)
+	}
 	f.invalidate()
 }
 
@@ -248,6 +261,9 @@ func (f *Form) Click(point Point) tea.Cmd {
 		if f.declaration.Fields[i].Kind == DirectoryField {
 			return emitFormMessage(FormActivateMsg{ID: field.ID})
 		}
+		if f.declaration.Fields[i].Kind == TextField {
+			f.clickTextInput(i, point.X)
+		}
 		return nil
 	}
 	return nil
@@ -278,6 +294,15 @@ func (f *Form) Directory(id ID) (string, bool) {
 		return "", false
 	}
 	return field.Directory, true
+}
+
+// Text returns one current Text value.
+func (f *Form) Text(id ID) (string, bool) {
+	field, ok := f.field(id, TextField)
+	if !ok {
+		return "", false
+	}
+	return field.Text, true
 }
 
 // SetDirectory replaces one Directory value.
@@ -316,7 +341,11 @@ func (f *Form) Flash(id ID) int {
 func (f *Form) AccessibleLines() []string {
 	lines := make([]string, 0, len(f.declaration.Fields)+len(f.declaration.Actions.Actions))
 	for _, field := range f.declaration.Fields {
-		lines = append(lines, field.Label+": "+f.fieldText(field, false))
+		value := f.fieldText(field, false)
+		if field.Kind == TextField {
+			value = field.Text
+		}
+		lines = append(lines, field.Label+": "+value)
 	}
 	for _, action := range f.declaration.Actions.Actions {
 		lines = append(lines, "action: "+action.Label)
@@ -355,6 +384,9 @@ func (f *Form) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	}
 
 	field := &f.declaration.Fields[f.focus]
+	if field.Kind == TextField {
+		return f.updateTextField(message)
+	}
 	switch {
 	case message.Code == tea.KeyUp || message.Code == tea.KeyTab && message.Mod == tea.ModShift ||
 		message.Text == "k":
@@ -376,6 +408,33 @@ func (f *Form) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		f.MoveFocus(1)
 	}
 	return nil
+}
+
+func (f *Form) updateTextField(message tea.KeyPressMsg) tea.Cmd {
+	switch {
+	case message.Code == tea.KeyUp || message.Code == tea.KeyTab && message.Mod == tea.ModShift:
+		f.MoveFocus(-1)
+	case message.Code == tea.KeyDown || message.Code == tea.KeyTab && message.Mod == 0 ||
+		message.Code == tea.KeyEnter:
+		f.MoveFocus(1)
+	default:
+		f.updateTextInput(message)
+	}
+	return nil
+}
+
+func (f *Form) updateTextInput(message tea.Msg) {
+	if f.focus < 0 || f.focus >= len(f.declaration.Fields) {
+		return
+	}
+	field := &f.declaration.Fields[f.focus]
+	input := f.inputs[field.ID]
+	if field.Kind != TextField || input == nil {
+		return
+	}
+	input.Update(message)
+	field.Text = input.Value()
+	f.invalidate()
 }
 
 func (f *Form) changeField(field *FormField, delta int) tea.Cmd {
@@ -402,7 +461,7 @@ func (f *Form) changeField(field *FormField, delta int) tea.Cmd {
 				len(field.Options)
 			f.invalidate()
 		}
-	case DirectoryField:
+	case DirectoryField, TextField:
 	}
 	return nil
 }
@@ -417,6 +476,7 @@ func (f *Form) field(id ID, kind FieldKind) (FormField, bool) {
 }
 
 func (f *Form) normalize() {
+	f.syncInputs()
 	for i := range f.declaration.Fields {
 		field := &f.declaration.Fields[i]
 		field.Number = min(field.Number, field.Maximum)
@@ -532,6 +592,16 @@ func (f *Form) renderField(field FormField, focused bool, width int) string {
 		labelStyle, valueStyle = f.styles.FocusedLabel, f.styles.FocusedValue
 	}
 	label := labelStyle.Render(field.Label)
+	if field.Kind == TextField {
+		input := f.inputs[field.ID]
+		input.SetWidth(max(width-ansi.StringWidth(label)-1, 0))
+		if focused {
+			input.Focus()
+		} else {
+			input.Blur()
+		}
+		return renderFormRow(width, label, input.View())
+	}
 	value := valueStyle.Render(f.fieldText(field, focused))
 	return renderFormRow(width, label, value)
 }
@@ -547,6 +617,10 @@ func (f *Form) fieldText(field FormField, focused bool) string {
 		}
 	case DirectoryField:
 		value = "browse"
+	case TextField:
+		if input := f.inputs[field.ID]; input != nil {
+			value = input.View()
+		}
 	}
 	if field.Kind == DirectoryField {
 		return "[ " + value + " ]"
@@ -562,6 +636,36 @@ func (f *Form) fieldText(field FormField, focused bool) string {
 		right = f.styles.ActiveValue.Render(right)
 	}
 	return left + " " + value + " " + right
+}
+
+func (f *Form) syncInputs() {
+	for i := range f.declaration.Fields {
+		field := &f.declaration.Fields[i]
+		if field.Kind != TextField {
+			continue
+		}
+		input := f.inputs[field.ID]
+		if input == nil {
+			input = NewTextInput(field.Text, field.Placeholder, f.styles.TextInput)
+			f.inputs[field.ID] = input
+		} else if input.Value() != field.Text {
+			input.SetValue(field.Text)
+		}
+	}
+}
+
+func (f *Form) clickTextInput(index, x int) {
+	field := f.declaration.Fields[index]
+	input := f.inputs[field.ID]
+	if input == nil {
+		return
+	}
+	rect := f.plan.Fields[index].Rect
+	label := f.styles.FocusedLabel.Render(field.Label)
+	inputWidth := max(rect.Width-ansi.StringWidth(label)-1, 0)
+	input.SetWidth(inputWidth)
+	input.Focus()
+	input.Click(x - (rect.Right() - inputWidth))
 }
 
 func (f *Form) renderActions() ([]string, []int) {

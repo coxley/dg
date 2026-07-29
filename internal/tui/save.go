@@ -1,18 +1,25 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	"github.com/coxley/dg/document"
+	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/internal/tui/directorypicker"
 )
 
 const defaultSaveName = "diagram.json"
+
+const (
+	saveDirectoryField chrome.ID = "save-directory"
+	saveNameField      chrome.ID = "save-name"
+	saveConfirmAction  chrome.ID = "save-confirm"
+	saveCancelAction   chrome.ID = "save-cancel"
+)
 
 func (m *Model) requestSave() {
 	if m.mode != modeNavigate {
@@ -32,54 +39,77 @@ func (m *Model) openSaveForm() {
 		m.saveDirectory = "."
 	}
 	m.saveName = defaultSaveName
-	m.saveForm = huh.NewForm(
-		huh.NewGroup(
-			huh.NewFilePicker().
-				Title("Directory").
-				DirAllowed(true).
-				FileAllowed(true).
-				ShowHidden(true).
-				CurrentDirectory(m.saveDirectory).
-				Picking(true).
-				Value(&m.saveDirectory),
-			huh.NewInput().
-				Title("File name").
-				Placeholder(defaultSaveName).
-				Value(&m.saveName).
-				Validate(func(name string) error {
-					if name == "" {
-						return errors.New("enter a file name")
-					}
-					if filepath.Base(name) != name {
-						return errors.New("file name must not contain a directory")
-					}
-					return nil
-				}),
-		),
-	).
-		WithWidth(64).
-		WithHeight(14).
-		WithShowHelp(true).
-		WithTheme(m.theme.formTheme())
-	_ = m.saveForm.Init()
+	m.saveForm = chrome.NewForm(chrome.FormDeclaration{
+		Fields: []chrome.FormField{
+			{
+				ID: saveDirectoryField, Label: "Directory",
+				Kind: chrome.DirectoryField, Directory: m.saveDirectory,
+			},
+			{
+				ID: saveNameField, Label: "File name", Kind: chrome.TextField,
+				Text: m.saveName, Placeholder: defaultSaveName,
+			},
+		},
+		Spacer: chrome.FormSpacer{ID: "save-spacer", Grow: 1},
+		Actions: chrome.ActionBar{
+			ID: "save-actions",
+			Actions: []chrome.FormAction{
+				{ID: saveConfirmAction, Label: "Save"},
+				{ID: saveCancelAction, Label: "Cancel"},
+			},
+		},
+	}, m.theme.formStyles())
+	m.savePicker = directorypicker.New(directorypicker.Config{
+		Title:      "Directory",
+		Value:      m.saveDirectory,
+		AllowFiles: true,
+		ShowHidden: true,
+	}, directorypicker.Styles{Dark: m.theme.Dark})
 	m.openDialog(surfaceSave)
 	m.status = ""
 }
 
 func (m *Model) updateSaveForm(message tea.Msg) tea.Cmd {
-	form, command := m.saveForm.Update(message)
-	m.saveForm = form.(*huh.Form)
-	if m.saveForm.State != huh.StateCompleted {
-		return componentCommand(saveComponent, command)
+	if m.savePicker != nil && m.savePicker.Opened() {
+		picker, command := m.savePicker.Update(message)
+		m.savePicker = picker.(*directorypicker.Model)
+		m.saveDirectory = m.savePicker.Value()
+		if !m.savePicker.Opened() {
+			m.saveForm.SetDirectory(saveDirectoryField, m.saveDirectory)
+		}
+		return command
 	}
-	m.commitSaveForm()
-	return nil
+	switch message := message.(type) {
+	case chrome.FormActivateMsg:
+		if message.ID == saveDirectoryField {
+			m.savePicker.SetValue(m.saveDirectory)
+			m.savePicker.Open()
+		}
+		return nil
+	case chrome.FormSubmitMsg:
+		switch message.ID {
+		case saveConfirmAction:
+			m.commitSaveForm()
+		case saveCancelAction:
+			m.closeSaveForm()
+		}
+		return nil
+	default:
+		form, command := m.saveForm.Update(message)
+		m.saveForm = form.(*chrome.Form)
+		m.syncSaveForm()
+		return command
+	}
 }
 
 func (m *Model) commitSaveForm() {
 	name := strings.TrimSpace(m.saveName)
 	if name == "" {
 		m.setError("enter a file name")
+		return
+	}
+	if filepath.Base(name) != name {
+		m.setError("file name must not contain a directory")
 		return
 	}
 	path := filepath.Join(m.saveDirectory, name)
@@ -98,8 +128,17 @@ func (m *Model) commitSaveForm() {
 func (m *Model) closeSaveForm() {
 	m.activeDialog = surfaceNone
 	m.saveForm = nil
+	m.savePicker = nil
 	m.saveDirectory = ""
 	m.saveName = ""
+}
+
+func (m *Model) syncSaveForm() {
+	if m.saveForm == nil {
+		return
+	}
+	m.saveDirectory, _ = m.saveForm.Directory(saveDirectoryField)
+	m.saveName, _ = m.saveForm.Text(saveNameField)
 }
 
 func (m *Model) save(path string) bool {
