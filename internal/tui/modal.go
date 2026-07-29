@@ -13,11 +13,6 @@ const (
 	minimumSettingsModalWidth = 84
 )
 
-var settingsTabs = []modalview.Tab{
-	{ID: modalview.TabID(modalHelp), Label: "Shortcuts"},
-	{ID: modalview.TabID(modalPreferences), Label: "Preferences"},
-}
-
 func (m *Model) currentModalOverlay() modalview.Overlay {
 	if m.modal == modalNone || m.width < 2 {
 		m.dialog.Hide()
@@ -27,7 +22,6 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 	var (
 		content string
 		variant modalview.Variant
-		tabs    []modalview.Tab
 	)
 	switch m.modal {
 	case modalSave:
@@ -40,8 +34,8 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		width = min(max(28, displayWidth([]byte(m.notice))+4), m.width)
 		content = " " + m.notice
 		variant = modalview.Notice
-	case modalHelp, modalPreferences:
-		width = min(m.settingsModalWidth(), m.width)
+	case modalPreferences:
+		width = min(minimumSettingsModalWidth, m.width)
 		bodyWidth := max(
 			width-
 				m.theme.Modal.Container.GetHorizontalFrameSize()-
@@ -51,8 +45,7 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		if m.dialog.Overlay().Width != 0 {
 			bodyWidth = m.dialog.BodyWidth()
 		}
-		content = m.settingsBody(bodyWidth)
-		tabs = settingsTabs
+		content = m.preferenceBody(bodyWidth)
 	case modalNone:
 	}
 	m.dialog.Configure(
@@ -62,19 +55,10 @@ func (m *Model) currentModalOverlay() modalview.Overlay {
 		width,
 		strings.TrimSuffix(content, "\n"),
 		variant,
-		tabs,
+		nil,
 		modalview.TabID(m.modal),
 	)
 	return m.dialog.Overlay()
-}
-
-func (m *Model) settingsModalWidth() int {
-	help := m.help
-	help.SetWidth(0)
-	contentWidth := lipgloss.Width(help.View(m.keys))
-	frameWidth := m.theme.Modal.Container.GetHorizontalFrameSize() +
-		m.theme.Modal.Body.GetHorizontalFrameSize()
-	return max(minimumSettingsModalWidth, contentWidth+frameWidth)
 }
 
 func (m *Model) openModal(next modal) {
@@ -100,7 +84,7 @@ func (m *Model) updateModalMouseClick(mouse tea.Mouse) tea.Cmd {
 		return m.updateSaveForm(tea.MouseClickMsg(mouse))
 	case modalExport:
 		return m.updateClipboard(tea.MouseClickMsg(mouse))
-	case modalNone, modalHelp, modalNotice:
+	case modalNone, modalNotice:
 		return nil
 	}
 	return nil
@@ -122,7 +106,7 @@ func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
 		return m.updateSaveForm(tea.MouseMotionMsg(mouse))
 	case modalExport:
 		return m.updateClipboard(tea.MouseMotionMsg(mouse))
-	case modalNone, modalHelp, modalNotice:
+	case modalNone, modalNotice:
 		return nil
 	}
 	return nil
@@ -130,7 +114,7 @@ func (m *Model) updateModalMouseMotion(mouse tea.Mouse) tea.Cmd {
 
 func (m *Model) closeModal() {
 	switch m.modal {
-	case modalHelp, modalPreferences:
+	case modalPreferences:
 		m.closeSettingsModal()
 	case modalSave:
 		m.closeSaveForm()
@@ -145,9 +129,7 @@ func (m *Model) closeModal() {
 	m.dialog.Hide()
 }
 
-func (m *Model) settingsBody(width int) string {
-	m.help.SetWidth(width)
-	help := m.help.View(m.keys)
+func (m *Model) preferenceBody(width int) string {
 	preferenceHeight := 0
 	bodyHeight := 0
 	if m.preferenceForm != nil {
@@ -159,23 +141,17 @@ func (m *Model) settingsBody(width int) string {
 		preferenceHeight = m.preferenceForm.NaturalHeight()
 	}
 
-	var content string
-	switch m.modal {
-	case modalHelp:
-		content = help
-	case modalPreferences:
-		content = m.preferenceForm.View().Content
-	default:
+	if m.modal != modalPreferences || m.preferenceForm == nil {
 		return ""
 	}
+	content := m.preferenceForm.View().Content
 	height := lipgloss.Height(content)
-	largerHeight := max(lipgloss.Height(help), preferenceHeight)
 	frameHeight := m.theme.Modal.Container.GetVerticalFrameSize() +
-		m.theme.Modal.Body.GetVerticalFrameSize() + 1
+		m.theme.Modal.Body.GetVerticalFrameSize()
 	if bodyHeight > 0 {
 		height = bodyHeight
-	} else if largerHeight+frameHeight+m.nav.Bounds().Bottom() <= m.height {
-		height = largerHeight
+	} else if preferenceHeight+frameHeight+m.nav.Bounds().Bottom() <= m.height {
+		height = preferenceHeight
 	}
 	return m.theme.SettingsContent.
 		Height(height).

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"charm.land/bubbles/v2/help"
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
@@ -98,13 +97,6 @@ func DefaultTheme(dark bool) Theme {
 		Button:        button,
 		FocusedButton: focusedButton,
 	}
-}
-
-func (t Theme) helpStyles(dark bool) help.Styles {
-	styles := help.DefaultStyles(dark)
-	styles.FullKey = t.HelpKey
-	styles.FullDesc = t.HelpDescription
-	return styles
 }
 
 func (t Theme) formTheme() huh.Theme {

@@ -8,8 +8,6 @@ import (
 	"slices"
 	"time"
 
-	"charm.land/bubbles/v2/help"
-	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
@@ -38,7 +36,6 @@ const (
 
 const (
 	modalNone modal = iota
-	modalHelp
 	modalPreferences
 	modalSave
 	modalExport
@@ -105,6 +102,7 @@ type Model struct {
 	dialog            modalview.Model
 	canvas            canvasview.Model
 	bindings          *chrome.Resolver
+	workspace         chrome.Workspace
 
 	mode             mode
 	modal            modal
@@ -152,7 +150,7 @@ type Model struct {
 	preferences    preferenceState
 	preferenceEdit bool
 	preferenceForm *preferencesview.Model
-	help           help.Model
+	helpInspector  helpInspector
 	keys           keyMap
 
 	nodeStyle layout.NodeStyle
@@ -178,19 +176,20 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		return nil, errors.New("nil layout")
 	}
 	m := &Model{
-		geo:        geo,
-		history:    geo.History(),
-		path:       path,
-		theme:      DefaultTheme(true),
-		help:       help.New(),
-		keys:       newKeyMap(),
-		styledRuns: make(map[styledRunKey]string),
+		geo:           geo,
+		history:       geo.History(),
+		path:          path,
+		theme:         DefaultTheme(true),
+		helpInspector: newHelpInspector(),
+		keys:          newKeyMap(),
+		styledRuns:    make(map[styledRunKey]string),
 	}
 	resolver, err := chrome.NewResolver(applicationBindings)
 	if err != nil {
 		return nil, fmt.Errorf("configure bindings: %w", err)
 	}
 	m.bindings = resolver
+	m.workspace.SetFooter(1)
 	m.clipboard = clipboardview.New(m.theme.formTheme())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
@@ -199,8 +198,6 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 	})
 	m.dialog = modalview.New(m.theme.Modal)
 	m.canvas = canvasview.New(m.theme.Canvas)
-	m.help.ShowAll = true
-	m.help.Styles = m.theme.helpStyles(true)
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -222,6 +219,7 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		return nil, err
 	}
 	m.refreshHits()
+	m.syncWorkspace()
 	return m, nil
 }
 
@@ -244,37 +242,50 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	syncWorkspace := m.helpInspector.visible || m.modal != modalNone
+	defer func() {
+		if syncWorkspace || m.helpInspector.visible || m.modal != modalNone {
+			m.syncWorkspace()
+		}
+	}()
 	if command, handled := m.updatePresentation(message); handled {
 		return m, command
 	}
 	switch message := message.(type) {
 	case tea.BackgroundColorMsg:
+		syncWorkspace = true
 		m.theme = DefaultTheme(message.IsDark())
 		m.nav.SetStyles(m.theme.Nav)
 		m.dialog.SetStyles(m.theme.Modal)
 		m.canvas.SetStyles(m.theme.Canvas)
-		m.help.Styles = m.theme.helpStyles(message.IsDark())
 		clear(m.styledRuns)
 		if m.preferenceForm != nil {
 			m.preferenceForm.SetStyles(m.theme.preferenceStyles())
 		}
 		m.clipboard.SetTheme(m.theme.formTheme())
 	case tea.KeyboardEnhancementsMsg:
+		syncWorkspace = true
 		m.keys.setKeyboardEnhancements(true)
 		m.bindings.SetSuperAvailable(true)
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:
+		syncWorkspace = true
 		m.width = max(message.Width, 0)
 		m.height = max(message.Height, 0)
+		m.workspace.SetTerminal(chrome.Size{Width: m.width, Height: m.height})
 		m.nav.SetWidth(m.width)
 		m.resizePreferenceForm()
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
+		keystroke := message.Keystroke()
+		if message.Text == "?" && message.Mod == tea.ModShift {
+			keystroke = "?"
+		}
 		if command, ok := m.bindings.Resolve(
-			message.Keystroke(),
+			keystroke,
 			m.activeBindingScopes(),
-			m.mode == modeEditLabel,
+			m.textEntryActive(),
 		); ok {
 			return m, m.updateSemanticCommand(command)
 		}
@@ -283,7 +294,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case m.modal == modalSave:
 			return m, m.updateSaveForm(message)
-		case m.modal == modalHelp || m.modal == modalPreferences:
+		case m.modal == modalPreferences:
 			return m, m.updateSettingsTabs(message)
 		case m.mode == modeEditLabel:
 			m.insertLabelText(message.Content)
@@ -291,28 +302,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseClickMsg:
 		m.clipboard.CancelPending()
-		if m.modal != modalNone {
-			return m, m.updateModalMouseClick(message.Mouse())
-		}
-		if m.nav.Contains(message.X, message.Y) {
-			var command tea.Cmd
-			m.nav, command = m.nav.Update(message)
-			return m, command
-		}
-		m.updateMouseClick(message.Mouse())
+		return m, m.updateSurfaceMouseClick(message)
 	case tea.MouseReleaseMsg:
 		m.clipboard.CancelPending()
-		if m.modal != modalNone {
-			m.dialog, _ = m.dialog.Update(message)
-			return m, nil
-		}
-		m.updateMouseRelease(message.Mouse())
+		m.updateSurfaceMouseRelease(message)
 	case tea.MouseMotionMsg:
-		if m.modal != modalNone {
-			return m, m.updateModalMouseMotion(message.Mouse())
-		}
-		m.nav, _ = m.nav.Update(message)
-		m.updateMouseMotion(message.Mouse())
+		return m, m.updateSurfaceMouseMotion(message)
 	case tea.MouseWheelMsg:
 		m.clipboard.CancelPending()
 		return m, m.updateMouseWheelMessage(message)
@@ -346,16 +341,6 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 			m.activateTool(modeConnect)
 		}
 		return nil, true
-	case modalview.SwitchTabMsg:
-		m.dialog, _ = m.dialog.Update(message)
-		switch modal(message.ID) {
-		case modalHelp:
-			m.selectSettingsTab(modalHelp)
-		case modalPreferences:
-			m.openPreferences()
-		case modalNone, modalSave, modalExport, modalNotice:
-		}
-		return nil, true
 	case modalview.CloseMsg:
 		m.closeModal()
 		return nil, true
@@ -386,20 +371,12 @@ func (m *Model) updateComponent(message componentMsg) tea.Cmd {
 }
 
 func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
-	overlay := m.currentModalOverlay()
-	if m.modal == modalPreferences && overlay.Contains(message.X, message.Y) {
-		return m.updateSettingsWheel(message)
-	}
-	if m.modal == modalNone {
-		m.updateMouseWheel(message.Mouse())
-	}
-	return nil
+	return m.updateSurfaceMouseWheel(message)
 }
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
 	copyKey := isCopyKey(message)
-	helpKey := keybinding.Matches(message, m.keys.help)
 	if m.modal == modalNotice {
 		returnModal := m.noticeReturn
 		m.dismissNotice()
@@ -413,10 +390,6 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	}
 	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
 		return m.copySelection()
-	}
-	if helpKey && m.modal == modalNone {
-		m.openHelp()
-		return nil
 	}
 	m.hasLastClick = false
 	switch {
@@ -1253,13 +1226,9 @@ func (m *Model) selectTarget() {
 }
 
 func (m *Model) ensureCursorVisible() {
-	height := m.diagramHeight()
-	m.viewport.X = visibleOrigin(m.viewport.X, m.cursor.X, m.width)
-	m.viewport.Y = visibleOrigin(m.viewport.Y, m.cursor.Y, height)
-}
-
-func (m *Model) diagramHeight() int {
-	return max(m.height-1, 0)
+	host := m.workspace.Geometry().Canvas
+	m.viewport.X = visibleOrigin(m.viewport.X, m.cursor.X, host.Width)
+	m.viewport.Y = visibleOrigin(m.viewport.Y, m.cursor.Y, host.Height)
 }
 
 func hasGeometry(geo *layout.Layout) bool {

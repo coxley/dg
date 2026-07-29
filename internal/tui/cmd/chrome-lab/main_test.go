@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,6 +56,37 @@ func TestLabReflowsBeforeView(t *testing.T) {
 	require.NotEqual(t, wide, compact)
 	require.Equal(t, 60, compact.Width)
 	require.Equal(t, 12, strings.Count(model.View().Content, "\n")+1)
+}
+
+func TestLabSurfacesRouteModalCaptureAndDismissal(t *testing.T) {
+	t.Parallel()
+
+	model := newLabModel(scenarioSurfaces)
+	updateLab(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 'm', Text: "m"}))
+	require.True(t, model.modalVisible)
+	require.Contains(t, model.View().Content, "legacy modal adapter: open")
+
+	updateLab(t, model, tea.MouseClickMsg{
+		X:      30,
+		Y:      8,
+		Button: tea.MouseLeft,
+	})
+	require.Equal(t, chrome.SurfaceID("modal"), model.workspace.CaptureID())
+	updateLab(t, model, tea.MouseReleaseMsg{
+		X:      30,
+		Y:      8,
+		Button: tea.MouseLeft,
+	})
+	require.Empty(t, model.workspace.CaptureID())
+
+	updateLab(t, model, tea.MouseClickMsg{
+		X:      1,
+		Y:      1,
+		Button: tea.MouseLeft,
+	})
+	require.False(t, model.modalVisible)
+	require.True(t, model.helpVisible)
 }
 
 func updateLab(t testing.TB, model *labModel, message tea.Msg) {

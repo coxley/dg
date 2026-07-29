@@ -19,50 +19,57 @@ import (
 )
 
 func (m *Model) View() tea.View {
-	tool := nav.Cursor
-	switch m.mode {
-	case modeRectangle:
-		tool = nav.Rectangle
-	case modeConnect:
-		tool = nav.Line
-	case modeNavigate, modeMove, modeEditLabel:
-	}
-	frameID := canvasview.BaseFrame
-	if m.reconnecting && m.connectDragging {
-		frameID = canvasview.ConnectionFrame
-	} else if m.duplicateDragging {
-		frameID = canvasview.DuplicateFrame
-	}
+	tool := m.activeTool()
+	frameID := m.activeFrame()
 	frame, rows := m.canvas.Frame(frameID), m.canvas.Rows(frameID)
 	toolbar := m.nav.LinesFor(tool)
-	toolbarBounds := m.nav.Bounds()
+	workspace := m.workspace.Geometry()
+	canvasHost := workspace.Canvas
+	toolbarBounds := chrome.Rect{}
+	if surface, ok := m.surfacePlan(surfaceNavigation); ok {
+		toolbarBounds = surface.Rect
+		toolbarBounds.X -= canvasHost.X
+		toolbarBounds.Y -= canvasHost.Y
+	}
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
 		frame,
 		rows,
 		m.viewport,
-		m.width,
-		m.diagramHeight(),
+		canvasHost.Width,
+		canvasHost.Height,
 		toolbar,
 		toolbarBounds,
 	)
-	if m.height >= 1 {
+	defaultBase := workspace.Canvas.X == 0 &&
+		workspace.Canvas.Y == 0 &&
+		workspace.Canvas.Width == workspace.Terminal.Width &&
+		workspace.Footer.X == 0 &&
+		workspace.Footer.Y == workspace.Canvas.Bottom() &&
+		workspace.Footer.Width == workspace.Terminal.Width &&
+		workspace.Footer.Height == 1
+	if workspace.Footer.Height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
-		m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, m.width)
+		if defaultBase {
+			m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, workspace.Footer.Width)
+		}
+	}
+	content := strings.TrimSuffix(string(m.viewBuffer), "\n")
+	if workspace.Footer.Height >= 1 && !defaultBase {
+		status := appendStatusLine(nil, m.statusText, workspace.Footer.Width)
+		content = composeWorkspaceBase(
+			content,
+			strings.TrimSuffix(string(status), "\n"),
+			workspace,
+		)
+	} else if workspace.Footer.Height == 0 &&
+		(canvasHost.X != 0 || canvasHost.Y != 0 ||
+			canvasHost.Width != workspace.Terminal.Width ||
+			canvasHost.Height != workspace.Terminal.Height) {
+		content = composeWorkspaceBase(content, "", workspace)
 	}
 
-	overlay := m.currentModalOverlay()
-	content := strings.TrimSuffix(string(m.viewBuffer), "\n")
-	if overlay.Content != "" {
-		content = lipgloss.NewCompositor(
-			lipgloss.NewLayer(content),
-			lipgloss.NewLayer(overlay.Content).
-				ID("modal").
-				X(overlay.Left).
-				Y(overlay.Top).
-				Z(1),
-		).Render()
-	}
+	content = m.composeSurfaces(content)
 	view := tea.NewView(content + "\n")
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeAllMotion
@@ -81,6 +88,90 @@ func (m *Model) View() tea.View {
 		}
 	}
 	return view
+}
+
+func (m *Model) activeTool() nav.Tool {
+	switch m.mode {
+	case modeRectangle:
+		return nav.Rectangle
+	case modeConnect:
+		return nav.Line
+	case modeNavigate, modeMove, modeEditLabel:
+		return nav.Cursor
+	default:
+		return nav.Cursor
+	}
+}
+
+func (m *Model) activeFrame() canvasview.FrameID {
+	switch {
+	case m.reconnecting && m.connectDragging:
+		return canvasview.ConnectionFrame
+	case m.duplicateDragging:
+		return canvasview.DuplicateFrame
+	default:
+		return canvasview.BaseFrame
+	}
+}
+
+func (m *Model) composeSurfaces(content string) string {
+	help, helpVisible := m.surfacePlan(surfaceHelp)
+	overlay := m.dialog.Overlay()
+	if !helpVisible && overlay.Content == "" {
+		return content
+	}
+	layers := []*lipgloss.Layer{lipgloss.NewLayer(content)}
+	if helpVisible {
+		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(m.helpInspector.lines())).
+			ID(string(surfaceHelp)).
+			X(help.Rect.X).
+			Y(help.Rect.Y).
+			Z(surfacePriorityHelp))
+	}
+	if overlay.Content != "" {
+		modalRect := overlayRect(overlay)
+		if surface, ok := m.surfacePlan(surfaceModal); ok {
+			modalRect = surface.Rect
+		}
+		layers = append(layers, lipgloss.NewLayer(overlay.Content).
+			ID(string(surfaceModal)).
+			X(modalRect.X).
+			Y(modalRect.Y).
+			Z(surfacePriorityModal))
+	}
+	return lipgloss.NewCompositor(layers...).Render()
+}
+
+func composeWorkspaceBase(canvas, status string, plan chrome.WorkspacePlan) string {
+	if plan.Canvas.X == 0 &&
+		plan.Canvas.Y == 0 &&
+		plan.Canvas.Width == plan.Terminal.Width &&
+		plan.Footer.X == 0 &&
+		plan.Footer.Y == plan.Canvas.Bottom() &&
+		plan.Footer.Width == plan.Terminal.Width &&
+		plan.Footer.Height == 1 {
+		return canvas + "\n" + status
+	}
+	line := strings.Repeat(" ", plan.Terminal.Width)
+	rows := make([]string, plan.Terminal.Height)
+	for i := range rows {
+		rows[i] = line
+	}
+	layers := []*lipgloss.Layer{
+		lipgloss.NewLayer(strings.Join(rows, "\n")),
+		lipgloss.NewLayer(canvas).
+			ID("canvas").
+			X(plan.Canvas.X).
+			Y(plan.Canvas.Y),
+	}
+	if status != "" && plan.Footer.Height != 0 {
+		layers = append(layers, lipgloss.NewLayer(status).
+			ID("status").
+			X(plan.Footer.X).
+			Y(plan.Footer.Y).
+			Z(1))
+	}
+	return lipgloss.NewCompositor(layers...).Render()
 }
 
 type styledRunKey struct {
@@ -143,17 +234,17 @@ func hitKindName(kind layout.HitKind) string {
 }
 
 func (m *Model) cursorPosition() (int, int, bool) {
-	height := m.diagramHeight()
-	if m.width <= 0 || height <= 0 ||
+	host := m.workspace.Geometry().Canvas
+	if host.Width <= 0 || host.Height <= 0 ||
 		m.cursor.X < m.viewport.X || m.cursor.Y < m.viewport.Y {
 		return 0, 0, false
 	}
 	x := uint64(m.cursor.X - m.viewport.X)
 	y := uint64(m.cursor.Y - m.viewport.Y)
-	if x >= uint64(m.width) || y >= uint64(height) {
+	if x >= uint64(host.Width) || y >= uint64(host.Height) {
 		return 0, 0, false
 	}
-	return int(x), int(y), true
+	return host.X + int(x), host.Y + int(y), true
 }
 
 func (m *Model) appendViewport(

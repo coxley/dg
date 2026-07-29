@@ -7,9 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	modalview "github.com/coxley/dg/internal/tui/modal"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/layout"
 )
@@ -96,27 +94,23 @@ func PreferredRouter() (layout.Router, bool) {
 }
 
 func (m *Model) openHelp() {
-	if m.mode != modeNavigate {
-		m.setError(finishOperation)
-		return
-	}
-	m.resetSettingsTabs(modalHelp)
-	m.openModal(modalHelp)
-	m.preferenceEdit = false
+	m.helpInspector.toggle()
 	m.status = ""
+	m.syncWorkspace()
 }
 
 func (m *Model) openPreferences() {
-	fromHelp := m.modal == modalHelp
-	if !m.preferenceEdit {
-		m.resetSettingsTabs(modalPreferences)
-	} else {
-		m.selectSettingsTab(modalPreferences)
+	if m.modal == modalPreferences {
+		return
 	}
+	if m.modal != modalNone || m.mode != modeNavigate {
+		m.setError(finishOperation)
+		return
+	}
+	m.resetPreferenceForm()
 	m.beginPreferenceEdit()
-	if !fromHelp {
-		m.openModal(modalPreferences)
-	}
+	m.openModal(modalPreferences)
+	m.syncWorkspace()
 }
 
 func (m *Model) beginPreferenceEdit() {
@@ -134,26 +128,11 @@ func (m *Model) beginPreferenceEdit() {
 
 func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
-	if m.settingsModalCloses(key) {
-		m.closeSettingsModal()
-		return nil
-	}
 	switch m.modal {
 	case modalNone:
 		return nil
-	case modalHelp:
-		switch {
-		case key.Code == tea.KeyEscape ||
-			keybinding.Matches(message, m.keys.help) ||
-			key.Code == tea.KeyEnter:
-			m.closeSettingsModal()
-			return nil
-		case key.Code == 'p' && key.Mod == 0:
-			m.openPreferences()
-			return nil
-		}
 	case modalPreferences:
-		if key.Code == tea.KeyEscape {
+		if key.Code == tea.KeyEscape || key.Code == 'q' && key.Mod == 0 {
 			if m.preferenceForm.DirectoryOpen() {
 				return m.updateSettingsTabs(message)
 			}
@@ -180,24 +159,7 @@ func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
 	case modalNotice:
 		return nil
 	}
-	if key.Code == tea.KeyTab && (key.Mod == 0 || key.Mod == tea.ModShift) {
-		if m.modal == modalHelp {
-			return modalview.SwitchTab(modalview.TabID(modalPreferences))
-		}
-		return modalview.SwitchTab(modalview.TabID(modalHelp))
-	} else if m.modal == modalHelp && key.Code == '1' && key.Mod == 0 {
-		return modalview.SwitchTab(modalview.TabID(modalHelp))
-	} else if m.modal == modalHelp && key.Code == '2' && key.Mod == 0 {
-		return modalview.SwitchTab(modalview.TabID(modalPreferences))
-	}
 	return m.updateSettingsTabs(message)
-}
-
-func (m *Model) settingsModalCloses(key tea.Key) bool {
-	return key.Code == 'q' && key.Mod == 0 &&
-		(m.modal == modalHelp ||
-			m.modal == modalPreferences &&
-				!m.preferenceForm.DirectoryOpen())
 }
 
 func (m *Model) closeSettingsModal() {
@@ -249,17 +211,16 @@ func (m *Model) applyPreferences(saveDefaults bool) tea.Cmd {
 	if err == nil {
 		err = os.WriteFile(m.preferences.path, append(data, '\n'), 0o600)
 	}
-	m.resetSettingsTabs(modalHelp)
 	if err != nil {
 		m.setError("save preferences: " + err.Error())
-		m.modal = modalHelp
+		m.modal = modalNone
 		return nil
 	}
 	m.status = ""
-	return m.showNotice("Preferences saved", modalHelp)
+	return m.showNotice("Preferences saved", modalNone)
 }
 
-func (m *Model) resetSettingsTabs(active modal) {
+func (m *Model) resetPreferenceForm() {
 	m.preferenceForm = preferencesview.New(
 		preferencesview.Value{
 			Router:        m.geo.Router(),
@@ -272,11 +233,6 @@ func (m *Model) resetSettingsTabs(active modal) {
 		0,
 		m.theme.preferenceStyles(),
 	)
-	m.modal = active
-}
-
-func (m *Model) selectSettingsTab(tab modal) {
-	m.modal = tab
 }
 
 func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {

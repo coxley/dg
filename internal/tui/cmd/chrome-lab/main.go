@@ -22,6 +22,9 @@ const (
 	scenarioDensity  = "density"
 	scenarioOverflow = "overflow"
 	scenarioFocus    = "focus"
+	scenarioSurfaces = "surfaces"
+	labSurfaceHelp   = chrome.SurfaceID("help")
+	labSurfaceModal  = chrome.SurfaceID("modal")
 )
 
 var scenarioNames = [...]string{
@@ -32,6 +35,7 @@ var scenarioNames = [...]string{
 	scenarioDensity,
 	scenarioOverflow,
 	scenarioFocus,
+	scenarioSurfaces,
 }
 
 type labModel struct {
@@ -53,6 +57,9 @@ type labModel struct {
 	text            string
 	resolver        *chrome.Resolver
 	focus           *chrome.FocusRegistry
+	workspace       chrome.Workspace
+	modalVisible    bool
+	helpVisible     bool
 }
 
 func newLabModel(scenario string) *labModel {
@@ -102,6 +109,7 @@ func newLabModel(scenario string) *labModel {
 		diagnosticsPane: diagnosticsPane,
 		resolver:        resolver,
 		focus:           focus,
+		helpVisible:     true,
 	}
 }
 
@@ -113,6 +121,8 @@ func abbreviatedScenario(name string) string {
 		return "Dense"
 	case scenarioOverflow:
 		return "Over"
+	case scenarioSurfaces:
+		return "Surf"
 	default:
 		return strings.ToUpper(name[:1]) + name[1:]
 	}
@@ -123,6 +133,9 @@ func (m *labModel) Init() tea.Cmd {
 }
 
 func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if m.updateSurfaceScenario(message) {
+		return m, nil
+	}
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width = max(message.Width, 0)
@@ -165,7 +178,7 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.density = chrome.Regular
 			}
 			m.reflow()
-		case "1", "2", "3", "4", "5", "6", "7":
+		case "1", "2", "3", "4", "5", "6", "7", "8":
 			index, err := strconv.Atoi(message.String())
 			if err == nil {
 				m.selectScenario(index - 1)
@@ -202,9 +215,51 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseReleaseMsg:
 		m.pointer = chrome.Point{X: message.X, Y: message.Y}
 		m.pointerCaptured = false
+		m.workspace.Release()
 		m.refreshDiagnostics()
 	}
 	return m, nil
+}
+
+func (m *labModel) updateSurfaceScenario(message tea.Msg) bool {
+	if scenarioNames[m.scenario] != scenarioSurfaces {
+		return false
+	}
+	switch message := message.(type) {
+	case tea.KeyPressMsg:
+		switch message.String() {
+		case "m":
+			m.modalVisible = !m.modalVisible
+		case "h":
+			m.helpVisible = !m.helpVisible
+		case "esc":
+			id, ok := m.workspace.Back()
+			if !ok || id != labSurfaceModal {
+				return true
+			}
+			m.modalVisible = false
+		default:
+			return false
+		}
+		m.reflow()
+		return true
+	case tea.MouseClickMsg:
+		m.pointer = chrome.Point{X: message.X, Y: message.Y}
+		m.clicks++
+		if id, ok := m.workspace.DismissAt(m.pointer); ok && id == labSurfaceModal {
+			m.modalVisible = false
+			m.reflow()
+			return true
+		}
+		if id, ok := m.workspace.SurfaceAt(m.pointer); ok {
+			m.workspace.Capture(id)
+			m.pointerCaptured = true
+		}
+		m.refreshDiagnostics()
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *labModel) View() tea.View {
@@ -266,6 +321,29 @@ func (m *labModel) reflow() {
 		Width:  m.width,
 		Height: max(m.height-menuHeight, 0),
 	}
+	m.workspace.SetTerminal(chrome.Size{Width: m.width, Height: m.height})
+	m.workspace.SetFooter(1)
+	if err := m.workspace.SetSurfaces([]chrome.Surface{
+		{
+			ID: labSurfaceHelp, Role: chrome.SurfacePassive,
+			Requested: chrome.Rect{
+				X: max(m.width-28, 0), Y: max(m.height-8, 0),
+				Width: min(28, m.width), Height: min(7, m.height),
+			},
+			Priority: 1, Visible: m.helpVisible,
+		},
+		{
+			ID: labSurfaceModal, Role: chrome.SurfaceModal,
+			Requested: chrome.Rect{
+				X: m.width / 4, Y: m.height / 4,
+				Width: m.width / 2, Height: m.height / 2,
+			},
+			Priority: 2, Visible: m.modalVisible,
+			DismissOutside: true, DismissBack: true, FocusOnOpen: true,
+		},
+	}); err != nil {
+		panic(err)
+	}
 	m.contentViewport.SetContent(m.scenarioContent())
 	if scenarioNames[m.scenario] == scenarioOverflow {
 		m.contentViewport.SetOverflow(chrome.ScrollText)
@@ -311,9 +389,12 @@ func (m *labModel) refreshDiagnostics() {
 	}
 	contentPlan := m.contentViewport.Plan()
 	capture := "none"
-	if m.pointerCaptured {
+	if id := m.workspace.CaptureID(); id != "" {
+		capture = string(id)
+	} else if m.pointerCaptured {
 		capture = "scenario"
 	}
+	workspacePlan := m.workspace.Plan()
 	m.diagnostics.SetContent([]string{
 		"CHROME LAB",
 		"scenario: " + scenarioNames[m.scenario],
@@ -325,10 +406,11 @@ func (m *labModel) refreshDiagnostics() {
 		fmt.Sprintf("scroll: %d,%d", contentPlan.Offset.X, contentPlan.Offset.Y),
 		"focus: unavailable (phase 5)",
 		"scopes: unavailable (phase 5)",
-		formatRect("rect.workspace", chrome.Rect{Width: m.width, Height: m.height}),
+		formatRect("rect.workspace", workspacePlan.Main),
+		formatRect("rect.canvas", workspacePlan.Canvas),
 		formatRect("rect.body", contentPlan.Content),
 		"animation: unavailable (phase 9)",
-		"bindings: 1-7/tab scenario",
+		"bindings: 1-8/tab scenario",
 		"bindings: d density; q quit",
 	})
 }
@@ -412,6 +494,26 @@ func (m *labModel) scenarioContent() []string {
 				binding.Chord,
 				binding.Label,
 			))
+		}
+		return lines
+	case scenarioSurfaces:
+		modal := "closed"
+		if m.modalVisible {
+			modal = "open"
+		}
+		help := "hidden"
+		if m.helpVisible {
+			help = "visible"
+		}
+		lines := []string{
+			"Workspace surface stack",
+			"canvas host: transparent",
+			"help: " + help + " (passive)",
+			"legacy modal adapter: " + modal,
+			"press m modal; h help; esc Back",
+		}
+		for _, surface := range m.workspace.Plan().Surfaces {
+			lines = append(lines, formatRect("surface."+string(surface.Surface.ID), surface.Rect))
 		}
 		return lines
 	default:

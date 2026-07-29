@@ -51,13 +51,25 @@ for size in 100x30 80x16 80x12; do
   ht send --wait-text "profile: mac" --timeout 5s "$session" "p" >/dev/null
   printf -v paste '\e[200~pasted\e[201~'
   ht send --raw --wait-text "text: pasted" --timeout 5s "$session" "$paste" >/dev/null
+  ht send --wait-text "scenario: surfaces" --timeout 5s "$session" "<Right>" >/dev/null
+  ht send --wait-text "legacy modal adapter: open" --timeout 5s "$session" "m" >/dev/null
+  printf -v modal_press '\e[<0;30;8M'
+  printf -v modal_release '\e[<0;30;8m'
+  ht send --raw --wait-text "pointer-capture: modal" --timeout 5s \
+    "$session" "$modal_press" >/dev/null
+  ht send --raw --wait-text "pointer-capture: none" --timeout 5s \
+    "$session" "$modal_release" >/dev/null
+  printf -v outside_press '\e[<0;2;2M'
+  ht send --raw --wait-text "legacy modal adapter: closed" --timeout 5s \
+    "$session" "$outside_press" >/dev/null
 
   snapshot="$(ht view --json "$session")"
   grep -q "\"cols\": ${size%x*}" <<<"$snapshot"
   grep -q "\"rows\": ${size#*x}" <<<"$snapshot"
-  grep -q "scenario: focus" <<<"$snapshot"
+  grep -q "scenario: surfaces" <<<"$snapshot"
   grep -q "density: compact" <<<"$snapshot"
-  grep -q "events: click=1" <<<"$snapshot"
+  grep -q "events: click=3" <<<"$snapshot"
+  grep -q "help: visible (passive)" <<<"$snapshot"
 
   ht stop "$session" >/dev/null
   ht remove "$session" >/dev/null

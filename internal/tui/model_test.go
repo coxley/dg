@@ -13,10 +13,10 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	"github.com/coxley/dg/internal/tui/chrome"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/ir"
@@ -505,42 +505,36 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.bindings.SetProfile(chrome.ProfileStandard)
 	updateModel(t, model, keyPress('?', "?"))
-	require.Equal(t, modalHelp, model.modal)
+	require.True(t, model.helpInspector.visible)
+	require.Equal(t, modalNone, model.modal)
 	view := ansi.Strip(model.View().Content)
-	require.Contains(t, view, "Shortcuts")
-	require.Contains(t, view, "Preferences")
-	require.Contains(t, view, "Cursor")
-	require.Contains(t, view, "node")
+	require.Contains(t, view, "HELP · canvas")
 	require.Contains(t, view, "?")
-	require.Contains(t, view, "help")
-	require.Contains(t, view, "backspace")
-	require.Contains(t, view, "delete")
+	require.Contains(t, view, "toggle help")
+	require.Contains(t, view, "preferences")
 
-	command := updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
-	require.NotNil(t, command)
-	updateModel(t, model, command())
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: ',',
+		Text: ",",
+		Mod:  tea.ModCtrl,
+	}))
 	require.Equal(t, modalPreferences, model.modal)
 	require.Contains(t, ansi.Strip(model.View().Content), "Step cost")
+	require.Contains(
+		t,
+		ansi.Strip(strings.Join(model.helpInspector.lines(), "\n")),
+		"HELP · preferences",
+	)
 	before := model.geo.Router()
-	command = updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
+	command := updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
 	require.NotNil(t, command)
-	command = updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
-		Code: tea.KeyTab,
-		Mod:  tea.ModShift,
-	}))
-	require.NotNil(t, command)
-	updateModel(t, model, command())
-	require.Equal(t, modalHelp, model.modal)
-	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
-	command = updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
-	require.NotNil(t, command)
-	updateModel(t, model, command())
-	require.Equal(t, modalPreferences, model.modal)
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, before, model.geo.Router())
 	require.Equal(t, modalNone, model.modal)
+	require.True(t, model.helpInspector.visible)
 }
 
 func TestEnhancedQuestionMarkOpensAndClosesHelp(t *testing.T) {
@@ -555,8 +549,10 @@ func TestEnhancedQuestionMarkOpensAndClosesHelp(t *testing.T) {
 	})
 
 	updateModel(t, model, question)
-	require.Equal(t, modalHelp, model.modal)
+	require.True(t, model.helpInspector.visible)
+	require.Equal(t, modalNone, model.modal)
 	updateModel(t, model, question)
+	require.False(t, model.helpInspector.visible)
 	require.Equal(t, modalNone, model.modal)
 }
 
@@ -574,100 +570,71 @@ func TestPreferenceModalFitsShortTerminals(t *testing.T) {
 	)
 }
 
-func TestSettingsModalClosesWithQ(t *testing.T) {
-	t.Parallel()
-
-	model, _ := newTestModel(t)
-	model.openHelp()
-	updateModel(t, model, keyPress('q', "q"))
-	require.Equal(t, modalNone, model.modal)
-
-	model.openPreferences()
-	updateModel(t, model, keyPress('q', "q"))
-	require.Equal(t, modalNone, model.modal)
-}
-
-func TestSettingsTabsAcceptMouseAndWheelInput(t *testing.T) {
+func TestPreferencesCloseWithQWithoutHidingHelp(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	model.openHelp()
-	overlay := model.currentModalOverlay()
-	shortcutsWidth := lipgloss.Width(model.theme.Modal.ActiveTab.Render("Shortcuts"))
-	got, command := model.Update(tea.MouseClickMsg{
-		X:      overlay.ContentLeft + shortcutsWidth + 1,
-		Y:      overlay.ContentTop,
-		Button: tea.MouseLeft,
-	})
-	require.Same(t, model, got)
-	require.NotNil(t, command)
-	updateModel(t, model, command())
-	require.Equal(t, modalPreferences, model.modal)
-
-	overlay = model.currentModalOverlay()
-	updateModelCommand(t, model, tea.MouseWheelMsg{
-		X:      overlay.ContentLeft + 1,
-		Y:      overlay.ContentTop + 2,
-		Button: tea.MouseWheelDown,
-	})
-	_, completed := model.preferenceForm.Completed()
-	require.False(t, completed)
-
-	got, command = model.Update(tea.MouseClickMsg{
-		X:      overlay.ContentLeft + 1,
-		Y:      overlay.ContentTop,
-		Button: tea.MouseLeft,
-	})
-	require.Same(t, model, got)
-	require.NotNil(t, command)
-	updateModel(t, model, command())
-	require.Equal(t, modalHelp, model.modal)
+	model.openPreferences()
+	resolved, ok := model.bindings.Resolve("q", model.activeBindingScopes(), false)
+	require.True(t, ok)
+	require.Equal(t, commandBack, resolved.Command)
+	back, ok := model.workspace.Back()
+	require.True(t, ok)
+	require.Equal(t, surfaceModal, back)
+	updateModel(t, model, keyPress('q', "q"))
+	require.Equal(t, modalNone, model.modal)
+	require.True(t, model.helpInspector.visible)
 }
 
-func TestSettingsModalKeepsLargerTabSizeWhenItFits(t *testing.T) {
+func TestHelpInspectorMovesWithoutTakingFocus(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	model.openHelp()
-	help := model.currentModalOverlay()
-
-	command := updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
-	require.NotNil(t, command)
-	updateModel(t, model, command())
-	preferences := model.currentModalOverlay()
-
-	require.Equal(t, help.Width, preferences.Width)
-	require.Equal(t, help.Height, preferences.Height)
+	model.syncWorkspace()
+	help, ok := model.surfacePlan(surfaceHelp)
+	require.True(t, ok)
+	before := help.Rect
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      before.X + 2,
+		Y:      before.Y,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      before.X - 2,
+		Y:      before.Y - 2,
+		Button: tea.MouseLeft,
+	})
+	moved, ok := model.surfacePlan(surfaceHelp)
+	require.True(t, ok)
+	require.Equal(t, before.X-4, moved.Rect.X)
+	require.Equal(t, before.Y-2, moved.Rect.Y)
+	require.Equal(t, modalNone, model.modal)
+	require.Equal(t, surfaceHelp, model.workspace.CaptureID())
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      moved.Rect.X,
+		Y:      moved.Rect.Y,
+		Button: tea.MouseLeft,
+	})
+	require.Empty(t, model.workspace.CaptureID())
 }
 
-func TestSettingsModalShowsCompleteHelpWithoutResize(t *testing.T) {
+func TestHelpInspectorShowsEffectiveModalBindings(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 180, Height: 50})
-	updateModel(t, model, tea.KeyboardEnhancementsMsg{})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	model.openHelp()
+	model.openPreferences()
+	model.syncWorkspace()
 
-	view := ansi.Strip(model.currentModalOverlay().Content)
-	fullHelp := model.help
-	fullHelp.SetWidth(0)
-	require.GreaterOrEqual(
-		t,
-		model.dialog.BodyWidth(),
-		lipgloss.Width(fullHelp.View(model.keys)),
-	)
-	require.NotContains(t, view, model.help.Ellipsis)
-	for _, group := range model.keys.FullHelp() {
-		for _, binding := range group {
-			if !binding.Enabled() {
-				continue
-			}
-			require.Contains(t, view, binding.Help().Key)
-			require.Contains(t, view, binding.Help().Desc)
-		}
-	}
+	view := ansi.Strip(strings.Join(model.helpInspector.lines(), "\n"))
+	require.Contains(t, view, "HELP · preferences")
+	require.Contains(t, view, "cancel preferences")
+	require.Contains(t, view, "toggle help")
 }
 
 func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
@@ -867,10 +834,7 @@ func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.openHelp()
-	command := updateModelCommand(t, model, keyPress(tea.KeyTab, ""))
-	require.NotNil(t, command)
-	updateModel(t, model, command())
+	model.openPreferences()
 	before := model.geo.Router()
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.NotEqual(t, before, model.geo.Router())
@@ -1673,6 +1637,35 @@ func TestToolbarHighlightsHoveredTool(t *testing.T) {
 		model.View().Content,
 		model.theme.Nav.Hover.Render(" Rectangle "),
 	)
+}
+
+func TestCanvasHostOffsetsRenderingPointerAndCursor(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	require.NoError(t, model.workspace.SetSurfaces([]chrome.Surface{
+		{
+			ID: "dock", Role: chrome.SurfaceDock,
+			Requested: chrome.Rect{Width: 8}, Visible: true,
+		},
+	}))
+	host := model.workspace.Plan().Canvas
+	require.Equal(t, chrome.Rect{X: 8, Width: 32, Height: 14}, host)
+
+	x, y, ok := model.cursorPosition()
+	require.True(t, ok)
+	require.Equal(t, host.X+int(model.cursor.X-model.viewport.X), x)
+	require.Equal(t, host.Y+int(model.cursor.Y-model.viewport.Y), y)
+	point, ok := model.documentPoint(host.X+2, host.Y+3)
+	require.True(t, ok)
+	require.Equal(t, model.viewport.Add(2, 3), point)
+	_, ok = model.documentPoint(host.X-1, host.Y)
+	require.False(t, ok)
+
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+	require.Equal(t, strings.Repeat(" ", host.X), ansi.Cut(lines[2], 0, host.X))
+	require.Contains(t, ansi.Cut(lines[2], host.X, host.Right()), "┌")
 }
 
 func TestKeyboardEnhancementsAdvertiseSuperCopy(t *testing.T) {

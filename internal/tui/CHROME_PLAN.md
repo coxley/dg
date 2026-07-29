@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 5 complete; Phase 6 not started
+- Current phase: Phase 6 complete; Phase 7 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -521,7 +521,7 @@ review, and integration gate before beginning the next phase.
 | 3. Pane and viewport | Complete | Overflow matrix and resize invariants pass |
 | 4. Chrome lab | Complete | Interactive and initial `ht` scenarios pass |
 | 5. Commands and focus | Complete | Effective binding matrix matches dispatch |
-| 6. Surfaces and contextual Help | Not started | One z-order/input router owns active surfaces |
+| 6. Surfaces and contextual Help | Complete | One z-order/input router owns active surfaces |
 | 7. Declarative Preferences | Not started | No rendered-text geometry recovery remains |
 | 8. Existing modal migration | Not started | Root modal-type input switches are removed |
 | 9. Adaptive sidebar and motion | Not started | Dock/drawer transition invariants pass |
@@ -615,34 +615,34 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 6: surfaces and contextual Help
 
-- [ ] Implement workspace dock, floating, passive, drawer, and modal roles.
-- [ ] Implement z-order, modal blocking, outside-click policy, and pointer capture.
-- [ ] Keep placement, dismissal, Back, focus-on-open, and priority as
+- [x] Implement workspace dock, floating, passive, drawer, and modal roles.
+- [x] Implement z-order, modal blocking, outside-click policy, and pointer capture.
+- [x] Keep placement, dismissal, Back, focus-on-open, and priority as
   application-supplied declarations.
-- [ ] Define terminal/workspace/canvas/dock anchors and retain requested surface
+- [x] Define terminal/workspace/canvas/dock anchors and retain requested surface
   rectangles separately from clamped arranged rectangles.
-- [ ] Introduce one canvas host rectangle and screen-to-canvas transform while
+- [x] Introduce one canvas host rectangle and screen-to-canvas transform while
   preserving current full-screen placement.
-- [ ] Keep the host visually transparent: no border, padding, background, or
+- [x] Keep the host visually transparent: no border, padding, background, or
   other rendered frame.
-- [ ] Migrate canvas render clipping, pointer translation, keyboard visibility,
+- [x] Migrate canvas render clipping, pointer translation, keyboard visibility,
   label cursor placement, and canvas-relative anchors to that host.
-- [ ] Keep the sparse canvas renderer and unbounded document viewport outside
+- [x] Keep the sparse canvas renderer and unbounded document viewport outside
   chrome's finite Viewport abstraction.
-- [ ] Move the existing nav into the surface manager as its first floating
+- [x] Move the existing nav into the surface manager as its first floating
   consumer.
-- [ ] Adapt the existing Preferences shell as a chrome modal containing the
+- [x] Adapt the existing Preferences shell as a chrome modal containing the
   legacy Huh content; do not run independent legacy and chrome modal routers.
-- [ ] Express the status line as a workspace footer rather than a hard-coded
+- [x] Express the status line as a workspace footer rather than a hard-coded
   subtraction in canvas sizing.
-- [ ] Separate Help from Preferences.
-- [ ] Render Help as a passive bottom-right inspector with Pane/Viewport.
-- [ ] Support moving, resizing, scrolling, hiding, and `?` toggling without
+- [x] Separate Help from Preferences.
+- [x] Render Help as a passive bottom-right inspector with Pane/Viewport.
+- [x] Support moving, resizing, scrolling, hiding, and `?` toggling without
   stealing keyboard focus.
-- [ ] Open Preferences through `Primary+,`.
-- [ ] Ensure Help reflects canvas, modal, form, and nested component contexts.
-- [ ] Replace root message-precedence branches covered by surface dispatch.
-- [ ] Extend the chrome lab and `ht` smoke with z-order, pointer capture, legacy
+- [x] Open Preferences through `Primary+,`.
+- [x] Ensure Help reflects canvas, modal, form, and nested component contexts.
+- [x] Replace root message-precedence branches covered by surface dispatch.
+- [x] Extend the chrome lab and `ht` smoke with z-order, pointer capture, legacy
   modal adapter, and passive Help scenarios.
 
 ### Phase 7: declarative Preferences
@@ -806,6 +806,10 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Keep the headless chrome-lab smoke as an explicit integration command for now. | The smoke depends on the external `ht` daemon; deterministic model tests remain in the default Go suite while CI placement stays open for operational evidence. |
 | 2026-07-28 | Test resize through `WindowSizeMsg` plus separate real PTYs at each required size. | The installed `ht` version has no live resize command; this combination verifies in-process reflow and real terminal composition without sleeps. |
 | 2026-07-28 | Resolve commands to values and keep application behavior in `Update`. | Semantic messages preserve Bubble Tea ownership while allowing effective bindings and dispatch to share one registry. |
+| 2026-07-28 | Retain requested surface rectangles and derive clamped rectangles from terminal, workspace, canvas, or dock anchors. | Moving and resizing must survive constrained terminals without losing application placement policy. |
+| 2026-07-28 | Keep Help session-local and adapt the existing Huh Preferences body behind one chrome modal surface. | The foundational phase needs contextual inspection and one input router; persistence and declarative fields belong to later listed phases. |
+| 2026-07-28 | Capture the transparent canvas host during pointer gestures. | Canvas drags must continue beneath higher floating surfaces after they start, while idle pointer input still follows z-order. |
+| 2026-07-28 | Recompute root surfaces only for terminal, Help, or modal state changes. | Unconditional arrangement doubled interactive latency; retained invalidation restores the root View path to its Phase 2 benchmark envelope. |
 
 ## Changed-File Ledger
 
@@ -819,6 +823,7 @@ Update this table after each completed phase or reviewable slice.
 | 3 | `internal/tui/chrome/{pane,viewport}.go`, `internal/tui/chrome/{pane,viewport}_test.go`, `internal/tui/CHROME_PLAN.md` | Add sticky panes, finite scrolling viewports, convergent reserved scrollbars, reveal, pointer translation, and nested independent scroll regions. |
 | 4 | `internal/tui/cmd/chrome-lab/{main.go,main_test.go,README.md,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add the interactive chrome lab, stable diagnostics, responsive scenarios, and failure-artifact PTY smoke runner. |
 | 5 | `internal/tui/chrome/{command,focus}.go`, matching tests, `internal/tui/bindings.go`, `internal/tui/model.go`, chrome-lab files, `internal/tui/CHROME_PLAN.md` | Add semantic command/profile resolution, focus scopes and restoration, root declarations, and focus/profile/paste lab scenarios. |
+| 6 | `internal/tui/chrome/{surface.go,surface_test.go}`, `internal/tui/{bindings,help,modal,model,model_test,mouse,preferences,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add one surface/workspace router, transparent canvas host and footer, contextual passive Help, legacy Preferences adaptation, and surface lab scenarios. |
 
 ## Verification Ledger
 
@@ -875,3 +880,15 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 5 | Full test, race, vet, and lint gate | Tests, race, and vet passed; lint found repeated test fixtures in two runs. Consolidated semantic fixture constants and re-ran. |
 | 2026-07-28 | 5 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
 | 2026-07-28 | 5 | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed focus, profile, bracketed paste, pointer, and all prior scenarios at all three sizes. |
+| 2026-07-28 | 6 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui -count=1` | Passed the initial surface/workspace and root canvas-host slice. Phase 6 remains incomplete and has not run its integration gate. |
+| 2026-07-28 | 6 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg -count=1` | Passed surface, canvas-host, Help, legacy Preferences, lab, and all existing TUI/command tests. |
+| 2026-07-28 | 6 | Initial `go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Exposed unconditional surface arrangement: AltDrag 106,737 ns/op and 126 allocs/op; MoveAndView 52,366 ns/op and 127 allocs/op. Added retained invalidation and removed unchanged-frame plan copies. |
+| 2026-07-28 | 6 | Final `go test ./internal/tui/chrome -run '^$' -bench . -benchmem -count=1`; `go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: Measure 4,598 ns/op, Arrange 6,098 ns/op, MenuRender 8,267 ns/op, ViewportArrange 2,414 ns/op. Root AltDrag 45,911 ns/op, 10,920 B/op, 9 allocs/op; MoveCommittedDuplicate 46,193 ns/op, 10,985 B/op, 13 allocs/op; MoveAndView 4,772 ns/op, 4,728 B/op, 10 allocs/op. |
+| 2026-07-28 | 6 | First full test, race, vet, and lint gate | Tests, race, and vet passed. Lint reported two complexity thresholds, one repeated lab surface ID, one switch simplification, and two superseded helpers. Extracted focused helpers and removed obsolete Help/height paths. |
+| 2026-07-28 | 6 | Sandboxed `dd-gopls check <all changed Go files>` and `./internal/tui/cmd/chrome-lab/smoke.sh` | Both were environment-blocked: `dd-gopls` could not write normal Go caches and `ht` could not reach its daemon socket. Re-ran with the required local cache/socket access. |
+| 2026-07-28 | 6 | `dd-gopls check <all changed Go files>` | Passed with no diagnostics. |
+| 2026-07-28 | 6 | First unsandboxed `./internal/tui/cmd/chrome-lab/smoke.sh` | Failed at the new surface scenario because `8` was correctly typed into the focused text field. Switched scenarios with `<Right>` to preserve text-entry precedence. |
+| 2026-07-28 | 6 | Final `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed all three sizes with surface z-order, modal capture/dismissal, passive Help, focus, paste, pointer, and prior scenarios; all sessions cleaned up. |
+| 2026-07-28 | 6 | First root `ht` check at `100x30`, `80x16`, and `80x12` | Screen assertions passed, but the harness left passing JSON snapshots in its temporary directory and failed cleanup. Removed the snapshots and reran without pass artifacts. |
+| 2026-07-28 | 6 | Final root `ht run`, `ht wait`, and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, toolbar, status, and hidden-cursor assertions; all sessions stopped and removed. |
+| 2026-07-28 | 6 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |

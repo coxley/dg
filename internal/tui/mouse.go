@@ -5,6 +5,7 @@ import (
 	"math"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/coxley/dg/layout"
 )
 
@@ -505,11 +506,12 @@ func (m *Model) updateMouseWheel(mouse tea.Mouse) {
 }
 
 func (m *Model) documentPoint(x, y int) (layout.Point, bool) {
-	if x < 0 || y < 0 || x >= m.width || y >= m.diagramHeight() {
+	canvas, ok := m.workspace.ScreenToCanvas(chrome.Point{X: x, Y: y})
+	if !ok {
 		return layout.Point{}, false
 	}
-	documentX := uint64(m.viewport.X) + uint64(x)
-	documentY := uint64(m.viewport.Y) + uint64(y)
+	documentX := uint64(m.viewport.X) + uint64(canvas.X)
+	documentY := uint64(m.viewport.Y) + uint64(canvas.Y)
 	if documentX > math.MaxUint32 || documentY > math.MaxUint32 {
 		return layout.Point{}, false
 	}
