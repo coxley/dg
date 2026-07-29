@@ -8,15 +8,17 @@ import (
 	"runtime"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/layout"
 )
 
 type preferencesFile struct {
-	Router        layout.Router `json:"router"`
-	ApplyToFuture bool          `json:"apply_to_future"`
-	SaveDirectory string        `json:"save_directory,omitempty"`
-	CommentPrefix string        `json:"comment_prefix,omitempty"`
+	Router        layout.Router     `json:"router"`
+	ApplyToFuture bool              `json:"apply_to_future"`
+	SaveDirectory string            `json:"save_directory,omitempty"`
+	CommentPrefix string            `json:"comment_prefix,omitempty"`
+	KeyProfile    chrome.KeyProfile `json:"key_profile,omitempty"`
 }
 
 type preferenceState struct {
@@ -28,6 +30,8 @@ type preferenceState struct {
 	originalSaveDirectory string
 	commentPrefix         string
 	originalCommentPrefix string
+	keyProfile            chrome.KeyProfile
+	originalKeyProfile    chrome.KeyProfile
 	path                  string
 }
 
@@ -85,6 +89,8 @@ func (m *Model) loadPreferences() {
 	m.preferences.commentPrefix = preferencesview.NormalizeCommentPrefix(
 		preferences.CommentPrefix,
 	)
+	m.preferences.keyProfile = preferencesview.NormalizeKeyProfile(preferences.KeyProfile)
+	m.bindings.SetProfile(m.preferences.keyProfile)
 }
 
 // PreferredRouter returns the persisted router for newly created diagrams.
@@ -123,6 +129,7 @@ func (m *Model) beginPreferenceEdit() {
 	m.preferences.originalApplyToFuture = m.preferences.applyToFuture
 	m.preferences.originalSaveDirectory = m.preferences.saveDirectory
 	m.preferences.originalCommentPrefix = m.preferences.commentPrefix
+	m.preferences.originalKeyProfile = m.preferences.keyProfile
 	m.beginTransaction()
 }
 
@@ -175,6 +182,8 @@ func (m *Model) closeSettingsModal() {
 		m.preferences.applyToFuture = m.preferences.originalApplyToFuture
 		m.preferences.saveDirectory = m.preferences.originalSaveDirectory
 		m.preferences.commentPrefix = m.preferences.originalCommentPrefix
+		m.preferences.keyProfile = m.preferences.originalKeyProfile
+		m.bindings.SetProfile(m.preferences.originalKeyProfile)
 		err = errors.Join(err, m.render())
 	}
 	m.preferenceEdit = false
@@ -204,6 +213,7 @@ func (m *Model) applyPreferences(saveDefaults bool) tea.Cmd {
 		ApplyToFuture: m.preferences.applyToFuture,
 		SaveDirectory: m.preferences.saveDirectory,
 		CommentPrefix: m.preferences.commentPrefix,
+		KeyProfile:    m.preferences.keyProfile,
 	}, "", "  ")
 	if err == nil {
 		err = os.MkdirAll(filepath.Dir(m.preferences.path), 0o700)
@@ -226,6 +236,7 @@ func (m *Model) resetPreferenceForm() {
 			Router:        m.geo.Router(),
 			SaveDirectory: m.preferences.saveDirectory,
 			CommentPrefix: m.preferences.commentPrefix,
+			KeyProfile:    m.preferences.keyProfile,
 		},
 		minimumSettingsModalWidth-
 			m.theme.Modal.Container.GetHorizontalFrameSize()-
@@ -297,6 +308,8 @@ func (m *Model) syncPreferenceForm() {
 	router := value.Router
 	m.preferences.saveDirectory = value.SaveDirectory
 	m.preferences.commentPrefix = value.CommentPrefix
+	m.preferences.keyProfile = value.KeyProfile
+	m.bindings.SetProfile(value.KeyProfile)
 	if router == m.preferences.router {
 		return
 	}

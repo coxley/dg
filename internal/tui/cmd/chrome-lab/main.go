@@ -23,8 +23,12 @@ const (
 	scenarioOverflow = "overflow"
 	scenarioFocus    = "focus"
 	scenarioSurfaces = "surfaces"
+	scenarioForms    = "forms"
 	labSurfaceHelp   = chrome.SurfaceID("help")
 	labSurfaceModal  = chrome.SurfaceID("modal")
+	labFormNumber    = chrome.ID("form-number")
+	labFormProfile   = chrome.ID("form-profile")
+	labFormDirectory = chrome.ID("form-directory")
 )
 
 var scenarioNames = [...]string{
@@ -36,6 +40,7 @@ var scenarioNames = [...]string{
 	scenarioOverflow,
 	scenarioFocus,
 	scenarioSurfaces,
+	scenarioForms,
 }
 
 type labModel struct {
@@ -60,6 +65,11 @@ type labModel struct {
 	workspace       chrome.Workspace
 	modalVisible    bool
 	helpVisible     bool
+	form            *chrome.Form
+	formPicker      bool
+	formAction      string
+	formStep        uint64
+	formProfile     string
 }
 
 func newLabModel(scenario string) *labModel {
@@ -100,6 +110,42 @@ func newLabModel(scenario string) *labModel {
 	focus := chrome.NewFocusRegistry()
 	focus.Register("field", []chrome.FocusTarget{{ID: "text", Enabled: true}})
 	focus.Open("field")
+	form := chrome.NewForm(chrome.FormDeclaration{
+		Fields: []chrome.FormField{
+			{
+				ID: labFormNumber, Label: "Router step", Kind: chrome.NumberField,
+				Number: 10, Maximum: 100,
+			},
+			{
+				ID: labFormProfile, Label: "Key profile", Kind: chrome.SelectField,
+				Options: []chrome.FormOption{
+					{Label: "Auto", Value: "auto"},
+					{Label: "Mac", Value: "mac"},
+					{Label: "Standard", Value: "standard"},
+				},
+			},
+			{
+				ID: labFormDirectory, Label: "Save directory",
+				Kind: chrome.DirectoryField, Directory: "/tmp",
+			},
+		},
+		Spacer: chrome.FormSpacer{ID: "form-spacer", Grow: 1},
+		Actions: chrome.ActionBar{
+			ID: "form-actions",
+			Actions: []chrome.FormAction{
+				{ID: "form-save", Label: "Save"},
+				{ID: "form-cancel", Label: "Cancel"},
+			},
+		},
+	}, chrome.FormStyles{
+		Label:          lipgloss.NewStyle(),
+		FocusedLabel:   lipgloss.NewStyle().Bold(true),
+		Value:          lipgloss.NewStyle(),
+		FocusedValue:   lipgloss.NewStyle().Bold(true),
+		ActiveValue:    lipgloss.NewStyle().Reverse(true),
+		Action:         lipgloss.NewStyle().Padding(0, 1),
+		SelectedAction: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
+	})
 	return &labModel{
 		scenario:        index,
 		menu:            menu,
@@ -110,6 +156,9 @@ func newLabModel(scenario string) *labModel {
 		resolver:        resolver,
 		focus:           focus,
 		helpVisible:     true,
+		form:            form,
+		formStep:        10,
+		formProfile:     "auto",
 	}
 }
 
@@ -123,6 +172,8 @@ func abbreviatedScenario(name string) string {
 		return "Over"
 	case scenarioSurfaces:
 		return "Surf"
+	case scenarioForms:
+		return "Form"
 	default:
 		return strings.ToUpper(name[:1]) + name[1:]
 	}
@@ -133,6 +184,9 @@ func (m *labModel) Init() tea.Cmd {
 }
 
 func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, command := m.updateFormScenario(message); handled {
+		return m, command
+	}
 	if m.updateSurfaceScenario(message) {
 		return m, nil
 	}
@@ -142,48 +196,7 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(message.Height, 0)
 		m.reflow()
 	case tea.KeyPressMsg:
-		if scenarioNames[m.scenario] == scenarioFocus && message.String() == "p" {
-			if m.profile == chrome.ProfileMac {
-				m.profile = chrome.ProfileStandard
-			} else {
-				m.profile = chrome.ProfileMac
-			}
-			m.resolver.SetProfile(m.profile)
-			m.reflow()
-			return m, nil
-		}
-		if scenarioNames[m.scenario] == scenarioFocus &&
-			message.Text != "" && message.Mod == 0 {
-			m.text += message.Text
-			m.reflow()
-			return m, nil
-		}
-		switch message.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "tab", "right":
-			m.selectScenario((m.scenario + 1) % len(scenarioNames))
-		case "shift+tab", "left":
-			m.selectScenario((m.scenario + len(scenarioNames) - 1) % len(scenarioNames))
-		case "up":
-			m.contentViewport.Scroll(0, -1)
-			m.refreshDiagnostics()
-		case "down":
-			m.contentViewport.Scroll(0, 1)
-			m.refreshDiagnostics()
-		case "d":
-			if m.density == chrome.Regular {
-				m.density = chrome.Compact
-			} else {
-				m.density = chrome.Regular
-			}
-			m.reflow()
-		case "1", "2", "3", "4", "5", "6", "7", "8":
-			index, err := strconv.Atoi(message.String())
-			if err == nil {
-				m.selectScenario(index - 1)
-			}
-		}
+		return m, m.updateKey(message)
 	case tea.PasteMsg:
 		if scenarioNames[m.scenario] == scenarioFocus {
 			m.text += message.Content
@@ -219,6 +232,99 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshDiagnostics()
 	}
 	return m, nil
+}
+
+func (m *labModel) updateKey(message tea.KeyPressMsg) tea.Cmd {
+	if scenarioNames[m.scenario] == scenarioFocus && message.String() == "p" {
+		if m.profile == chrome.ProfileMac {
+			m.profile = chrome.ProfileStandard
+		} else {
+			m.profile = chrome.ProfileMac
+		}
+		m.resolver.SetProfile(m.profile)
+		m.reflow()
+		return nil
+	}
+	if scenarioNames[m.scenario] == scenarioFocus &&
+		message.Text != "" && message.Mod == 0 {
+		m.text += message.Text
+		m.reflow()
+		return nil
+	}
+	switch message.String() {
+	case "q", "ctrl+c":
+		return tea.Quit
+	case "tab", "right":
+		m.selectScenario((m.scenario + 1) % len(scenarioNames))
+	case "shift+tab", "left":
+		m.selectScenario((m.scenario + len(scenarioNames) - 1) % len(scenarioNames))
+	case "up":
+		m.contentViewport.Scroll(0, -1)
+		m.refreshDiagnostics()
+	case "down":
+		m.contentViewport.Scroll(0, 1)
+		m.refreshDiagnostics()
+	case "d":
+		if m.density == chrome.Regular {
+			m.density = chrome.Compact
+		} else {
+			m.density = chrome.Regular
+		}
+		m.reflow()
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		index, err := strconv.Atoi(message.String())
+		if err == nil {
+			m.selectScenario(index - 1)
+		}
+	}
+	return nil
+}
+
+func (m *labModel) updateFormScenario(message tea.Msg) (bool, tea.Cmd) {
+	if scenarioNames[m.scenario] != scenarioForms {
+		return false, nil
+	}
+	switch message := message.(type) {
+	case chrome.FormActivateMsg:
+		if message.ID == labFormDirectory {
+			m.formPicker = true
+			m.reflow()
+		}
+		return true, nil
+	case chrome.FormSubmitMsg:
+		m.formAction = string(message.ID)
+		m.reflow()
+		return true, nil
+	case chrome.FormFlashExpiredMsg:
+		_, command := m.form.Update(message)
+		m.reflow()
+		return true, command
+	case tea.KeyPressMsg:
+		if m.formPicker {
+			if message.Code == tea.KeyEscape || message.Code == 'q' && message.Mod == 0 {
+				m.formPicker = false
+				m.reflow()
+			}
+			return true, nil
+		}
+		if strings.Contains("123456789", message.String()) ||
+			message.String() == "d" || message.String() == "q" ||
+			message.String() == "ctrl+c" {
+			return false, nil
+		}
+		form, command := m.form.Update(message)
+		m.form = form.(*chrome.Form)
+		m.syncFormContext()
+		m.reflow()
+		return true, command
+	default:
+		return false, nil
+	}
+}
+
+func (m *labModel) syncFormContext() {
+	m.formStep, _ = m.form.Number(labFormNumber)
+	m.formProfile, _ = m.form.Selected(labFormProfile)
 }
 
 func (m *labModel) updateSurfaceScenario(message tea.Msg) bool {
@@ -344,7 +450,6 @@ func (m *labModel) reflow() {
 	}); err != nil {
 		panic(err)
 	}
-	m.contentViewport.SetContent(m.scenarioContent())
 	if scenarioNames[m.scenario] == scenarioOverflow {
 		m.contentViewport.SetOverflow(chrome.ScrollText)
 	} else {
@@ -379,6 +484,11 @@ func (m *labModel) reflow() {
 			Height: workspace.Height - contentHeight,
 		})
 	}
+	if scenarioNames[m.scenario] == scenarioForms {
+		body := m.contentPane.Plan().Body
+		m.form.SetBounds(chrome.Rect{Width: body.Width, Height: body.Height})
+	}
+	m.contentViewport.SetContent(m.scenarioContent())
 	m.refreshDiagnostics()
 }
 
@@ -395,12 +505,26 @@ func (m *labModel) refreshDiagnostics() {
 		capture = "scenario"
 	}
 	workspacePlan := m.workspace.Plan()
-	m.diagnostics.SetContent([]string{
+	lines := []string{
 		"CHROME LAB",
 		"scenario: " + scenarioNames[m.scenario],
 		fmt.Sprintf("terminal: %dx%d", m.width, m.height),
 		"density: " + density,
-		"pointer-capture: " + capture,
+	}
+	if scenarioNames[m.scenario] == scenarioForms {
+		lines = append(
+			lines,
+			fmt.Sprintf("router-step: %d", m.formStep),
+			"key-profile: "+m.formProfile,
+			"preference-context: live",
+		)
+		if m.formAction != "" {
+			lines = append(lines, "form-action: "+m.formAction)
+		}
+	}
+	lines = append(
+		lines,
+		"pointer-capture: "+capture,
 		fmt.Sprintf("events: click=%d", m.clicks),
 		fmt.Sprintf("pointer: %d,%d", m.pointer.X, m.pointer.Y),
 		fmt.Sprintf("scroll: %d,%d", contentPlan.Offset.X, contentPlan.Offset.Y),
@@ -410,9 +534,10 @@ func (m *labModel) refreshDiagnostics() {
 		formatRect("rect.canvas", workspacePlan.Canvas),
 		formatRect("rect.body", contentPlan.Content),
 		"animation: unavailable (phase 9)",
-		"bindings: 1-8/tab scenario",
+		"bindings: 1-9/tab scenario",
 		"bindings: d density; q quit",
-	})
+	)
+	m.diagnostics.SetContent(lines)
 }
 
 func (m *labModel) scenarioContent() []string {
@@ -516,6 +641,16 @@ func (m *labModel) scenarioContent() []string {
 			lines = append(lines, formatRect("surface."+string(surface.Surface.ID), surface.Rect))
 		}
 		return lines
+	case scenarioForms:
+		if m.formPicker {
+			return []string{
+				"NESTED DIRECTORY PICKER",
+				"bounded adapter context",
+				"directory: /tmp",
+				"press q or esc to return",
+			}
+		}
+		return strings.Split(m.form.View().Content, "\n")
 	default:
 		return nil
 	}

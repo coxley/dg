@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 6 complete; Phase 7 not started
+- Current phase: Phase 7 complete; Phase 8 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -522,7 +522,7 @@ review, and integration gate before beginning the next phase.
 | 4. Chrome lab | Complete | Interactive and initial `ht` scenarios pass |
 | 5. Commands and focus | Complete | Effective binding matrix matches dispatch |
 | 6. Surfaces and contextual Help | Complete | One z-order/input router owns active surfaces |
-| 7. Declarative Preferences | Not started | No rendered-text geometry recovery remains |
+| 7. Declarative Preferences | Complete | No rendered-text geometry recovery remains |
 | 8. Existing modal migration | Not started | Root modal-type input switches are removed |
 | 9. Adaptive sidebar and motion | Not started | Dock/drawer transition invariants pass |
 | 10. Remaining forms and cleanup | Not started | Superseded paths are audited and minimized |
@@ -647,22 +647,22 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 7: declarative Preferences
 
-- [ ] Define application-owned field and action declarations.
-- [ ] Implement the minimal Number, Select, Directory, ActionBar, and Spacer
+- [x] Define application-owned field and action declarations.
+- [x] Implement the minimal Number, Select, Directory, ActionBar, and Spacer
   controls required by current preferences.
-- [ ] Anchor actions through layout growth rather than computed top padding.
-- [ ] Preserve live router changes, transaction ownership, Save, Save as
+- [x] Anchor actions through layout growth rather than computed top padding.
+- [x] Preserve live router changes, transaction ownership, Save, Save as
   Defaults, Cancel, and nested directory-picker behavior.
-- [ ] Retain a temporary Huh file-picker adapter only if replacing it would
+- [x] Retain a temporary Huh file-picker adapter only if replacing it would
   materially enlarge this phase.
-- [ ] Add the persisted Auto, Mac, and Standard profile selector.
-- [ ] Remove `NaturalHeight`, `blockOrigin`, rendered action lookup, and
+- [x] Add the persisted Auto, Mac, and Standard profile selector.
+- [x] Remove `NaturalHeight`, `blockOrigin`, rendered action lookup, and
   preference-specific frame arithmetic.
-- [ ] Verify adding a representative field changes only the preference
+- [x] Verify adding a representative field changes only the preference
   declaration and value mapping.
-- [ ] Preserve the accessible labels and keyboard traversal provided by the
+- [x] Preserve the accessible labels and keyboard traversal provided by the
   current fields.
-- [ ] Extend the chrome lab and `ht` smoke with form, nested picker, and live
+- [x] Extend the chrome lab and `ht` smoke with form, nested picker, and live
   preference-context scenarios.
 
 ### Phase 8: existing modal migration
@@ -810,6 +810,9 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Keep Help session-local and adapt the existing Huh Preferences body behind one chrome modal surface. | The foundational phase needs contextual inspection and one input router; persistence and declarative fields belong to later listed phases. |
 | 2026-07-28 | Capture the transparent canvas host during pointer gestures. | Canvas drags must continue beneath higher floating surfaces after they start, while idle pointer input still follows z-order. |
 | 2026-07-28 | Recompute root surfaces only for terminal, Help, or modal state changes. | Unconditional arrangement doubled interactive latency; retained invalidation restores the root View path to its Phase 2 benchmark envelope. |
+| 2026-07-28 | Represent forms as application declarations backed by one retained `chrome.FormPlan`. | Semantic field, spacer, action-bar, and action IDs now drive rendering, input, focus, accessibility, and diagnostics without recovering geometry from rendered text. |
+| 2026-07-28 | Keep Huh only as a bounded Preferences directory-picker adapter through Phase 7. | Replacing filesystem navigation would materially enlarge the preference migration; all ordinary fields, actions, sizing, and traversal now use chrome controls. |
+| 2026-07-28 | Persist Auto, Mac, and Standard key profiles and apply edits live. | The resolver updates with the form value, Cancel restores the original projection, and Save writes the selected profile. |
 
 ## Changed-File Ledger
 
@@ -824,6 +827,7 @@ Update this table after each completed phase or reviewable slice.
 | 4 | `internal/tui/cmd/chrome-lab/{main.go,main_test.go,README.md,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add the interactive chrome lab, stable diagnostics, responsive scenarios, and failure-artifact PTY smoke runner. |
 | 5 | `internal/tui/chrome/{command,focus}.go`, matching tests, `internal/tui/bindings.go`, `internal/tui/model.go`, chrome-lab files, `internal/tui/CHROME_PLAN.md` | Add semantic command/profile resolution, focus scopes and restoration, root declarations, and focus/profile/paste lab scenarios. |
 | 6 | `internal/tui/chrome/{surface.go,surface_test.go}`, `internal/tui/{bindings,help,modal,model,model_test,mouse,preferences,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add one surface/workspace router, transparent canvas host and footer, contextual passive Help, legacy Preferences adaptation, and surface lab scenarios. |
+| 7 | `internal/tui/chrome/{AGENTS.md,form.go,form_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, deleted `internal/tui/preferences/{actions.go,row.go}`, `internal/tui/{modal.go,model_test.go,preferences.go,theme.go}`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add retained declarative forms, migrate Preferences and persisted key profiles, bound the remaining Huh picker, remove rendered-text geometry recovery, and add form/picker lab coverage. |
 
 ## Verification Ledger
 
@@ -892,3 +896,13 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 6 | First root `ht` check at `100x30`, `80x16`, and `80x12` | Screen assertions passed, but the harness left passing JSON snapshots in its temporary directory and failed cleanup. Removed the snapshots and reran without pass artifacts. |
 | 2026-07-28 | 6 | Final root `ht run`, `ht wait`, and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, toolbar, status, and hidden-cursor assertions; all sessions stopped and removed. |
 | 2026-07-28 | 6 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-28 | 7 | Initial narrow chrome, Preferences, and root tests | Compilation exposed all remaining tests coupled to removed Huh fields and geometry. After replacing those tests, root picker tests still assumed Huh traversal commands and mouse actions were asynchronous. Rewrote them against semantic IDs and made pointer activation synchronous at the Preferences boundary. |
+| 2026-07-28 | 7 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui/preferences ./internal/tui/cmd/chrome-lab ./internal/tui` | Passed declarative form, Preferences, lab, and root integration tests. |
+| 2026-07-28 | 7 | First `./internal/tui/cmd/chrome-lab/smoke.sh` | All form interactions reached the final state at `80x12`; the final snapshot failed only because a redundant click-count diagnostic moved below the constrained viewport. Removed that final assertion while retaining the wait-coupled click checks. |
+| 2026-07-28 | 7 | Final `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed form traversal, live profile context, nested picker, surfaces, focus, paste, pointer, and prior scenarios at all three sizes; all sessions cleaned up. |
+| 2026-07-28 | 7 | Root `ht` interaction sweep at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, enhanced-key Preferences open, nested picker open/close, live Mac profile selection, Cancel restoration path, toolbar/status composition, and hidden cursor; all sessions stopped and removed. |
+| 2026-07-28 | 7 | `go test ./internal/tui/chrome -run '^$' -bench . -benchmem -count=1`; `go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: Measure 5,364 ns/op, Arrange 6,545 ns/op, MenuRender 8,309 ns/op, ViewportArrange 2,450 ns/op. Root AltDrag 48,308 ns/op, 10,921 B/op, 9 allocs/op; MoveCommittedDuplicate 47,765 ns/op, 10,952 B/op, 12 allocs/op; MoveAndView 5,418 ns/op, 4,696 B/op, 9 allocs/op. |
+| 2026-07-28 | 7 | First full test, race, vet, and lint gate | Tests, race, and vet passed. Lint reported four repeated literals and one lab complexity threshold. Consolidated semantic constants and extracted lab key handling. |
+| 2026-07-28 | 7 | `dd-gopls check <all changed Phase 7 Go files>` | Passed with no diagnostics. |
+| 2026-07-28 | 7 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues after the lint fixes. |
+| 2026-07-28 | 7 | Post-fix `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed all three terminal sizes after extracting lab key handling. |

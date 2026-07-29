@@ -3,8 +3,8 @@
 ## Responsibility
 
 `chrome` owns reusable terminal UI mechanics: intrinsic measurement,
-arrangement, retained layout plans, menu geometry, panes, finite viewports, and
-diagnostics used by the chrome lab.
+arrangement, retained layout plans, menu and form geometry, panes, finite
+viewports, and diagnostics used by the chrome lab.
 
 ## Boundaries
 
@@ -15,6 +15,10 @@ diagnostics used by the chrome lab.
 - Keep arranged IDs stable across resize and reflow; reject duplicates.
 - Treat ANSI-rendered text only as leaf content, never as recovered component
   geometry.
+- Forms expose semantic field, action, spacer, and action-bar IDs through one
+  retained plan. Applications own declarations and value mapping.
+- Keep keyboard traversal and accessible execution paths aligned with the same
+  declared control order.
 - Keep the canvas's unbounded document viewport outside this package.
 
 ## Performance

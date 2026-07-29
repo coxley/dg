@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 )
@@ -130,31 +129,14 @@ func (m *Model) closeModal() {
 }
 
 func (m *Model) preferenceBody(width int) string {
-	preferenceHeight := 0
-	bodyHeight := 0
-	if m.preferenceForm != nil {
-		m.preferenceForm.SetWidth(width)
-		if m.dialog.Overlay().Height != 0 {
-			bodyHeight = m.dialog.BodyHeight()
-		}
-		m.preferenceForm.SetHeight(bodyHeight)
-		preferenceHeight = m.preferenceForm.NaturalHeight()
-	}
-
 	if m.modal != modalPreferences || m.preferenceForm == nil {
 		return ""
 	}
-	content := m.preferenceForm.View().Content
-	height := lipgloss.Height(content)
-	frameHeight := m.theme.Modal.Container.GetVerticalFrameSize() +
-		m.theme.Modal.Body.GetVerticalFrameSize()
-	if bodyHeight > 0 {
-		height = bodyHeight
-	} else if preferenceHeight+frameHeight+m.nav.Bounds().Bottom() <= m.height {
-		height = preferenceHeight
+	m.preferenceForm.SetWidth(width)
+	height := 0
+	if m.dialog.Overlay().Height != 0 {
+		height = m.dialog.BodyHeight()
 	}
-	return m.theme.SettingsContent.
-		Height(height).
-		MaxHeight(height).
-		Render(content)
+	m.preferenceForm.SetHeight(height)
+	return m.preferenceForm.View().Content
 }

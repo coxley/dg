@@ -62,14 +62,20 @@ for size in 100x30 80x16 80x12; do
   printf -v outside_press '\e[<0;2;2M'
   ht send --raw --wait-text "legacy modal adapter: closed" --timeout 5s \
     "$session" "$outside_press" >/dev/null
+  ht send --wait-text "scenario: forms" --timeout 5s "$session" "9" >/dev/null
+  ht send --wait-text "router-step: 11" --timeout 5s "$session" "<Right>" >/dev/null
+  ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
+  ht send --wait-text "key-profile: mac" --timeout 5s "$session" "<Right>" >/dev/null
+  ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
+  ht send --wait-text "NESTED DIRECTORY PICKER" --timeout 5s "$session" "<Enter>" >/dev/null
+  ht send --wait-text "Save directory" --timeout 5s "$session" "q" >/dev/null
 
   snapshot="$(ht view --json "$session")"
   grep -q "\"cols\": ${size%x*}" <<<"$snapshot"
   grep -q "\"rows\": ${size#*x}" <<<"$snapshot"
-  grep -q "scenario: surfaces" <<<"$snapshot"
+  grep -q "scenario: forms" <<<"$snapshot"
   grep -q "density: compact" <<<"$snapshot"
-  grep -q "events: click=3" <<<"$snapshot"
-  grep -q "help: visible (passive)" <<<"$snapshot"
+  grep -q "preference-context: live" <<<"$snapshot"
 
   ht stop "$session" >/dev/null
   ht remove "$session" >/dev/null

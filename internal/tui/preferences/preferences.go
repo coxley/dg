@@ -4,22 +4,48 @@ package preferences
 import (
 	"math"
 	"os"
-	"strings"
 
-	keybinding "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/coxley/dg/internal/tui/numinput"
+	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/coxley/dg/layout"
 )
+
+const (
+	fieldStep          chrome.ID = "step"
+	fieldSharedStep    chrome.ID = "shared-step"
+	fieldBend          chrome.ID = "bend"
+	fieldCrossing      chrome.ID = "crossing"
+	fieldEndpoint      chrome.ID = "endpoint"
+	fieldReroutePasses chrome.ID = "reroute-passes"
+	fieldComment       chrome.ID = "comment"
+	fieldDirectory     chrome.ID = "directory"
+	fieldKeyProfile    chrome.ID = "key-profile"
+	preferenceSpacer   chrome.ID = "preference-spacer"
+	preferenceActions  chrome.ID = "preference-actions"
+	actionSave         chrome.ID = "save"
+	actionSaveDefaults chrome.ID = "save-defaults"
+	actionCancel       chrome.ID = "cancel"
+	commentSlash                 = "// "
+	commentHash                  = "# "
+	commentBlock                 = "/* */"
+)
+
+var numericFieldIDs = [...]chrome.ID{
+	fieldStep,
+	fieldSharedStep,
+	fieldBend,
+	fieldCrossing,
+	fieldEndpoint,
+	fieldReroutePasses,
+}
 
 // Value contains editable user preferences.
 type Value struct {
 	Router        layout.Router
 	SaveDirectory string
 	CommentPrefix string
+	KeyProfile    chrome.KeyProfile
 }
 
 // Action identifies how an edited preference form should close.
@@ -32,339 +58,15 @@ const (
 	ActionCancel
 )
 
-var actionLabels = [...]string{
-	ActionSave:         "Save",
-	ActionSaveDefaults: "Save as Defaults",
-	ActionCancel:       "Cancel",
-}
-
-// Styles defines all preferences-owned appearance.
+// Styles defines preferences appearance and the bounded picker adapter.
 type Styles struct {
-	Form           huh.Theme
-	NumInput       numinput.Styles
-	Title          lipgloss.Style
-	FocusedTitle   lipgloss.Style
-	Value          lipgloss.Style
-	FocusedValue   lipgloss.Style
-	Action         lipgloss.Style
-	SelectedAction lipgloss.Style
-}
-
-type formValue struct {
-	step          uint32
-	sharedStep    uint32
-	bend          uint32
-	crossing      uint32
-	endpoint      uint32
-	reroutePasses uint8
-	saveDirectory string
-	commentPrefix string
-	action        Action
-	submitted     bool
-}
-
-type numericField interface {
-	huh.Field
-	HandleFlash(numinput.FlashExpiredMsg) bool
-	SetStyles(numinput.Styles)
-	Flash() int
+	Form   chrome.FormStyles
+	Picker huh.Theme
 }
 
 // UpdateMsg routes a child form command back to Model.Update.
 type UpdateMsg struct {
 	message tea.Msg
-}
-
-// Model owns the preferences form and its editable value.
-type Model struct {
-	value         Value
-	input         formValue
-	form          *huh.Form
-	fields        []numericField
-	rows          []*rowField
-	directory     *directoryField
-	actions       *actionField
-	width         int
-	height        int
-	naturalHeight int
-	styles        Styles
-}
-
-// New returns a preferences model.
-func New(value Value, width, height int, styles Styles) *Model {
-	model := &Model{
-		width:  width,
-		height: height,
-		styles: styles,
-	}
-	model.Reset(value)
-	return model
-}
-
-// Init implements tea.Model.
-func (m *Model) Init() tea.Cmd {
-	return m.form.Init()
-}
-
-// Update implements tea.Model.
-func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	if update, ok := message.(UpdateMsg); ok {
-		message = update.message
-	}
-	if flash, ok := message.(numinput.FlashExpiredMsg); ok {
-		for _, field := range m.fields {
-			if field.HandleFlash(flash) {
-				return m, nil
-			}
-		}
-	}
-	switch message := message.(type) {
-	case ClickMsg:
-		m.click(message.X, message.Y)
-		return m, nil
-	case ScrollMsg:
-		return m, m.scroll(message.Delta)
-	case tea.KeyPressMsg:
-		if handled, command := m.updateCollapsedDirectory(message); handled {
-			return m, command
-		}
-		if m.directory.Zoom() &&
-			(message.Code == tea.KeyEscape ||
-				message.Code == 'q' && message.Mod == 0) {
-			m.directory.close()
-			form, command := m.form.Update(refreshMsg{})
-			m.form = form.(*huh.Form)
-			return m, wrap(command)
-		}
-	}
-	form, command := m.form.Update(message)
-	m.form = form.(*huh.Form)
-	m.sync()
-	return m, wrap(command)
-}
-
-// View implements tea.Model.
-func (m *Model) View() tea.View {
-	return tea.NewView(m.form.View())
-}
-
-// Reset replaces the editable value and creates a fresh form.
-func (m *Model) Reset(value Value) {
-	m.value = value
-	m.input = formValueFrom(value)
-	m.form, m.fields, m.rows, m.directory, m.actions, m.naturalHeight = newForm(
-		&m.input,
-		m.width,
-		m.height,
-		m.styles,
-	)
-}
-
-// Value returns the current form value.
-func (m *Model) Value() Value {
-	return m.value
-}
-
-// Completed reports the submitted form action.
-func (m *Model) Completed() (Action, bool) {
-	return m.input.action, m.input.submitted
-}
-
-// NaturalHeight returns the unconstrained form height.
-func (m *Model) NaturalHeight() int {
-	return m.naturalHeight
-}
-
-// DirectoryOpen reports whether the directory browser replaces the form.
-func (m *Model) DirectoryOpen() bool {
-	return m.directory.Zoom()
-}
-
-// SetHeight replaces the available form height.
-func (m *Model) SetHeight(height int) {
-	height = max(height, 0)
-	if m.height == height {
-		return
-	}
-	m.height = height
-	if height <= 0 {
-		height = m.naturalHeight
-	}
-	m.actions.setTopPadding(max(height-m.naturalHeight, 0))
-	m.form.WithHeight(height)
-	form, _ := m.form.Update(refreshMsg{})
-	m.form = form.(*huh.Form)
-}
-
-// SetWidth replaces the available form width.
-func (m *Model) SetWidth(width int) {
-	m.width = max(width, 0)
-	m.form.WithWidth(m.width)
-	form, _ := m.form.Update(refreshMsg{})
-	m.form = form.(*huh.Form)
-}
-
-// SetStyles replaces all visual styles.
-func (m *Model) SetStyles(styles Styles) {
-	m.styles = styles
-	m.form.WithTheme(styles.Form)
-	for _, field := range m.fields {
-		field.SetStyles(styles.NumInput)
-	}
-	for _, row := range m.rows {
-		row.SetStyles(styles)
-	}
-	m.actions.styles = styles
-}
-
-// FieldFlash reports a numeric field's active direction for tests and diagnostics.
-func (m *Model) FieldFlash(index int) int {
-	if index < 0 || index >= len(m.fields) {
-		return 0
-	}
-	return m.fields[index].Flash()
-}
-
-func (m *Model) sync() {
-	router := m.value.Router
-	router.Costs.Step = m.input.step
-	router.Costs.SharedStep = m.input.sharedStep
-	router.Costs.Bend = m.input.bend
-	router.Costs.Crossing = m.input.crossing
-	router.Costs.EndpointStep = m.input.endpoint
-	router.ReroutePasses = m.input.reroutePasses
-	m.value = Value{
-		Router:        router,
-		SaveDirectory: m.input.saveDirectory,
-		CommentPrefix: NormalizeCommentPrefix(m.input.commentPrefix),
-	}
-}
-
-func formValueFrom(value Value) formValue {
-	return formValue{
-		step:          value.Router.Costs.Step,
-		sharedStep:    value.Router.Costs.SharedStep,
-		bend:          value.Router.Costs.Bend,
-		crossing:      value.Router.Costs.Crossing,
-		endpoint:      value.Router.Costs.EndpointStep,
-		reroutePasses: value.Router.ReroutePasses,
-		saveDirectory: value.SaveDirectory,
-		commentPrefix: NormalizeCommentPrefix(value.CommentPrefix),
-		action:        ActionSave,
-	}
-}
-
-func newForm(
-	value *formValue,
-	width, height int,
-	styles Styles,
-) (
-	*huh.Form,
-	[]numericField,
-	[]*rowField,
-	*directoryField,
-	*actionField,
-	int,
-) {
-	keymap := keyMap()
-	inputs := []numericField{
-		numinput.NewField("Step cost", &value.step, uint32(math.MaxUint32), styles.NumInput),
-		numinput.NewField("Shared-step cost", &value.sharedStep, uint32(math.MaxUint32), styles.NumInput),
-		numinput.NewField("Bend cost", &value.bend, uint32(math.MaxUint32), styles.NumInput),
-		numinput.NewField("Crossing cost", &value.crossing, uint32(math.MaxUint32), styles.NumInput),
-		numinput.NewField("Endpoint cost", &value.endpoint, uint32(math.MaxUint32), styles.NumInput),
-		numinput.NewField("Reroute passes", &value.reroutePasses, uint8(math.MaxUint8), styles.NumInput),
-	}
-	directory := value.saveDirectory
-	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
-		directory, _ = os.UserHomeDir()
-	}
-	filePicker := huh.NewFilePicker().
-		Title("Default save directory").
-		DirAllowed(true).
-		FileAllowed(false).
-		ShowHidden(false).
-		CurrentDirectory(directory).
-		Picking(false).
-		Value(&value.saveDirectory)
-	directoryField := newDirectoryField(
-		filePicker,
-		styles,
-	)
-	commentSelect := huh.NewSelect[string]().
-		Title("Preferred comments").
-		Options(
-			huh.NewOption("//", "// "),
-			huh.NewOption("#", "# "),
-			huh.NewOption("/* */", "/* */"),
-		).
-		Inline(true).
-		Value(&value.commentPrefix)
-	commentField := newRowField(
-		commentSelect,
-		"Preferred comments",
-		choiceControl,
-		styles,
-	)
-	actions := newActionField(&value.action, &value.submitted, styles)
-	fields := []huh.Field{
-		inputs[0],
-		inputs[1],
-		inputs[2],
-		inputs[3],
-		inputs[4],
-		inputs[5],
-		commentField,
-		directoryField,
-		actions,
-	}
-	form := huh.NewForm(huh.NewGroup(fields...)).
-		WithWidth(width).
-		WithShowHelp(false).
-		WithKeyMap(keymap).
-		WithTheme(styles.Form)
-	_ = form.Init()
-	view := form.View()
-	naturalHeight := lipgloss.Height(view)
-	if _, top, ok := blockOrigin(view, actions.content()); ok {
-		naturalHeight = top + lipgloss.Height(actions.content())
-	}
-	if height <= 0 {
-		height = naturalHeight
-	}
-	actions.setTopPadding(max(height-naturalHeight, 0))
-	form.WithHeight(height)
-	updated, _ := form.Update(refreshMsg{})
-	form = updated.(*huh.Form)
-	return form, inputs, []*rowField{
-		commentField,
-		directoryField.rowField,
-	}, directoryField, actions, naturalHeight
-}
-
-func keyMap() *huh.KeyMap {
-	keymap := huh.NewDefaultKeyMap()
-	keymap.Input.Prev = keybinding.NewBinding(
-		keybinding.WithKeys("up", "k"),
-		keybinding.WithHelp("↑", "previous"),
-	)
-	keymap.Input.Next = keybinding.NewBinding(
-		keybinding.WithKeys("down", "j", "enter"),
-		keybinding.WithHelp("↓", "next"),
-	)
-	keymap.Confirm.Prev = keymap.Input.Prev
-	keymap.Confirm.Next = keymap.Input.Next
-	keymap.Select.Prev = keymap.Input.Prev
-	keymap.Select.Next = keymap.Input.Next
-	keymap.Select.Up = keybinding.NewBinding(
-		keybinding.WithKeys("left", "h"),
-		keybinding.WithHelp("←", "choice"),
-	)
-	keymap.Select.Down = keybinding.NewBinding(
-		keybinding.WithKeys("right", "l"),
-		keybinding.WithHelp("→", "choice"),
-	)
-	return keymap
 }
 
 // ClickMsg identifies a form-local pointer click.
@@ -378,84 +80,326 @@ type ScrollMsg struct {
 	Delta int
 }
 
-type refreshMsg struct{}
-
-func (m *Model) click(x, y int) {
-	left, top, ok := blockOrigin(m.form.View(), m.actions.content())
-	if !ok {
-		return
-	}
-	m.actions.hit(x-left, y-top)
+// Model owns the preference declarations, editable value, and picker adapter.
+type Model struct {
+	value       Value
+	form        *chrome.Form
+	picker      *huh.FilePicker
+	pickerValue string
+	pickerOpen  bool
+	action      Action
+	completed   bool
+	width       int
+	height      int
+	styles      Styles
 }
 
-func (m *Model) scroll(delta int) tea.Cmd {
-	if delta == 0 || m.directory.Zoom() {
+// New returns a declarative preferences model.
+func New(value Value, width, height int, styles Styles) *Model {
+	m := &Model{width: max(width, 0), height: max(height, 0), styles: styles}
+	m.Reset(value)
+	return m
+}
+
+// Init implements tea.Model.
+func (*Model) Init() tea.Cmd {
+	return nil
+}
+
+// Update implements tea.Model.
+func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if update, ok := message.(UpdateMsg); ok {
+		message = update.message
+	}
+	if m.pickerOpen {
+		return m, m.updatePicker(message)
+	}
+	switch message := message.(type) {
+	case ClickMsg:
+		command := m.form.Click(chrome.Point{X: message.X, Y: message.Y})
+		if command == nil {
+			return m, nil
+		}
+		return m.Update(command())
+	case ScrollMsg:
+		if message.Delta < 0 {
+			m.form.MoveFocus(-1)
+		} else if message.Delta > 0 {
+			m.form.MoveFocus(1)
+		}
+		return m, nil
+	case chrome.FormActivateMsg:
+		if message.ID == fieldDirectory {
+			m.openPicker()
+		}
+		return m, nil
+	case chrome.FormSubmitMsg:
+		m.submit(message.ID)
+		return m, nil
+	default:
+		form, command := m.form.Update(message)
+		m.form = form.(*chrome.Form)
+		m.sync()
+		return m, wrap(command)
+	}
+}
+
+// View implements tea.Model.
+func (m *Model) View() tea.View {
+	if m.pickerOpen {
+		return tea.NewView(m.picker.View())
+	}
+	return m.form.View()
+}
+
+// Reset replaces the editable value and declarations.
+func (m *Model) Reset(value Value) {
+	value.CommentPrefix = NormalizeCommentPrefix(value.CommentPrefix)
+	value.KeyProfile = NormalizeKeyProfile(value.KeyProfile)
+	m.value = value
+	m.action = ActionNone
+	m.completed = false
+	m.pickerOpen = false
+	m.form = chrome.NewForm(preferenceDeclaration(value), m.styles.Form)
+	m.form.SetBounds(chrome.Rect{Width: m.width, Height: m.height})
+	m.resetPicker(value.SaveDirectory)
+}
+
+// Value returns the current form value.
+func (m *Model) Value() Value {
+	return m.value
+}
+
+// Completed reports the submitted form action.
+func (m *Model) Completed() (Action, bool) {
+	return m.action, m.completed
+}
+
+// DirectoryOpen reports whether the bounded Huh picker replaces the form.
+func (m *Model) DirectoryOpen() bool {
+	return m.pickerOpen
+}
+
+// SetHeight replaces the available form height; zero hugs content.
+func (m *Model) SetHeight(height int) {
+	m.height = max(height, 0)
+	m.form.SetBounds(chrome.Rect{Width: m.width, Height: m.height})
+	m.picker.WithHeight(m.height)
+}
+
+// SetWidth replaces the available form width.
+func (m *Model) SetWidth(width int) {
+	m.width = max(width, 0)
+	m.form.SetBounds(chrome.Rect{Width: m.width, Height: m.height})
+	m.picker.WithWidth(m.width)
+}
+
+// SetStyles replaces form and picker styles.
+func (m *Model) SetStyles(styles Styles) {
+	m.styles = styles
+	m.form.SetStyles(styles.Form)
+	m.picker.WithTheme(styles.Picker)
+}
+
+// FieldFlash reports one numeric field's active direction.
+func (m *Model) FieldFlash(index int) int {
+	if index < 0 || index >= len(numericFieldIDs) {
+		return 0
+	}
+	return m.form.Flash(numericFieldIDs[index])
+}
+
+// FocusID returns the semantic form focus.
+func (m *Model) FocusID() chrome.ID {
+	if m.pickerOpen {
+		return fieldDirectory
+	}
+	return m.form.FocusID()
+}
+
+// Focus moves focus to one semantic form control.
+func (m *Model) Focus(id chrome.ID) bool {
+	if m.pickerOpen {
+		m.closePicker()
+	}
+	return m.form.Focus(id)
+}
+
+func (m *Model) updatePicker(message tea.Msg) tea.Cmd {
+	if key, ok := message.(tea.KeyPressMsg); ok &&
+		(key.Code == tea.KeyEscape || key.Code == 'q' && key.Mod == 0) {
+		m.closePicker()
 		return nil
 	}
-	if m.form.GetFocusedField() == m.actions && delta > 0 {
-		return nil
+	picker, command := m.picker.Update(message)
+	m.picker = picker.(*huh.FilePicker)
+	m.value.SaveDirectory = m.pickerValue
+	if !m.picker.Zoom() {
+		m.closePicker()
 	}
-	message := huh.PrevField()
-	if delta > 0 {
-		message = huh.NextField()
-	}
-	form, command := m.form.Update(message)
-	m.form = form.(*huh.Form)
 	return wrap(command)
 }
 
-func (m *Model) updateCollapsedDirectory(message tea.KeyPressMsg) (bool, tea.Cmd) {
-	if m.directory.Zoom() || m.form.GetFocusedField() != m.directory {
-		return false, nil
-	}
-	switch {
-	case message.Code == tea.KeyDown || message.Text == "j":
-		return true, m.scroll(1)
-	case message.Code == tea.KeyUp || message.Text == "k":
-		return true, m.scroll(-1)
-	}
-	return false, nil
+func (m *Model) openPicker() {
+	m.pickerValue = m.value.SaveDirectory
+	m.picker.Picking(true)
+	m.pickerOpen = true
 }
 
-func blockOrigin(view, block string) (left, top int, ok bool) {
-	lines := strings.Split(ansi.Strip(view), "\n")
-	blockLines := strings.Split(ansi.Strip(block), "\n")
-	if len(blockLines) == 0 || blockLines[0] == "" {
-		return 0, 0, false
-	}
-	for top := 0; top+len(blockLines) <= len(lines); top++ {
-		start := strings.Index(lines[top], blockLines[0])
-		for start >= 0 {
-			if blockAt(lines[top:], blockLines, start) {
-				return ansi.StringWidth(lines[top][:start]), top, true
-			}
-			next := strings.Index(lines[top][start+1:], blockLines[0])
-			if next < 0 {
-				break
-			}
-			start += next + 1
-		}
-	}
-	return 0, 0, false
+func (m *Model) closePicker() {
+	m.picker.Picking(false)
+	m.pickerOpen = false
+	m.value.SaveDirectory = m.pickerValue
+	m.form.SetDirectory(fieldDirectory, m.pickerValue)
 }
 
-func blockAt(lines, block []string, start int) bool {
-	for i := range block {
-		if start+len(block[i]) > len(lines[i]) ||
-			lines[i][start:start+len(block[i])] != block[i] {
-			return false
+func (m *Model) resetPicker(directory string) {
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		directory, _ = os.UserHomeDir()
+	}
+	m.pickerValue = m.value.SaveDirectory
+	m.picker = huh.NewFilePicker().
+		Title("Default save directory").
+		DirAllowed(true).
+		FileAllowed(false).
+		ShowHidden(false).
+		CurrentDirectory(directory).
+		Picking(false).
+		Value(&m.pickerValue)
+	m.picker.WithTheme(m.styles.Picker)
+	m.picker.WithWidth(m.width)
+	m.picker.WithHeight(m.height)
+}
+
+func (m *Model) sync() {
+	router := m.value.Router
+	router.Costs.Step = uint32(m.mustNumber(fieldStep))
+	router.Costs.SharedStep = uint32(m.mustNumber(fieldSharedStep))
+	router.Costs.Bend = uint32(m.mustNumber(fieldBend))
+	router.Costs.Crossing = uint32(m.mustNumber(fieldCrossing))
+	router.Costs.EndpointStep = uint32(m.mustNumber(fieldEndpoint))
+	router.ReroutePasses = uint8(m.mustNumber(fieldReroutePasses))
+	m.value.Router = router
+	m.value.CommentPrefix = NormalizeCommentPrefix(m.mustSelected(fieldComment))
+	m.value.KeyProfile = profileFromValue(m.mustSelected(fieldKeyProfile))
+	m.value.SaveDirectory, _ = m.form.Directory(fieldDirectory)
+}
+
+func (m *Model) mustNumber(id chrome.ID) uint64 {
+	value, _ := m.form.Number(id)
+	return value
+}
+
+func (m *Model) mustSelected(id chrome.ID) string {
+	value, _ := m.form.Selected(id)
+	return value
+}
+
+func (m *Model) submit(id chrome.ID) {
+	switch id {
+	case actionSave:
+		m.action = ActionSave
+	case actionSaveDefaults:
+		m.action = ActionSaveDefaults
+	case actionCancel:
+		m.action = ActionCancel
+	default:
+		return
+	}
+	m.completed = true
+}
+
+func preferenceDeclaration(value Value) chrome.FormDeclaration {
+	return chrome.FormDeclaration{
+		Fields: []chrome.FormField{
+			numberField(fieldStep, "Step cost", uint64(value.Router.Costs.Step), math.MaxUint32),
+			numberField(fieldSharedStep, "Shared-step cost", uint64(value.Router.Costs.SharedStep), math.MaxUint32),
+			numberField(fieldBend, "Bend cost", uint64(value.Router.Costs.Bend), math.MaxUint32),
+			numberField(fieldCrossing, "Crossing cost", uint64(value.Router.Costs.Crossing), math.MaxUint32),
+			numberField(fieldEndpoint, "Endpoint cost", uint64(value.Router.Costs.EndpointStep), math.MaxUint32),
+			numberField(fieldReroutePasses, "Reroute passes", uint64(value.Router.ReroutePasses), math.MaxUint8),
+			{
+				ID: fieldComment, Label: "Preferred comments", Kind: chrome.SelectField,
+				Options: []chrome.FormOption{
+					{Label: "//", Value: commentSlash},
+					{Label: "#", Value: commentHash},
+					{Label: commentBlock, Value: commentBlock},
+				},
+				Selected: optionIndex(
+					[]string{commentSlash, commentHash, commentBlock},
+					NormalizeCommentPrefix(value.CommentPrefix),
+				),
+			},
+			{
+				ID: fieldDirectory, Label: "Default save directory",
+				Kind: chrome.DirectoryField, Directory: value.SaveDirectory,
+			},
+			{
+				ID: fieldKeyProfile, Label: "Key profile", Kind: chrome.SelectField,
+				Options: []chrome.FormOption{
+					{Label: "Auto", Value: "auto"},
+					{Label: "Mac", Value: "mac"},
+					{Label: "Standard", Value: "standard"},
+				},
+				Selected: int(NormalizeKeyProfile(value.KeyProfile)),
+			},
+		},
+		Spacer: chrome.FormSpacer{ID: preferenceSpacer, Grow: 1},
+		Actions: chrome.ActionBar{
+			ID: preferenceActions,
+			Actions: []chrome.FormAction{
+				{ID: actionSave, Label: "Save"},
+				{ID: actionSaveDefaults, Label: "Save as Defaults"},
+				{ID: actionCancel, Label: "Cancel"},
+			},
+		},
+	}
+}
+
+func numberField(id chrome.ID, label string, value, maximum uint64) chrome.FormField {
+	return chrome.FormField{
+		ID: id, Label: label, Kind: chrome.NumberField,
+		Number: value, Maximum: maximum,
+	}
+}
+
+func optionIndex(options []string, value string) int {
+	for i, option := range options {
+		if option == value {
+			return i
 		}
 	}
-	return true
+	return 0
+}
+
+func profileFromValue(value string) chrome.KeyProfile {
+	switch value {
+	case "mac":
+		return chrome.ProfileMac
+	case "standard":
+		return chrome.ProfileStandard
+	default:
+		return chrome.ProfileAuto
+	}
+}
+
+// NormalizeKeyProfile returns a supported key profile.
+func NormalizeKeyProfile(profile chrome.KeyProfile) chrome.KeyProfile {
+	switch profile {
+	case chrome.ProfileMac, chrome.ProfileStandard:
+		return profile
+	default:
+		return chrome.ProfileAuto
+	}
 }
 
 // NormalizeCommentPrefix returns a supported comment preference.
 func NormalizeCommentPrefix(prefix string) string {
 	switch prefix {
-	case "# ", "/* */":
+	case commentHash, commentBlock:
 		return prefix
 	default:
-		return "// "
+		return commentSlash
 	}
 }
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
@@ -686,9 +686,11 @@ func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
 	for range 7 {
-		model.updateSettingsTabs(huh.NextField())
+		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
 	}
-	updateModelCommand(t, model, keyPress('l', "l"))
+	command := updateModelCommand(t, model, keyPress('l', "l"))
+	require.NotNil(t, command)
+	updateModel(t, model, command())
 	require.True(t, model.preferenceForm.DirectoryOpen())
 
 	updateModelCommand(t, model, keyPress(tea.KeyEscape, ""))
@@ -706,9 +708,11 @@ func TestPreferenceQClosesDirectoryBeforeModal(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
 	for range 7 {
-		model.updateSettingsTabs(huh.NextField())
+		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
 	}
-	updateModelCommand(t, model, keyPress('l', "l"))
+	command := updateModelCommand(t, model, keyPress('l', "l"))
+	require.NotNil(t, command)
+	updateModel(t, model, command())
 	require.True(t, model.preferenceForm.DirectoryOpen())
 
 	updateModelCommand(t, model, keyPress('q', "q"))
@@ -822,7 +826,7 @@ func TestPreferenceFormCanReachSaveAndCancel(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
 	model.openPreferences()
 	for range 9 {
-		model.updateSettingsTabs(huh.NextField())
+		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
 	}
 
 	view := ansi.Strip(model.preferenceForm.View().Content)
@@ -859,6 +863,35 @@ func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
 	model.openPreferences()
 	require.Equal(t, before, model.preferences.router)
 	require.Equal(t, before.Costs.Step, model.preferenceForm.Value().Router.Costs.Step)
+}
+
+func TestPreferenceKeyProfileUpdatesLiveRestoresAndPersists(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
+	model.openPreferences()
+	for range 8 {
+		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+	}
+	model.updateSettingsTabs(keyPress(tea.KeyRight, ""))
+	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
+
+	model.closeSettingsModal()
+	require.Equal(t, chrome.ProfileAuto, model.preferences.keyProfile)
+
+	model.openPreferences()
+	for range 8 {
+		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+	}
+	model.updateSettingsTabs(keyPress(tea.KeyRight, ""))
+	require.NotNil(t, model.applyPreferences(true))
+
+	data, err := os.ReadFile(model.preferences.path)
+	require.NoError(t, err)
+	var saved preferencesFile
+	require.NoError(t, json.Unmarshal(data, &saved))
+	require.Equal(t, chrome.ProfileMac, saved.KeyProfile)
 }
 
 func TestPreferencesSaveShowsNotice(t *testing.T) {

@@ -89,8 +89,41 @@ func TestLabSurfacesRouteModalCaptureAndDismissal(t *testing.T) {
 	require.True(t, model.helpVisible)
 }
 
+func TestLabFormsExposeLiveContextAndNestedPicker(t *testing.T) {
+	t.Parallel()
+
+	model := newLabModel(scenarioForms)
+	updateLab(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
+
+	command := updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	require.NotNil(t, command)
+	require.Contains(t, model.View().Content, "router-step: 11")
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	require.Contains(t, model.View().Content, "key-profile: mac")
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	command = updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	require.NotNil(t, command)
+	updateLab(t, model, command())
+	require.True(t, model.formPicker)
+	require.Contains(t, model.View().Content, "NESTED DIRECTORY PICKER")
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+	require.False(t, model.formPicker)
+	require.Contains(t, model.View().Content, "Save directory")
+}
+
 func updateLab(t testing.TB, model *labModel, message tea.Msg) {
 	t.Helper()
 	next, _ := model.Update(message)
 	require.Same(t, model, next)
+}
+
+func updateLabCommand(t testing.TB, model *labModel, message tea.Msg) tea.Cmd {
+	t.Helper()
+	next, command := model.Update(message)
+	require.Same(t, model, next)
+	return command
 }

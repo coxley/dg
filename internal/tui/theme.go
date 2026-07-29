@@ -4,6 +4,7 @@ import (
 	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	"github.com/coxley/dg/internal/tui/chrome"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	"github.com/coxley/dg/internal/tui/numinput"
@@ -112,13 +113,15 @@ func (t Theme) formTheme() huh.Theme {
 
 func (t Theme) preferenceStyles() preferencesview.Styles {
 	return preferencesview.Styles{
-		Form:           t.formTheme(),
-		NumInput:       t.NumInput,
-		Title:          t.NumInput.Title,
-		FocusedTitle:   t.NumInput.FocusedTitle,
-		Value:          t.NumInput.Button,
-		FocusedValue:   t.HelpKey,
-		Action:         t.Button,
-		SelectedAction: t.FocusedButton,
+		Picker: t.formTheme(),
+		Form: chrome.FormStyles{
+			Label:          t.NumInput.Title,
+			FocusedLabel:   t.NumInput.FocusedTitle,
+			Value:          t.NumInput.Button,
+			FocusedValue:   t.HelpKey,
+			ActiveValue:    t.NumInput.ActiveButton,
+			Action:         t.Button,
+			SelectedAction: t.FocusedButton,
+		},
 	}
 }
