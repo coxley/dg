@@ -92,3 +92,77 @@ func TestWorkspaceAnchorsLifecycleAndDuplicateIDs(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrDuplicateSurface)
 }
+
+func TestWorkspaceCoordinatesAnimatedDockAndCanvasBoundary(t *testing.T) {
+	t.Parallel()
+
+	var workspace Workspace
+	workspace.SetTerminal(Size{Width: 80, Height: 20})
+	require.True(t, workspace.RetargetSurface("sidebar", 24))
+	require.NoError(t, workspace.SetSurfaces([]Surface{{
+		ID: "sidebar", Role: SurfaceDock, Dock: DockLeft,
+		Requested: Rect{Width: 24}, Visible: true, Animated: true,
+	}}))
+
+	var boundaries []int
+	for workspace.AdvanceSurface("sidebar") {
+		plan := workspace.Plan()
+		sidebar, ok := workspace.Surface("sidebar")
+		require.True(t, ok)
+		require.Equal(t, sidebar.Rect.Right(), plan.Canvas.X)
+		require.Equal(t, 80-sidebar.Rect.Width, plan.Canvas.Width)
+		canvas, ok := workspace.ScreenToCanvas(Point{X: plan.Canvas.X + 3, Y: 2})
+		require.True(t, ok)
+		screen, ok := workspace.CanvasToScreen(canvas)
+		require.True(t, ok)
+		require.Equal(t, Point{X: plan.Canvas.X + 3, Y: 2}, screen)
+		boundaries = append(boundaries, plan.Canvas.X)
+	}
+	require.Equal(t, 24, boundaries[len(boundaries)-1])
+}
+
+func TestWorkspaceDrawerMovesContentAndKeepsCanvasFixed(t *testing.T) {
+	t.Parallel()
+
+	var workspace Workspace
+	workspace.SetTerminal(Size{Width: 40, Height: 12})
+	require.True(t, workspace.RetargetSurface("sidebar", 18))
+	require.NoError(t, workspace.SetSurfaces([]Surface{{
+		ID: "sidebar", Role: SurfaceDrawer, Dock: DockLeft,
+		Requested: Rect{Width: 18, Height: 12},
+		Visible:   true, Animated: true, DismissOutside: true,
+	}}))
+
+	require.True(t, workspace.AdvanceSurface("sidebar"))
+	plan := workspace.Plan()
+	require.Equal(t, Rect{Width: 40, Height: 12}, plan.Canvas)
+	sidebar, ok := workspace.Surface("sidebar")
+	require.True(t, ok)
+	require.Less(t, sidebar.Content.X, 0)
+	require.Equal(t, 0, sidebar.Rect.X)
+	require.Equal(t, sidebar.Content.Right(), sidebar.Rect.Right())
+	require.Equal(t, workspace.SurfacePosition("sidebar"), sidebar.Rect.Width)
+	id, ok := workspace.DismissAt(Point{X: sidebar.Rect.Right() + 1, Y: 2})
+	require.True(t, ok)
+	require.Equal(t, SurfaceID("sidebar"), id)
+}
+
+func TestWorkspaceAnimatedSurfaceRetargetsReversesAndDisablesMotion(t *testing.T) {
+	t.Parallel()
+
+	var workspace Workspace
+	require.True(t, workspace.RetargetSurface("sidebar", 24))
+	require.True(t, workspace.AdvanceSurface("sidebar"))
+	current := workspace.SurfacePosition("sidebar")
+	require.True(t, workspace.RetargetSurface("sidebar", 16))
+	require.Equal(t, current, workspace.SurfacePosition("sidebar"))
+	require.True(t, workspace.RetargetSurface("sidebar", 0))
+	require.Equal(t, current, workspace.SurfacePosition("sidebar"))
+	require.True(t, workspace.AdvanceSurface("sidebar"))
+	require.Less(t, workspace.SurfacePosition("sidebar"), current)
+
+	workspace.SetMotionEnabled(false)
+	require.False(t, workspace.RetargetSurface("sidebar", 20))
+	require.Equal(t, 20, workspace.SurfacePosition("sidebar"))
+	require.False(t, workspace.SurfaceMoving("sidebar"))
+}

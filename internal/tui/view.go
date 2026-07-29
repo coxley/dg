@@ -116,11 +116,19 @@ func (m *Model) activeFrame() canvasview.FrameID {
 
 func (m *Model) composeSurfaces(content string) string {
 	help, helpVisible := m.surfacePlan(surfaceHelp)
+	sidebar, sidebarVisible := m.surfacePlan(surfaceSidebar)
 	overlay := m.dialog.Overlay()
-	if !helpVisible && overlay.Content == "" {
+	if !helpVisible && !sidebarVisible && overlay.Content == "" {
 		return content
 	}
 	layers := []*lipgloss.Layer{lipgloss.NewLayer(content)}
+	if sidebarVisible {
+		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(m.sidebar.lines(sidebar))).
+			ID(string(surfaceSidebar)).
+			X(sidebar.Rect.X).
+			Y(sidebar.Rect.Y).
+			Z(sidebar.Surface.Priority))
+	}
 	if helpVisible {
 		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(m.helpInspector.lines())).
 			ID(string(surfaceHelp)).

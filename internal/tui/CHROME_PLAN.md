@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 8 complete; Phase 9 not started
+- Current phase: Phase 9 complete; Phase 10 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -524,7 +524,7 @@ review, and integration gate before beginning the next phase.
 | 6. Surfaces and contextual Help | Complete | One z-order/input router owns active surfaces |
 | 7. Declarative Preferences | Complete | No rendered-text geometry recovery remains |
 | 8. Existing modal migration | Complete | Root modal-type input switches are removed |
-| 9. Adaptive sidebar and motion | Not started | Dock/drawer transition invariants pass |
+| 9. Adaptive sidebar and motion | Complete | Dock/drawer transition invariants pass |
 | 10. Remaining forms and cleanup | Not started | Superseded paths are audited and minimized |
 
 ### Phase 1: baseline characterization
@@ -681,24 +681,24 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 9: adaptive sidebar and coordinated motion
 
-- [ ] Add a sidebar Pane with application-provided header, body, and footer.
-- [ ] Dock when sidebar minimum plus canvas minimum fits.
-- [ ] Use an overlay drawer when constrained or compact.
-- [ ] Focus the sidebar when explicitly opened.
-- [ ] Preserve docked visibility when Back returns focus to the canvas.
-- [ ] Dismiss compact placement on Back or outside click.
-- [ ] Implement workspace-owned cell-aware transition progress.
-- [ ] Coordinate docked sidebar width and canvas origin from one boundary.
-- [ ] Keep the canvas fixed during compact drawer animation.
-- [ ] Verify render clipping, pointer translation, keyboard visibility, cursor
+- [x] Add a sidebar Pane with application-provided header, body, and footer.
+- [x] Dock when sidebar minimum plus canvas minimum fits.
+- [x] Use an overlay drawer when constrained or compact.
+- [x] Focus the sidebar when explicitly opened.
+- [x] Preserve docked visibility when Back returns focus to the canvas.
+- [x] Dismiss compact placement on Back or outside click.
+- [x] Implement workspace-owned cell-aware transition progress.
+- [x] Coordinate docked sidebar width and canvas origin from one boundary.
+- [x] Keep the canvas fixed during compact drawer animation.
+- [x] Verify render clipping, pointer translation, keyboard visibility, cursor
   placement, and canvas-relative anchors throughout docked motion.
-- [ ] Preserve partially off-screen dragging, viewport rebasing, and moving
+- [x] Preserve partially off-screen dragging, viewport rebasing, and moving
   objects back into the visible host.
-- [ ] Verify screen-to-document coordinate round trips at every animated cell
+- [x] Verify screen-to-document coordinate round trips at every animated cell
   boundary.
-- [ ] Test resize retargeting, transition reversal, motion disabling, pointer
+- [x] Test resize retargeting, transition reversal, motion disabling, pointer
   bounds, and focus restoration.
-- [ ] Extend the chrome lab and `ht` smoke with docked push, compact overlay,
+- [x] Extend the chrome lab and `ht` smoke with docked push, compact overlay,
   reversal, resize-retarget, and disabled-motion scenarios.
 
 Initial sidebar contents may be a representative list. Recent diagrams, undo
@@ -816,6 +816,10 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Use one application-owned dialog-spec table keyed by distinct workspace surface IDs. | Preferences, Save, Export, and Notice now declare context, scopes, sizing, dismissal, content routing, and close behavior once; root no longer maintains a parallel modal enum or type switches. |
 | 2026-07-28 | Select floating versus fullscreen placement solely from available fit. | Content floats when its shell fits below avoided rows and fills the terminal otherwise; the same rule covers every current dialog. |
 | 2026-07-28 | Build confirmation as a semantic modal body without close policy. | The reusable body owns prompt layout, accessible text, and confirm/cancel action IDs while future unsaved-document decisions remain application behavior. |
+| 2026-07-28 | Use a 26-cell preferred sidebar, 24-cell minimum, 48-cell minimum canvas, and compact placement at 80 columns or fewer. | The required PTY sizes then exercise docked push at `100x30` and compact overlay at both 80-column sizes while preserving a usable canvas. |
+| 2026-07-28 | Advance workspace transitions every 16 ms with quadratic ease-out when opening and quadratic ease-in when closing. | Each update skips unchanged interpolation frames and exposes only a new integer cell; reversal and resize retarget from the current visible extent. |
+| 2026-07-28 | Retain full surface content placement separately from its clipped pointer rectangle. | Drawers can translate a stable pane partly outside the terminal while input and rendering use the same visible bounds. |
+| 2026-07-28 | Indicate sidebar focus only on its selected item. | Back can leave a docked sidebar visible without suggesting that its commands still own keyboard input. |
 
 ## Changed-File Ledger
 
@@ -832,6 +836,7 @@ Update this table after each completed phase or reviewable slice.
 | 6 | `internal/tui/chrome/{surface.go,surface_test.go}`, `internal/tui/{bindings,help,modal,model,model_test,mouse,preferences,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add one surface/workspace router, transparent canvas host and footer, contextual passive Help, legacy Preferences adaptation, and surface lab scenarios. |
 | 7 | `internal/tui/chrome/{AGENTS.md,form.go,form_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, deleted `internal/tui/preferences/{actions.go,row.go}`, `internal/tui/{modal.go,model_test.go,preferences.go,theme.go}`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add retained declarative forms, migrate Preferences and persisted key profiles, bound the remaining Huh picker, remove rendered-text geometry recovery, and add form/picker lab coverage. |
 | 8 | `internal/tui/modal/{AGENTS.md,confirmation.go,confirmation_test.go,modal.go,modal_test.go}`, `internal/tui/{bindings,clipboard_test,modal,model,model_test,preferences,save,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Replace the modal enum with declarative dialog specs and distinct surfaces, add fit-driven placement and a reusable confirmation body, preserve application transactions, and cover current dialog lifecycles. |
+| 9 | `internal/tui/chrome/{AGENTS.md,motion.go,motion_test.go,surface.go,surface_test.go}`, `internal/tui/{bindings,model,sidebar,sidebar_test,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add workspace-owned cell transitions, animated dock/drawer geometry, an application-declared sidebar Pane, placement-aware focus and dismissal, and deterministic lab/root PTY coverage. |
 
 ## Verification Ledger
 
@@ -919,3 +924,12 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 8 | First full test, race, vet, and lint gate | Tests, race, and vet passed. Lint reported repeated semantic strings, two preallocations, and one switch simplification. Reused typed IDs, preallocated retained slices, and simplified the command branch. |
 | 2026-07-28 | 8 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
 | 2026-07-28 | 8 | `dd-gopls check <all changed Phase 8 Go files>` | Passed with no diagnostics. |
+| 2026-07-28 | 9 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui/cmd/chrome-lab ./internal/tui -count=1` | Passed cell easing, retarget, reversal, disabled motion, dock/drawer geometry, every-boundary coordinate round trips, focus restoration, clipping, pointer, resize, existing off-screen drag/rebase behavior, lab, and root integration tests. |
+| 2026-07-28 | 9 | First sidebar `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed `100x30` and `80x16`; `80x12` reached the correct drawer state but the motion-enabled diagnostic was below the constrained viewport. Moved required transition fields into the visible diagnostic prefix. |
+| 2026-07-28 | 9 | Final `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed docked push, compact overlay, retarget, reversal controls, disabled motion, Back, and all prior scenarios at all three sizes; all sessions cleaned up. |
+| 2026-07-28 | 9 | Root sidebar `ht` sweep at `100x30`, `80x16`, and `80x12` | Passed settled rendering, exact dimensions, hidden cursor, docked Back persistence at `100x30`, compact Back/outside dismissal at both 80-column sizes, and clean session removal. |
+| 2026-07-28 | 9 | `go test ./internal/tui/chrome -run '^$' -bench . -benchmem -count=1`; `go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: Measure 4,584 ns/op, Arrange 6,390 ns/op, MenuRender 8,176 ns/op, ViewportArrange 2,433 ns/op. Root AltDrag 49,169 ns/op, 10,921 B/op, 9 allocs/op; MoveCommittedDuplicate 47,979 ns/op, 10,984 B/op, 13 allocs/op; MoveAndView 4,975 ns/op, 4,728 B/op, 10 allocs/op. |
+| 2026-07-28 | 9 | First `golangci-lint run --path-mode abs` | Reported one repeated lab Back chord and root `Update` complexity 34. Reused one semantic chord constant and extracted workspace invalidation policy. |
+| 2026-07-28 | 9 | Post-fix narrow tests and `golangci-lint run --path-mode abs` | Passed affected chrome, lab, and root packages with 0 lint issues. |
+| 2026-07-28 | 9 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-28 | 9 | `dd-gopls check <all changed Phase 9 Go files>` | Passed with no diagnostics. |

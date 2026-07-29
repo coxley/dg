@@ -145,6 +145,51 @@ func TestLabDialogsExerciseLifecycleAndDismissalPolicy(t *testing.T) {
 	require.Equal(t, labDialogConfirm, model.activeDialog)
 }
 
+func TestLabSidebarExercisesPlacementMotionAndFocus(t *testing.T) {
+	t.Parallel()
+
+	model := newLabModel(scenarioSidebar)
+	updateLab(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	command := updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'o', Text: "o"}))
+	require.NotNil(t, command)
+	require.True(t, model.sidebarFocused)
+
+	updateLabCommand(t, model, labMotionMsg{generation: model.motionGeneration})
+	current := model.workspace.SurfacePosition(labSidebar)
+	require.Positive(t, current)
+	updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Text: "r"}))
+	require.Equal(t, current, model.workspace.SurfacePosition(labSidebar))
+	updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Text: "r"}))
+	require.Equal(t, current, model.workspace.SurfacePosition(labSidebar))
+	advanceLabSidebar(t, model)
+	require.Equal(t, model.sidebarWidth, model.workspace.Plan().Canvas.X)
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	require.True(t, model.sidebarOpen)
+	require.False(t, model.sidebarFocused)
+
+	updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'p', Text: "p"}))
+	require.True(t, model.sidebarDrawer)
+	require.Zero(t, model.workspace.Plan().Canvas.X)
+	beforeRetarget := model.workspace.SurfacePosition(labSidebar)
+	updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 't', Text: "t"}))
+	require.Equal(t, beforeRetarget, model.workspace.SurfacePosition(labSidebar))
+
+	updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'm', Text: "m"}))
+	require.False(t, model.motionEnabled)
+	require.Equal(t, model.sidebarWidth, model.workspace.SurfacePosition(labSidebar))
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	require.False(t, model.sidebarOpen)
+	require.Zero(t, model.workspace.SurfacePosition(labSidebar))
+}
+
+func advanceLabSidebar(t testing.TB, model *labModel) {
+	t.Helper()
+	for model.workspace.SurfaceMoving(labSidebar) {
+		updateLabCommand(t, model, labMotionMsg{generation: model.motionGeneration})
+	}
+}
+
 func updateLab(t testing.TB, model *labModel, message tea.Msg) {
 	t.Helper()
 	next, _ := model.Update(message)

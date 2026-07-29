@@ -92,6 +92,7 @@ type Model struct {
 	canvas            canvasview.Model
 	bindings          *chrome.Resolver
 	workspace         chrome.Workspace
+	sidebar           sidebarState
 
 	mode             mode
 	activeDialog     chrome.SurfaceID
@@ -179,6 +180,15 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 	}
 	m.bindings = resolver
 	m.workspace.SetFooter(1)
+	m.sidebar = newSidebar(sidebarDeclaration{
+		Header: "SIDEBAR",
+		Items: []sidebarItem{
+			{ID: "overview", Label: "Overview"},
+			{ID: "selection", Label: "Selection"},
+			{ID: "document", Label: "Document"},
+		},
+		Footer: "Esc canvas  Ctrl+B close",
+	}, m.theme.sidebarStyles())
 	m.clipboard = clipboardview.New(m.theme.formTheme())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
@@ -231,9 +241,9 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	syncWorkspace := m.helpInspector.visible || m.activeDialog != surfaceNone
+	syncWorkspace := m.workspaceNeedsSync()
 	defer func() {
-		if syncWorkspace || m.helpInspector.visible || m.activeDialog != surfaceNone {
+		if syncWorkspace || m.workspaceNeedsSync() {
 			m.syncWorkspace()
 		}
 	}()
@@ -247,6 +257,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.nav.SetStyles(m.theme.Nav)
 		m.dialog.SetStyles(m.theme.Modal)
 		m.canvas.SetStyles(m.theme.Canvas)
+		m.sidebar.setStyles(m.theme.sidebarStyles())
 		clear(m.styledRuns)
 		if m.preferenceForm != nil {
 			m.preferenceForm.SetStyles(m.theme.preferenceStyles())
@@ -266,6 +277,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.nav.SetWidth(m.width)
 		m.resizePreferenceForm()
 		m.ensureCursorVisible()
+		return m, m.retargetSidebar()
 	case tea.KeyPressMsg:
 		keystroke := message.Keystroke()
 		if message.Text == "?" && message.Mod == tea.ModShift {
@@ -309,8 +321,19 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeDialog == surfaceNotice && message.id == m.noticeID {
 			closeNoticeDialog(m)
 		}
+	case sidebarMotionMsg:
+		syncWorkspace = true
+		return m, m.updateSidebarMotion(message)
 	}
 	return m, nil
+}
+
+func (m *Model) workspaceNeedsSync() bool {
+	return m.helpInspector.visible ||
+		m.activeDialog != surfaceNone ||
+		m.sidebar.open ||
+		m.workspace.SurfaceMoving(surfaceSidebar) ||
+		m.workspace.SurfacePosition(surfaceSidebar) != 0
 }
 
 func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
@@ -379,6 +402,8 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	switch {
 	case m.activeDialog != surfaceNone:
 		return m.updateDialog(message)
+	case m.sidebar.focused:
+		m.updateSidebarKey(message)
 	case key.Code == 's' && key.Mod == tea.ModCtrl:
 		m.requestSave()
 	case m.mode == modeEditLabel:

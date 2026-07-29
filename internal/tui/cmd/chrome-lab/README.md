@@ -8,8 +8,12 @@ go run ./internal/tui/cmd/chrome-lab
 
 Select scenarios with `1`–`9`, `0`, or Tab, toggle density with `d`, scroll with
 the arrow keys or mouse wheel, and drag with the left mouse button. Use
-`--scenario layout|pane|viewport|menu|density|overflow|focus|surfaces|forms|dialogs`
+`--scenario layout|pane|viewport|menu|density|overflow|focus|surfaces|forms|dialogs|sidebar`
 to choose the initial scenario.
+
+The sidebar scenario uses `o` to open or close, `r` to reverse, `t` to retarget
+width, `p` to switch dock/drawer placement, `m` to disable motion, and `Esc` to
+exercise placement-aware Back behavior.
 
 Run the real-PTY smoke:
 

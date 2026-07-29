@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -25,15 +26,18 @@ const (
 	scenarioSurfaces = "surfaces"
 	scenarioForms    = "forms"
 	scenarioDialogs  = "dialogs"
+	scenarioSidebar  = "sidebar"
 	labSurfaceHelp   = chrome.SurfaceID("help")
 	labSurfaceModal  = chrome.SurfaceID("modal")
 	labDialogSave    = chrome.SurfaceID("dialog.save")
 	labDialogExport  = chrome.SurfaceID("dialog.export")
 	labDialogNotice  = chrome.SurfaceID("dialog.notice")
 	labDialogConfirm = chrome.SurfaceID("dialog.confirm")
+	labSidebar       = chrome.SurfaceID("sidebar")
 	labFormNumber    = chrome.ID("form-number")
 	labFormProfile   = chrome.ID("form-profile")
 	labFormDirectory = chrome.ID("form-directory")
+	labKeyBack       = "esc"
 )
 
 var scenarioNames = [...]string{
@@ -47,6 +51,7 @@ var scenarioNames = [...]string{
 	scenarioSurfaces,
 	scenarioForms,
 	scenarioDialogs,
+	scenarioSidebar,
 }
 
 type labModel struct {
@@ -61,22 +66,32 @@ type labModel struct {
 	diagnostics     *chrome.Viewport
 	diagnosticsPane *chrome.Pane
 
-	pointer         chrome.Point
-	pointerCaptured bool
-	clicks          int
-	profile         chrome.KeyProfile
-	text            string
-	resolver        *chrome.Resolver
-	focus           *chrome.FocusRegistry
-	workspace       chrome.Workspace
-	modalVisible    bool
-	helpVisible     bool
-	form            *chrome.Form
-	formPicker      bool
-	formAction      string
-	formStep        uint64
-	formProfile     string
-	activeDialog    chrome.SurfaceID
+	pointer          chrome.Point
+	pointerCaptured  bool
+	clicks           int
+	profile          chrome.KeyProfile
+	text             string
+	resolver         *chrome.Resolver
+	focus            *chrome.FocusRegistry
+	workspace        chrome.Workspace
+	modalVisible     bool
+	helpVisible      bool
+	form             *chrome.Form
+	formPicker       bool
+	formAction       string
+	formStep         uint64
+	formProfile      string
+	activeDialog     chrome.SurfaceID
+	sidebarOpen      bool
+	sidebarFocused   bool
+	sidebarDrawer    bool
+	sidebarWidth     int
+	motionEnabled    bool
+	motionGeneration uint64
+}
+
+type labMotionMsg struct {
+	generation uint64
 }
 
 func newLabModel(scenario string) *labModel {
@@ -166,6 +181,8 @@ func newLabModel(scenario string) *labModel {
 		form:            form,
 		formStep:        10,
 		formProfile:     "auto",
+		sidebarWidth:    24,
+		motionEnabled:   true,
 	}
 }
 
@@ -183,6 +200,8 @@ func abbreviatedScenario(name string) string {
 		return "Form"
 	case scenarioDialogs:
 		return "Dialogs"
+	case scenarioSidebar:
+		return "Side"
 	default:
 		return strings.ToUpper(name[:1]) + name[1:]
 	}
@@ -201,6 +220,9 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.updateSurfaceScenario(message) {
 		return m, nil
+	}
+	if handled, command := m.updateSidebarScenario(message); handled {
+		return m, command
 	}
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
@@ -242,6 +264,15 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.pointerCaptured = false
 		m.workspace.Release()
 		m.refreshDiagnostics()
+	case labMotionMsg:
+		if message.generation != m.motionGeneration {
+			return m, nil
+		}
+		m.workspace.AdvanceSurface(labSidebar)
+		m.reflow()
+		if m.workspace.SurfaceMoving(labSidebar) {
+			return m, labMotionTick(message.generation)
+		}
 	}
 	return m, nil
 }
@@ -284,7 +315,7 @@ func (m *labModel) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		}
 		m.reflow()
 	case "0":
-		m.selectScenario(len(scenarioNames) - 1)
+		m.selectScenario(m.scenarioIndex(scenarioDialogs))
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		index, err := strconv.Atoi(message.String())
 		if err == nil {
@@ -292,6 +323,74 @@ func (m *labModel) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *labModel) updateSidebarScenario(message tea.Msg) (bool, tea.Cmd) {
+	if scenarioNames[m.scenario] != scenarioSidebar {
+		return false, nil
+	}
+	switch message := message.(type) {
+	case tea.KeyPressMsg:
+		switch message.String() {
+		case "o":
+			m.sidebarOpen = !m.sidebarOpen
+			m.sidebarFocused = m.sidebarOpen
+		case labKeyBack:
+			if m.sidebarDrawer {
+				m.sidebarOpen = false
+			}
+			m.sidebarFocused = false
+		case "p":
+			m.sidebarDrawer = !m.sidebarDrawer
+		case "r":
+			m.sidebarOpen = !m.sidebarOpen
+			m.sidebarFocused = m.sidebarOpen
+		case "t":
+			if m.sidebarWidth == 24 {
+				m.sidebarWidth = 18
+			} else {
+				m.sidebarWidth = 24
+			}
+		case "m":
+			m.motionEnabled = !m.motionEnabled
+			m.workspace.SetMotionEnabled(m.motionEnabled)
+		default:
+			return false, nil
+		}
+		command := m.retargetLabSidebar()
+		m.reflow()
+		return true, command
+	case tea.MouseClickMsg:
+		point := chrome.Point{X: message.X, Y: message.Y}
+		if id, ok := m.workspace.DismissAt(point); ok && id == labSidebar {
+			m.sidebarOpen = false
+			m.sidebarFocused = false
+			command := m.retargetLabSidebar()
+			m.reflow()
+			return true, command
+		}
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func (m *labModel) retargetLabSidebar() tea.Cmd {
+	target := 0
+	if m.sidebarOpen {
+		target = m.sidebarWidth
+	}
+	m.motionGeneration++
+	if !m.workspace.RetargetSurface(labSidebar, target) {
+		return nil
+	}
+	return labMotionTick(m.motionGeneration)
+}
+
+func labMotionTick(generation uint64) tea.Cmd {
+	return tea.Tick(16*time.Millisecond, func(time.Time) tea.Msg {
+		return labMotionMsg{generation: generation}
+	})
 }
 
 func (m *labModel) updateFormScenario(message tea.Msg) (bool, tea.Cmd) {
@@ -356,7 +455,7 @@ func (m *labModel) updateDialogScenario(message tea.Msg) bool {
 			m.activeDialog = labDialogNotice
 		case "c":
 			m.activeDialog = labDialogConfirm
-		case "esc":
+		case labKeyBack:
 			id, ok := m.workspace.Back()
 			if ok && id == m.activeDialog {
 				m.activeDialog = ""
@@ -389,7 +488,7 @@ func (m *labModel) updateSurfaceScenario(message tea.Msg) bool {
 			m.modalVisible = !m.modalVisible
 		case "h":
 			m.helpVisible = !m.helpVisible
-		case "esc":
+		case labKeyBack:
 			id, ok := m.workspace.Back()
 			if !ok || id != labSurfaceModal {
 				return true
@@ -502,6 +601,7 @@ func (m *labModel) reflow() {
 		m.labDialogSurface(labDialogExport, true),
 		m.labDialogSurface(labDialogNotice, false),
 		m.labDialogSurface(labDialogConfirm, true),
+		m.labSidebarSurface(),
 	}); err != nil {
 		panic(err)
 	}
@@ -545,6 +645,23 @@ func (m *labModel) reflow() {
 	}
 	m.contentViewport.SetContent(m.scenarioContent())
 	m.refreshDiagnostics()
+}
+
+func (m *labModel) labSidebarSurface() chrome.Surface {
+	role := chrome.SurfaceDock
+	if m.sidebarDrawer {
+		role = chrome.SurfaceDrawer
+	}
+	return chrome.Surface{
+		ID: labSidebar, Role: role, Anchor: chrome.AnchorWorkspace,
+		Dock:      chrome.DockLeft,
+		Requested: chrome.Rect{Width: m.sidebarWidth, Height: max(m.height-1, 0)},
+		Priority:  2,
+		Visible: scenarioNames[m.scenario] == scenarioSidebar &&
+			(m.sidebarOpen || m.workspace.SurfacePosition(labSidebar) != 0),
+		Animated: true, DismissOutside: m.sidebarDrawer,
+		DismissBack: m.sidebarDrawer, FocusOnOpen: true,
+	}
 }
 
 func (m *labModel) labDialogSurface(
@@ -614,6 +731,21 @@ func (m *labModel) refreshDiagnostics() {
 			"dialog-scope: modal/global",
 		)
 	}
+	if scenarioNames[m.scenario] == scenarioSidebar {
+		placement := "dock"
+		if m.sidebarDrawer {
+			placement = "drawer"
+		}
+		lines = append(
+			lines,
+			"sidebar-placement: "+placement,
+			fmt.Sprintf("sidebar-target: %d", m.sidebarWidth),
+			fmt.Sprintf("sidebar-position: %d", m.workspace.SurfacePosition(labSidebar)),
+			fmt.Sprintf("motion-enabled: %t", m.motionEnabled),
+			fmt.Sprintf("sidebar-moving: %t", m.workspace.SurfaceMoving(labSidebar)),
+			fmt.Sprintf("sidebar-focused: %t", m.sidebarFocused),
+		)
+	}
 	lines = append(
 		lines,
 		"pointer-capture: "+capture,
@@ -625,7 +757,7 @@ func (m *labModel) refreshDiagnostics() {
 		formatRect("rect.workspace", workspacePlan.Main),
 		formatRect("rect.canvas", workspacePlan.Canvas),
 		formatRect("rect.body", contentPlan.Content),
-		"animation: unavailable (phase 9)",
+		"animation: cell-aware",
 		"bindings: 1-9/0/tab scenario",
 		"bindings: d density; q quit",
 	)
@@ -758,6 +890,18 @@ func (m *labModel) scenarioContent() []string {
 			lines = append(lines, formatRect("dialog.rect", surface.Rect))
 		}
 		return lines
+	case scenarioSidebar:
+		placement := "docked push"
+		if m.sidebarDrawer {
+			placement = "compact overlay"
+		}
+		return []string{
+			"Adaptive sidebar and coordinated motion",
+			"placement: " + placement,
+			"o open/close; r reverse; t retarget",
+			"p dock/drawer; m motion; esc Back",
+			fmt.Sprintf("boundary: %d", m.workspace.SurfacePosition(labSidebar)),
+		}
 	default:
 		return nil
 	}

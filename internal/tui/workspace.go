@@ -10,6 +10,7 @@ const (
 	surfaceCanvas      chrome.SurfaceID = "canvas"
 	surfaceNavigation  chrome.SurfaceID = "navigation"
 	surfaceHelp        chrome.SurfaceID = "help"
+	surfaceSidebar     chrome.SurfaceID = "sidebar"
 	surfaceNone        chrome.SurfaceID = ""
 	surfacePreferences chrome.SurfaceID = "preferences-dialog"
 	surfaceSave        chrome.SurfaceID = "save-dialog"
@@ -19,25 +20,44 @@ const (
 
 const (
 	surfacePriorityCanvas     = 0
+	surfacePrioritySidebar    = 5
 	surfacePriorityNavigation = 10
+	surfacePriorityDrawer     = 15
 	surfacePriorityHelp       = 20
 	surfacePriorityModal      = 30
 )
 
 func (m *Model) syncWorkspace() {
 	plan := m.workspace.Plan()
-	m.nav.SetWidth(plan.Canvas.Width)
+	canvasWidth := plan.Main.Width
+	if m.sidebar.placement == sidebarDocked {
+		canvasWidth -= m.workspace.SurfacePosition(surfaceSidebar)
+	}
+	m.nav.SetWidth(max(canvasWidth, 0))
 	overlay := m.currentDialogOverlay()
-	surfaces := make([]chrome.Surface, 0, 3+len(dialogSpecs))
+	surfaces := make([]chrome.Surface, 0, 4+len(dialogSpecs))
 	surfaces = append(
 		surfaces,
 		chrome.Surface{
 			ID:        surfaceCanvas,
 			Role:      chrome.SurfacePassive,
 			Anchor:    chrome.AnchorCanvas,
-			Requested: chrome.Rect{Width: plan.Canvas.Width, Height: plan.Canvas.Height},
+			Requested: chrome.Rect{Width: m.width, Height: m.height},
 			Priority:  surfacePriorityCanvas,
-			Visible:   plan.Canvas.Width != 0 && plan.Canvas.Height != 0,
+			Visible:   m.width != 0 && m.height != 0,
+		},
+		chrome.Surface{
+			ID:             surfaceSidebar,
+			Role:           m.sidebar.surfaceRole(),
+			Anchor:         chrome.AnchorWorkspace,
+			Dock:           chrome.DockLeft,
+			Requested:      chrome.Rect{Width: m.sidebarTargetWidth(), Height: plan.Main.Height},
+			Priority:       m.sidebar.priority(),
+			Visible:        m.sidebar.open || m.workspace.SurfacePosition(surfaceSidebar) != 0,
+			Animated:       true,
+			DismissOutside: m.sidebar.placement == sidebarDrawer,
+			DismissBack:    m.sidebar.placement == sidebarDrawer,
+			FocusOnOpen:    true,
 		},
 		chrome.Surface{
 			ID:        surfaceNavigation,
@@ -66,6 +86,9 @@ func (m *Model) syncWorkspace() {
 		m.setError("arrange workspace: " + err.Error())
 		return
 	}
+	if sidebar, ok := m.surfacePlan(surfaceSidebar); ok {
+		m.sidebar.setBounds(sidebar.Content)
+	}
 	if help, ok := m.surfacePlan(surfaceHelp); ok {
 		m.helpInspector.setPlan(
 			help.Rect,
@@ -88,6 +111,9 @@ func (m *Model) helpContext() string {
 	if spec, ok := m.activeDialogSpec(); ok {
 		return spec.Context
 	}
+	if m.sidebar.focused {
+		return "sidebar"
+	}
 	if m.mode == modeEditLabel {
 		return "label editor"
 	}
@@ -101,22 +127,25 @@ func (m *Model) textEntryActive() bool {
 	return m.mode == modeEditLabel
 }
 
-func (m *Model) dismissSurface(id chrome.SurfaceID) {
+func (m *Model) dismissSurface(id chrome.SurfaceID) tea.Cmd {
 	switch id {
 	case surfaceHelp:
 		m.helpInspector.hide()
+		return nil
+	case surfaceSidebar:
+		return m.dismissSidebar()
 	default:
 		if id == m.activeDialog {
 			m.closeDialog()
 		}
+		return nil
 	}
 }
 
 func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 	point := chrome.Point{X: message.X, Y: message.Y}
 	if id, ok := m.workspace.DismissAt(point); ok {
-		m.dismissSurface(id)
-		return nil
+		return m.dismissSurface(id)
 	}
 	id, ok := m.workspace.SurfaceAt(point)
 	if !ok {
@@ -127,8 +156,14 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 	}
 	switch id {
 	case surfaceCanvas:
+		if m.sidebar.placement == sidebarDocked {
+			m.sidebar.blur()
+		}
 		m.updateMouseClick(message.Mouse())
 		m.workspace.Capture(surfaceCanvas)
+	case surfaceSidebar:
+		surface, _ := m.surfacePlan(surfaceSidebar)
+		m.sidebar.click(point, surface)
 	case surfaceNavigation:
 		var command tea.Cmd
 		m.nav, command = m.nav.Update(m.navigationMessage(message))
@@ -163,6 +198,7 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 		case surfaceHelp:
 			plan, _ := m.surfacePlan(surfaceHelp)
 			m.helpInspector.update(message, plan.Rect)
+		case surfaceSidebar:
 		default:
 			if id == m.activeDialog {
 				return m.updateDialogMouseMotion(message.Mouse())
@@ -185,6 +221,7 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
 	case surfaceHelp:
 		plan, _ := m.surfacePlan(surfaceHelp)
 		m.helpInspector.update(message, plan.Rect)
+	case surfaceSidebar:
 	default:
 		if id != m.activeDialog {
 			m.updateMouseRelease(message.Mouse())
@@ -205,6 +242,13 @@ func (m *Model) updateSurfaceMouseWheel(message tea.MouseWheelMsg) tea.Cmd {
 		case surfaceHelp:
 			plan, _ := m.surfacePlan(surfaceHelp)
 			m.helpInspector.update(message, plan.Rect)
+		case surfaceSidebar:
+			switch message.Button {
+			case tea.MouseWheelUp:
+				m.sidebar.scroll(-1)
+			case tea.MouseWheelDown:
+				m.sidebar.scroll(1)
+			}
 		default:
 			if id == m.activeDialog {
 				return m.updateDialogWheel(message)

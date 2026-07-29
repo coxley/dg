@@ -24,6 +24,17 @@ type Theme struct {
 	FormField       lipgloss.Style
 	Button          lipgloss.Style
 	FocusedButton   lipgloss.Style
+	SidebarHeader   lipgloss.Style
+	SidebarItem     lipgloss.Style
+	SidebarFocused  lipgloss.Style
+	SidebarFooter   lipgloss.Style
+}
+
+type sidebarStyles struct {
+	Header      lipgloss.Style
+	Item        lipgloss.Style
+	FocusedItem lipgloss.Style
+	Footer      lipgloss.Style
 }
 
 // DefaultTheme returns the editor's default terminal theme.
@@ -97,6 +108,13 @@ func DefaultTheme(dark bool) Theme {
 			PaddingLeft(1),
 		Button:        button,
 		FocusedButton: focusedButton,
+		SidebarHeader: tabActive.Padding(0, 1),
+		SidebarItem:   tab.Padding(0, 1),
+		SidebarFocused: lipgloss.NewStyle().
+			Background(focus).
+			Foreground(text).
+			Padding(0, 1),
+		SidebarFooter: tab.Foreground(muted),
 	}
 }
 
@@ -123,5 +141,14 @@ func (t Theme) preferenceStyles() preferencesview.Styles {
 			Action:         t.Button,
 			SelectedAction: t.FocusedButton,
 		},
+	}
+}
+
+func (t Theme) sidebarStyles() sidebarStyles {
+	return sidebarStyles{
+		Header:      t.SidebarHeader,
+		Item:        t.SidebarItem,
+		FocusedItem: t.SidebarFocused,
+		Footer:      t.SidebarFooter,
 	}
 }

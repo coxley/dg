@@ -77,13 +77,23 @@ for size in 100x30 80x16 80x12; do
     "$session" "$outside_press" >/dev/null
   ht send --wait-text "dialog: closed" --timeout 5s "$session" "<Esc>" >/dev/null
   ht send --wait-text "dialog: dialog.confirm" --timeout 5s "$session" "c" >/dev/null
+  ht send --wait-text "scenario: sidebar" --timeout 5s "$session" "<Right>" >/dev/null
+  ht send --wait-text "sidebar-position: 24" --timeout 5s "$session" "o" >/dev/null
+  ht send --wait-text "sidebar-target: 18" --timeout 5s "$session" "t" >/dev/null
+  ht wait --text "sidebar-position: 18" --timeout 5s "$session" >/dev/null
+  ht send --wait-text "sidebar-placement: drawer" --timeout 5s "$session" "p" >/dev/null
+  ht send --wait-text "motion-enabled: false" --timeout 5s "$session" "m" >/dev/null
+  ht send --wait-text "sidebar-position: 0" --timeout 5s "$session" "r" >/dev/null
+  ht send --wait-text "sidebar-position: 18" --timeout 5s "$session" "r" >/dev/null
+  ht send --wait-text "sidebar-position: 0" --timeout 5s "$session" "<Esc>" >/dev/null
 
   snapshot="$(ht view --json "$session")"
   grep -q "\"cols\": ${size%x*}" <<<"$snapshot"
   grep -q "\"rows\": ${size#*x}" <<<"$snapshot"
-  grep -q "scenario: dialogs" <<<"$snapshot"
+  grep -q "scenario: sidebar" <<<"$snapshot"
   grep -q "density: compact" <<<"$snapshot"
-  grep -q "dialog: dialog.confirm" <<<"$snapshot"
+  grep -q "sidebar-placement: drawer" <<<"$snapshot"
+  grep -q "motion-enabled: false" <<<"$snapshot"
 
   ht stop "$session" >/dev/null
   ht remove "$session" >/dev/null

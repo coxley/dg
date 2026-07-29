@@ -63,6 +63,7 @@ type Surface struct {
 	Requested      Rect
 	Priority       int
 	Visible        bool
+	Animated       bool
 	DismissOutside bool
 	DismissBack    bool
 	FocusOnOpen    bool
@@ -72,6 +73,7 @@ type Surface struct {
 type SurfacePlan struct {
 	Surface Surface
 	Anchor  Rect
+	Content Rect
 	Rect    Rect
 }
 
@@ -109,6 +111,8 @@ type Workspace struct {
 	capture  SurfaceID
 	opened   SurfaceID
 	plan     WorkspacePlan
+	motions  map[SurfaceID]*cellTransition
+	noMotion bool
 }
 
 // SetTerminal updates terminal geometry.
@@ -147,6 +151,62 @@ func (w *Workspace) SetSurfaces(surfaces []Surface) error {
 	w.surfaces = append(w.surfaces[:0], surfaces...)
 	w.arrange()
 	return nil
+}
+
+// RetargetSurface moves an animated surface toward extent cells.
+func (w *Workspace) RetargetSurface(id SurfaceID, extent int) bool {
+	if w.motions == nil {
+		w.motions = make(map[SurfaceID]*cellTransition)
+	}
+	transition := w.motions[id]
+	if transition == nil {
+		transition = &cellTransition{}
+		w.motions[id] = transition
+	}
+	moving := transition.retarget(extent, w.noMotion)
+	w.arrange()
+	return moving
+}
+
+// AdvanceSurface advances an animated surface to its next distinct cell.
+func (w *Workspace) AdvanceSurface(id SurfaceID) bool {
+	transition := w.motions[id]
+	if transition == nil || !transition.advance() {
+		return false
+	}
+	w.arrange()
+	return true
+}
+
+// SurfacePosition returns an animated surface's current visible extent.
+func (w *Workspace) SurfacePosition(id SurfaceID) int {
+	if transition := w.motions[id]; transition != nil {
+		return transition.position
+	}
+	return 0
+}
+
+// SurfaceMoving reports whether an animated surface has reached its target.
+func (w *Workspace) SurfaceMoving(id SurfaceID) bool {
+	if transition := w.motions[id]; transition != nil {
+		return transition.position != transition.target
+	}
+	return false
+}
+
+// SetMotionEnabled controls whether animated surfaces transition or snap.
+func (w *Workspace) SetMotionEnabled(enabled bool) {
+	w.noMotion = !enabled
+	if enabled {
+		return
+	}
+	for _, transition := range w.motions {
+		transition.position = transition.target
+		transition.start = transition.target
+		transition.frame = 0
+		transition.frames = 0
+	}
+	w.arrange()
 }
 
 // PointerBlocked reports whether a modal prevents the canvas from receiving p.
@@ -305,6 +365,9 @@ func (w *Workspace) arrange() {
 		}
 		anchor := plan.Canvas
 		rect := dockRect(surface, anchor)
+		if surface.Animated {
+			rect = dockRectAtExtent(surface, anchor, w.SurfacePosition(surface.ID))
+		}
 		switch surface.Dock {
 		case DockRight:
 			plan.Canvas.Width -= rect.Width
@@ -321,6 +384,7 @@ func (w *Workspace) arrange() {
 		dockPlans = append(dockPlans, SurfacePlan{
 			Surface: surface,
 			Anchor:  anchor,
+			Content: rect,
 			Rect:    rect,
 		})
 	}
@@ -338,6 +402,16 @@ func (w *Workspace) arrange() {
 			continue
 		}
 		anchor := w.anchorRect(surface.Anchor, plan)
+		if surface.Role == SurfaceDrawer && surface.Animated {
+			content := drawerRect(surface, anchor, w.SurfacePosition(surface.ID))
+			plan.Surfaces = append(plan.Surfaces, SurfacePlan{
+				Surface: surface,
+				Anchor:  anchor,
+				Content: content,
+				Rect:    surfaceIntersection(content, anchor),
+			})
+			continue
+		}
 		requested := surface.Requested
 		requested.X += anchor.X
 		requested.Y += anchor.Y
@@ -345,6 +419,7 @@ func (w *Workspace) arrange() {
 		plan.Surfaces = append(plan.Surfaces, SurfacePlan{
 			Surface: surface,
 			Anchor:  anchor,
+			Content: rect,
 			Rect:    rect,
 		})
 	}
@@ -358,6 +433,58 @@ func (w *Workspace) arrange() {
 		}
 	}
 	w.plan = plan
+}
+
+func dockRectAtExtent(surface Surface, anchor Rect, extent int) Rect {
+	requested := surface.Requested
+	switch surface.Dock {
+	case DockLeft, DockRight:
+		requested.Width = min(max(extent, 0), requested.Width)
+	case DockTop, DockBottom:
+		requested.Height = min(max(extent, 0), requested.Height)
+	}
+	surface.Requested = requested
+	return dockRect(surface, anchor)
+}
+
+func drawerRect(surface Surface, anchor Rect, extent int) Rect {
+	width := min(max(surface.Requested.Width, 0), anchor.Width)
+	height := min(max(surface.Requested.Height, 0), anchor.Height)
+	switch surface.Dock {
+	case DockRight:
+		return Rect{
+			X: anchor.Right() - min(max(extent, 0), width),
+			Y: anchor.Y, Width: width, Height: height,
+		}
+	case DockTop:
+		return Rect{
+			X: anchor.X, Y: anchor.Y - height + min(max(extent, 0), height),
+			Width: width, Height: height,
+		}
+	case DockBottom:
+		return Rect{
+			X: anchor.X, Y: anchor.Bottom() - min(max(extent, 0), height),
+			Width: width, Height: height,
+		}
+	case DockLeft:
+		return Rect{
+			X: anchor.X - width + min(max(extent, 0), width),
+			Y: anchor.Y, Width: width, Height: height,
+		}
+	default:
+		return Rect{}
+	}
+}
+
+func surfaceIntersection(a, b Rect) Rect {
+	left := max(a.X, b.X)
+	top := max(a.Y, b.Y)
+	right := min(a.Right(), b.Right())
+	bottom := min(a.Bottom(), b.Bottom())
+	if right <= left || bottom <= top {
+		return Rect{}
+	}
+	return Rect{X: left, Y: top, Width: right - left, Height: bottom - top}
 }
 
 func (w *Workspace) anchorRect(anchor Anchor, plan WorkspacePlan) Rect {

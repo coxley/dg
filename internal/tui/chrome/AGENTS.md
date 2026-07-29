@@ -4,7 +4,8 @@
 
 `chrome` owns reusable terminal UI mechanics: intrinsic measurement,
 arrangement, retained layout plans, menu and form geometry, panes, finite
-viewports, and diagnostics used by the chrome lab.
+viewports, deterministic cell transitions, workspace surfaces, and diagnostics
+used by the chrome lab.
 
 ## Boundaries
 
@@ -19,6 +20,11 @@ viewports, and diagnostics used by the chrome lab.
   retained plan. Applications own declarations and value mapping.
 - Keep keyboard traversal and accessible execution paths aligned with the same
   declared control order.
+- Surface plans retain both full content placement and the terminal-clipped
+  pointer rectangle. Drawers translate content while docks move the shared
+  canvas boundary.
+- Workspace transitions retarget and reverse from their current integer cell.
+  Disabled motion snaps to the same final placement.
 - Keep the canvas's unbounded document viewport outside this package.
 
 ## Performance

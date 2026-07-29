@@ -11,25 +11,32 @@ const (
 	scopeModal       chrome.ScopeID = "modal"
 	scopePreferences chrome.ScopeID = "preferences"
 	scopeDirectory   chrome.ScopeID = "directory"
+	scopeSidebar     chrome.ScopeID = "sidebar"
 
 	commandBack        chrome.CommandID = "back"
 	commandHelp        chrome.CommandID = "help"
 	commandPreferences chrome.CommandID = "preferences"
 	commandSave        chrome.CommandID = "save"
+	commandSidebar     chrome.CommandID = "sidebar"
 )
 
 var applicationBindings = []chrome.Binding{
+	{Scope: scopeSidebar, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "return to canvas"},
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
 	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
 	{Scope: scopeGlobal, Chords: chrome.Keys("?"), Command: commandHelp, Label: "toggle help"},
 	{Scope: scopeGlobal, Chords: []chrome.Chord{chrome.Primary(",")}, Command: commandPreferences, Label: string(scopePreferences)},
 	{Scope: scopeGlobal, Chords: chrome.Keys("ctrl+s"), Command: commandSave, Label: string(commandSave)},
+	{Scope: scopeGlobal, Chords: chrome.Keys("ctrl+b"), Command: commandSidebar, Label: "toggle sidebar"},
 }
 
 func (m *Model) activeBindingScopes() []chrome.ScopeID {
 	if spec, ok := m.activeDialogSpec(); ok {
 		return spec.Scopes(m)
+	}
+	if m.sidebar.focused {
+		return []chrome.ScopeID{scopeSidebar, scopeGlobal}
 	}
 	return []chrome.ScopeID{scopeCanvas, scopeGlobal}
 }
@@ -37,13 +44,17 @@ func (m *Model) activeBindingScopes() []chrome.ScopeID {
 func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 	switch message.Command {
 	case commandBack:
+		if m.sidebar.focused && m.sidebar.placement == sidebarDocked {
+			m.sidebar.blur()
+			return nil
+		}
 		if spec, ok := m.activeDialogSpec(); ok && spec.Back != nil {
 			if command, handled := spec.Back(m); handled {
 				return command
 			}
 		}
 		if id, ok := m.workspace.Back(); ok {
-			m.dismissSurface(id)
+			return m.dismissSurface(id)
 		}
 	case commandHelp:
 		m.openHelp()
@@ -56,6 +67,8 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 		case surfaceNone:
 			m.requestSave()
 		}
+	case commandSidebar:
+		return m.toggleSidebar()
 	}
 	return nil
 }
