@@ -5,171 +5,318 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/internal/tui/chrome"
+	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	modalview "github.com/coxley/dg/internal/tui/modal"
-	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 )
 
 const minimumSettingsModalWidth = 84
 
+type dialogBodyResult struct {
+	message tea.Msg
+	command tea.Cmd
+	handled bool
+}
+
+type dialogBody interface {
+	Context() string
+	PreferredWidth() int
+	Scopes() []chrome.ScopeID
+	TextEntry() bool
+	SetBounds(chrome.Rect)
+	Update(tea.Msg) dialogBodyResult
+	View() string
+}
+
+type dialogClickMsg struct {
+	Point chrome.Point
+	Mouse tea.Mouse
+}
+
+type dialogWheelMsg struct {
+	Mouse tea.Mouse
+}
+
+type dialogBackMsg struct{}
+
+type dialogCloseMsg struct{}
+
 type dialogSpec struct {
 	ID             chrome.SurfaceID
-	Context        string
-	Width          func(*Model) int
 	Variant        modalview.Variant
 	DismissOutside bool
 	DismissAnyKey  bool
-	TextEntry      bool
-	Scopes         func(*Model) []chrome.ScopeID
-	Body           func(*Model, int) string
-	Update         func(*Model, tea.Msg) tea.Cmd
-	Click          func(*Model, tea.Mouse) tea.Cmd
-	Wheel          func(*Model, tea.MouseWheelMsg) tea.Cmd
-	Resize         func(*Model)
-	Back           func(*Model) (tea.Cmd, bool)
-	Close          func(*Model)
 }
 
 var dialogSpecs = [...]dialogSpec{
-	{
-		ID:             surfacePreferences,
-		Context:        string(scopePreferences),
-		Width:          fixedDialogWidth(minimumSettingsModalWidth),
-		DismissOutside: true,
-		Scopes:         preferenceDialogScopes,
-		Body:           preferenceDialogBody,
-		Update:         updatePreferenceDialog,
-		Click:          clickPreferenceDialog,
-		Wheel:          wheelPreferenceDialog,
-		Resize:         resizePreferenceDialog,
-		Back:           backPreferenceDialog,
-		Close:          (*Model).closeSettingsModal,
-	},
-	{
-		ID:             surfaceSave,
-		Context:        string(commandSave),
-		Width:          fixedDialogWidth(68),
-		DismissOutside: true,
-		TextEntry:      true,
-		Scopes:         saveDialogScopes,
-		Body:           saveDialogBody,
-		Update:         updateSaveDialog,
-		Click:          clickSaveDialog,
-		Wheel:          wheelSaveDialog,
-		Back:           backSaveDialog,
-		Close:          (*Model).closeSaveForm,
-	},
-	{
-		ID:             surfaceExport,
-		Context:        "export",
-		Width:          fixedDialogWidth(50),
-		DismissOutside: true,
-		Scopes:         modalDialogScopes,
-		Body:           exportDialogBody,
-		Update:         updateExportDialog,
-		Click:          clickExportDialog,
-		Wheel:          wheelExportDialog,
-		Close:          closeExportDialog,
-	},
-	{
-		ID:            surfaceNotice,
-		Context:       "notice",
-		Width:         noticeDialogWidth,
-		Variant:       modalview.Notice,
-		DismissAnyKey: true,
-		Scopes:        modalDialogScopes,
-		Body:          noticeDialogBody,
-		Close:         closeNoticeDialog,
-	},
+	{ID: surfacePreferences, DismissOutside: true},
+	{ID: surfaceSave, DismissOutside: true},
+	{ID: surfaceExport, DismissOutside: true},
+	{ID: surfaceNotice, Variant: modalview.Notice, DismissAnyKey: true},
 }
 
-func (m *Model) currentDialogOverlay() modalview.Overlay {
-	spec, ok := m.activeDialogSpec()
-	if !ok || m.width < 2 {
-		m.dialog.Hide()
+type dialogPlan struct {
+	overlay modalview.Overlay
+	body    chrome.Rect
+}
+
+// dialogController owns dialog selection, shell geometry, and body routing.
+type dialogController struct {
+	active      chrome.SurfaceID
+	shell       modalview.Model
+	preferences *preferenceDialogBody
+	save        *saveDialogBody
+	export      exportDialogBody
+	notice      noticeDialogBody
+	plan        dialogPlan
+}
+
+func newDialogController(
+	theme Theme,
+	clipboard *clipboardview.Model,
+	preferenceValue preferenceDialogValue,
+) dialogController {
+	return dialogController{
+		shell:       modalview.New(theme.Modal),
+		preferences: newPreferenceDialogBody(preferenceValue, theme),
+		save:        newSaveDialogBody(theme),
+		export:      exportDialogBody{clipboard: clipboard},
+	}
+}
+
+func (d *dialogController) ActiveID() chrome.SurfaceID {
+	return d.active
+}
+
+func (d *dialogController) OpenPreferences(value preferenceDialogValue) {
+	d.preferences.Reset(value)
+	d.open(surfacePreferences)
+}
+
+func (d *dialogController) OpenSave(directory string) {
+	d.save.Reset(directory)
+	d.open(surfaceSave)
+}
+
+func (d *dialogController) OpenExport() {
+	d.open(surfaceExport)
+}
+
+func (d *dialogController) OpenNotice(
+	text string,
+	returnTo chrome.SurfaceID,
+) uint64 {
+	d.notice.Reset(text, returnTo)
+	d.open(surfaceNotice)
+	return d.notice.Generation()
+}
+
+func (d *dialogController) open(id chrome.SurfaceID) {
+	d.active = id
+	d.shell.Hide()
+	d.plan = dialogPlan{}
+}
+
+func (d *dialogController) Restore(id chrome.SurfaceID) {
+	if id == surfaceNone {
+		d.hide()
+		return
+	}
+	d.open(id)
+}
+
+func (d *dialogController) Arrange(
+	screenWidth, screenHeight, avoidTop int,
+) modalview.Overlay {
+	spec, ok := d.activeSpec()
+	body := d.activeBody()
+	if !ok || body == nil || screenWidth < 2 {
+		d.shell.Hide()
+		d.plan = dialogPlan{}
 		return modalview.Overlay{}
 	}
-	width := min(spec.Width(m), m.width)
-	content := spec.Body(m, width)
-	m.dialog.Configure(
-		m.width,
-		m.height,
-		m.nav.Bounds().Bottom(),
+	width := min(body.PreferredWidth(), screenWidth)
+	bounds := chrome.Rect{Width: width}
+	for range 4 {
+		body.SetBounds(bounds)
+		d.configure(
+			screenWidth,
+			screenHeight,
+			avoidTop,
+			width,
+			body.View(),
+			spec,
+		)
+		next := chrome.Rect{
+			Width: d.shell.BodyWidth(), Height: d.shell.BodyHeight(),
+		}
+		if next == bounds {
+			break
+		}
+		bounds = next
+	}
+	x, y := d.shell.BodyOrigin()
+	d.plan = dialogPlan{
+		overlay: d.shell.Overlay(),
+		body: chrome.Rect{
+			X: x, Y: y,
+			Width: bounds.Width, Height: bounds.Height,
+		},
+	}
+	return d.plan.overlay
+}
+
+func (d *dialogController) configure(
+	screenWidth, screenHeight, avoidTop, width int,
+	content string,
+	spec dialogSpec,
+) {
+	d.shell.Configure(
+		screenWidth,
+		screenHeight,
+		avoidTop,
 		width,
 		strings.TrimSuffix(content, "\n"),
 		spec.Variant,
 		nil,
 		0,
 	)
-	return m.dialog.Overlay()
 }
 
-func (m *Model) openDialog(id chrome.SurfaceID) {
-	m.activeDialog = id
-	m.dialog.Hide()
+func (d *dialogController) Overlay() modalview.Overlay {
+	return d.plan.overlay
 }
 
-func (m *Model) updateDialog(message tea.Msg) tea.Cmd {
-	spec, ok := m.activeDialogSpec()
-	if !ok || spec.Update == nil {
-		return nil
-	}
-	return spec.Update(m, message)
+func (d *dialogController) Fullscreen() bool {
+	return d.shell.Fullscreen()
 }
 
-func (m *Model) updateDialogMouseClick(mouse tea.Mouse) tea.Cmd {
-	m.currentDialogOverlay()
-	var command tea.Cmd
-	m.dialog, command = m.dialog.Update(tea.MouseClickMsg(mouse))
-	if command != nil || m.dialog.CapturesPointer() || mouse.Button != tea.MouseLeft {
-		return command
-	}
-	spec, ok := m.activeDialogSpec()
-	if !ok || spec.Click == nil {
-		return nil
-	}
-	return spec.Click(m, mouse)
+func (d *dialogController) Resizing() bool {
+	return d.shell.Resizing()
 }
 
-func (m *Model) updateDialogMouseMotion(mouse tea.Mouse) tea.Cmd {
-	wasCaptured := m.dialog.CapturesPointer()
-	m.dialog, _ = m.dialog.Update(tea.MouseMotionMsg(mouse))
-	spec, ok := m.activeDialogSpec()
-	if !ok {
-		return nil
-	}
-	if wasCaptured || m.dialog.CapturesPointer() {
-		if m.dialog.Resizing() && spec.Resize != nil {
-			spec.Resize(m)
-		}
-		return nil
-	}
-	if spec.Update == nil {
-		return nil
-	}
-	return spec.Update(m, tea.MouseMotionMsg(mouse))
+func (d *dialogController) CapturesPointer() bool {
+	return d.shell.CapturesPointer()
 }
 
-func (m *Model) updateDialogWheel(message tea.MouseWheelMsg) tea.Cmd {
-	spec, ok := m.activeDialogSpec()
-	if !ok {
-		return nil
+func (d *dialogController) Context() string {
+	if body := d.activeBody(); body != nil {
+		return body.Context()
 	}
-	if spec.Wheel != nil {
-		return spec.Wheel(m, message)
+	return ""
+}
+
+func (d *dialogController) Scopes() []chrome.ScopeID {
+	if body := d.activeBody(); body != nil {
+		return body.Scopes()
 	}
 	return nil
 }
 
-func (m *Model) closeDialog() {
-	spec, ok := m.activeDialogSpec()
-	if ok && spec.Close != nil {
-		spec.Close(m)
+func (d *dialogController) TextEntry() bool {
+	if body := d.activeBody(); body != nil {
+		return body.TextEntry()
 	}
-	m.dialog.Hide()
+	return false
 }
 
-func (m *Model) activeDialogSpec() (dialogSpec, bool) {
-	return dialogSpecFor(m.activeDialog)
+func (d *dialogController) DismissAnyKey() bool {
+	spec, ok := d.activeSpec()
+	return ok && spec.DismissAnyKey
+}
+
+func (d *dialogController) Update(message tea.Msg) dialogBodyResult {
+	body := d.activeBody()
+	if body == nil {
+		return dialogBodyResult{}
+	}
+	return body.Update(message)
+}
+
+func (d *dialogController) Click(mouse tea.Mouse) dialogBodyResult {
+	var command tea.Cmd
+	d.shell, command = d.shell.Update(tea.MouseClickMsg(mouse))
+	if command != nil || d.shell.CapturesPointer() || mouse.Button != tea.MouseLeft {
+		return dialogBodyResult{command: command, handled: true}
+	}
+	return d.Update(dialogClickMsg{
+		Point: chrome.Point{
+			X: mouse.X - d.plan.body.X,
+			Y: mouse.Y - d.plan.body.Y,
+		},
+		Mouse: localDialogMouse(mouse, d.plan.body),
+	})
+}
+
+func (d *dialogController) Motion(mouse tea.Mouse) dialogBodyResult {
+	wasCaptured := d.shell.CapturesPointer()
+	d.shell, _ = d.shell.Update(tea.MouseMotionMsg(mouse))
+	if wasCaptured || d.shell.CapturesPointer() {
+		return dialogBodyResult{handled: true}
+	}
+	return d.Update(tea.MouseMotionMsg(localDialogMouse(mouse, d.plan.body)))
+}
+
+func (d *dialogController) Release(message tea.MouseReleaseMsg) {
+	d.shell, _ = d.shell.Update(message)
+}
+
+func (d *dialogController) Wheel(message tea.MouseWheelMsg) dialogBodyResult {
+	return d.Update(dialogWheelMsg{
+		Mouse: localDialogMouse(message.Mouse(), d.plan.body),
+	})
+}
+
+func (d *dialogController) Back() dialogBodyResult {
+	return d.Update(dialogBackMsg{})
+}
+
+func (d *dialogController) SubmitSave() dialogBodyResult {
+	if d.active != surfaceSave {
+		return dialogBodyResult{}
+	}
+	return d.save.Update(chrome.FormSubmitMsg{ID: saveConfirmAction})
+}
+
+func (d *dialogController) Close() dialogBodyResult {
+	result := d.Update(dialogCloseMsg{})
+	d.hide()
+	return result
+}
+
+func (d *dialogController) CloseWithoutMessage() {
+	d.hide()
+}
+
+func (d *dialogController) hide() {
+	d.active = surfaceNone
+	d.shell.Hide()
+	d.plan = dialogPlan{}
+}
+
+func (d *dialogController) SetStyles(theme Theme) {
+	d.shell.SetStyles(theme.Modal)
+	d.preferences.SetStyles(theme)
+	d.save.SetStyles(theme)
+	d.export.SetStyles(theme)
+}
+
+func (d *dialogController) activeBody() dialogBody {
+	switch d.active {
+	case surfacePreferences:
+		return d.preferences
+	case surfaceSave:
+		return d.save
+	case surfaceExport:
+		return &d.export
+	case surfaceNotice:
+		return &d.notice
+	default:
+		return nil
+	}
+}
+
+func (d *dialogController) activeSpec() (dialogSpec, bool) {
+	return dialogSpecFor(d.active)
 }
 
 func dialogSpecFor(id chrome.SurfaceID) (dialogSpec, bool) {
@@ -181,177 +328,199 @@ func dialogSpecFor(id chrome.SurfaceID) (dialogSpec, bool) {
 	return dialogSpec{}, false
 }
 
-func fixedDialogWidth(width int) func(*Model) int {
-	return func(*Model) int {
-		return width
-	}
+func localDialogMouse(mouse tea.Mouse, body chrome.Rect) tea.Mouse {
+	mouse.X -= body.X
+	mouse.Y -= body.Y
+	return mouse
 }
 
-func modalDialogScopes(*Model) []chrome.ScopeID {
+type exportDialogBody struct {
+	clipboard *clipboardview.Model
+}
+
+func (*exportDialogBody) Context() string {
+	return "export"
+}
+
+func (*exportDialogBody) PreferredWidth() int {
+	return 50
+}
+
+func (*exportDialogBody) Scopes() []chrome.ScopeID {
 	return []chrome.ScopeID{scopeModal, scopeGlobal}
 }
 
-func preferenceDialogScopes(m *Model) []chrome.ScopeID {
-	if m.preferenceForm != nil && m.preferenceForm.DirectoryOpen() {
-		return []chrome.ScopeID{scopeDirectory, scopePreferences, scopeGlobal}
+func (*exportDialogBody) TextEntry() bool {
+	return false
+}
+
+func (b *exportDialogBody) SetBounds(bounds chrome.Rect) {
+	b.clipboard.SetBounds(bounds.Width, bounds.Height)
+}
+
+func (b *exportDialogBody) Update(message tea.Msg) dialogBodyResult {
+	switch message := message.(type) {
+	case dialogClickMsg:
+		return dialogBodyResult{
+			command: b.clipboard.Click(message.Point),
+			handled: true,
+		}
+	case dialogWheelMsg:
+		return dialogBodyResult{
+			command: updateClipboardModel(
+				b.clipboard,
+				tea.MouseWheelMsg(message.Mouse),
+			),
+			handled: true,
+		}
+	case dialogBackMsg:
+		return dialogBodyResult{}
+	case dialogCloseMsg:
+		b.clipboard.CancelExport()
+		return dialogBodyResult{handled: true}
+	default:
+		return dialogBodyResult{
+			command: updateClipboardModel(b.clipboard, message),
+			handled: true,
+		}
 	}
-	return []chrome.ScopeID{scopePreferences, scopeGlobal}
 }
 
-func saveDialogScopes(m *Model) []chrome.ScopeID {
-	if m.savePicker != nil && m.savePicker.Opened() {
-		return []chrome.ScopeID{scopeDirectory, scopeModal, scopeGlobal}
+func (b *exportDialogBody) View() string {
+	return b.clipboard.View().Content
+}
+
+func (b *exportDialogBody) SetStyles(theme Theme) {
+	b.clipboard.SetStyles(theme.formStyles())
+}
+
+type noticeDismissedMsg struct {
+	ReturnTo chrome.SurfaceID
+}
+
+type noticeDialogBody struct {
+	generation uint64
+	text       string
+	returnTo   chrome.SurfaceID
+}
+
+func (b *noticeDialogBody) Reset(text string, returnTo chrome.SurfaceID) {
+	b.generation++
+	b.text = text
+	b.returnTo = returnTo
+}
+
+func (b *noticeDialogBody) Generation() uint64 {
+	return b.generation
+}
+
+func (b *noticeDialogBody) ReturnTo() chrome.SurfaceID {
+	return b.returnTo
+}
+
+func (b *noticeDialogBody) Clear() {
+	b.text = ""
+	b.returnTo = surfaceNone
+}
+
+func (*noticeDialogBody) Context() string {
+	return "notice"
+}
+
+func (b *noticeDialogBody) PreferredWidth() int {
+	return max(28, displayWidth([]byte(b.text))+4)
+}
+
+func (*noticeDialogBody) Scopes() []chrome.ScopeID {
+	return []chrome.ScopeID{scopeModal, scopeGlobal}
+}
+
+func (*noticeDialogBody) TextEntry() bool {
+	return false
+}
+
+func (*noticeDialogBody) SetBounds(chrome.Rect) {}
+
+func (b *noticeDialogBody) Update(message tea.Msg) dialogBodyResult {
+	switch message.(type) {
+	case dialogCloseMsg:
+		return dialogBodyResult{
+			message: noticeDismissedMsg{ReturnTo: b.returnTo},
+			handled: true,
+		}
+	default:
+		return dialogBodyResult{}
 	}
-	return modalDialogScopes(m)
 }
 
-func preferenceDialogBody(m *Model, width int) string {
-	if m.preferenceForm == nil {
-		return ""
+func (b *noticeDialogBody) View() string {
+	return " " + b.text
+}
+
+func updateClipboardModel(model *clipboardview.Model, message tea.Msg) tea.Cmd {
+	updated, command := model.Update(message)
+	if updated != model {
+		panic("clipboard model replaced")
 	}
-	bodyWidth := max(
-		width-
-			m.theme.Modal.Container.GetHorizontalFrameSize()-
-			m.theme.Modal.Body.GetHorizontalFrameSize(),
-		0,
-	)
-	if m.dialog.Overlay().Width != 0 {
-		bodyWidth = m.dialog.BodyWidth()
+	return command
+}
+
+func (m *Model) updateDialog(message tea.Msg) tea.Cmd {
+	return m.handleDialogResult(m.dialogs.Update(message))
+}
+
+func (m *Model) updateDialogMouseClick(mouse tea.Mouse) tea.Cmd {
+	return m.handleDialogResult(m.dialogs.Click(mouse))
+}
+
+func (m *Model) updateDialogMouseMotion(mouse tea.Mouse) tea.Cmd {
+	return m.handleDialogResult(m.dialogs.Motion(mouse))
+}
+
+func (m *Model) updateDialogWheel(message tea.MouseWheelMsg) tea.Cmd {
+	return m.handleDialogResult(m.dialogs.Wheel(message))
+}
+
+func (m *Model) dismissDialog() tea.Cmd {
+	return m.handleDialogResult(m.dialogs.Close())
+}
+
+func (m *Model) handleDialogResult(result dialogBodyResult) tea.Cmd {
+	var effect tea.Cmd
+	switch message := result.message.(type) {
+	case nil:
+	case preferencePreviewMsg:
+		m.previewPreferences(message.Value)
+	case preferenceSaveMsg:
+		effect = m.savePreferences(message)
+	case preferenceCancelMsg:
+		m.cancelPreferences()
+	case saveDocumentMsg:
+		m.saveFromDialog(message)
+	case dialogCancelMsg:
+		m.dialogs.CloseWithoutMessage()
+	case noticeDismissedMsg:
+		m.dialogs.notice.Clear()
+		m.dialogs.Restore(message.ReturnTo)
+	default:
+		panic("unhandled dialog message")
 	}
-	m.preferenceForm.SetWidth(bodyWidth)
-	height := 0
-	if m.dialog.Overlay().Height != 0 {
-		height = m.dialog.BodyHeight()
+	return batchCommands(result.command, effect)
+}
+
+func batchCommands(commands ...tea.Cmd) tea.Cmd {
+	filtered := commands[:0]
+	for _, command := range commands {
+		if command != nil {
+			filtered = append(filtered, command)
+		}
 	}
-	m.preferenceForm.SetHeight(height)
-	return m.preferenceForm.View().Content
-}
-
-func saveDialogBody(m *Model, width int) string {
-	if m.saveForm == nil {
-		return ""
-	}
-	bodyWidth, height := m.dialogBodySize(width)
-	if m.savePicker != nil && m.savePicker.Opened() {
-		m.savePicker.SetBounds(bodyWidth, height)
-		return m.savePicker.View().Content
-	}
-	m.saveForm.SetBounds(chrome.Rect{Width: bodyWidth, Height: height})
-	return m.saveForm.View().Content
-}
-
-func exportDialogBody(m *Model, width int) string {
-	width, height := m.dialogBodySize(width)
-	m.clipboard.SetBounds(width, height)
-	return m.clipboard.View().Content
-}
-
-func (m *Model) dialogBodySize(width int) (int, int) {
-	bodyWidth := max(
-		width-
-			m.theme.Modal.Container.GetHorizontalFrameSize()-
-			m.theme.Modal.Body.GetHorizontalFrameSize(),
-		0,
-	)
-	if m.dialog.Overlay().Width == 0 {
-		return bodyWidth, 0
-	}
-	return m.dialog.BodyWidth(), m.dialog.BodyHeight()
-}
-
-func noticeDialogBody(m *Model, _ int) string {
-	return " " + m.notice
-}
-
-func noticeDialogWidth(m *Model) int {
-	return max(28, displayWidth([]byte(m.notice))+4)
-}
-
-func updatePreferenceDialog(m *Model, message tea.Msg) tea.Cmd {
-	return m.updateSettingsTabs(message)
-}
-
-func updateSaveDialog(m *Model, message tea.Msg) tea.Cmd {
-	return m.updateSaveForm(message)
-}
-
-func updateExportDialog(m *Model, message tea.Msg) tea.Cmd {
-	return m.updateClipboard(message)
-}
-
-func clickPreferenceDialog(m *Model, mouse tea.Mouse) tea.Cmd {
-	x, y := m.dialog.BodyOrigin()
-	return m.updateSettingsTabs(preferencesview.ClickMsg{
-		X: mouse.X - x,
-		Y: mouse.Y - y,
-	})
-}
-
-func clickSaveDialog(m *Model, mouse tea.Mouse) tea.Cmd {
-	x, y := m.dialog.BodyOrigin()
-	if m.savePicker != nil && m.savePicker.Opened() {
-		mouse.X -= x
-		mouse.Y -= y
-		return m.updateSaveForm(tea.MouseClickMsg(mouse))
-	}
-	command := m.saveForm.Click(chrome.Point{X: mouse.X - x, Y: mouse.Y - y})
-	if command == nil {
+	switch len(filtered) {
+	case 0:
 		return nil
+	case 1:
+		return filtered[0]
+	default:
+		return tea.Batch(filtered...)
 	}
-	return m.updateSaveForm(command())
-}
-
-func clickExportDialog(m *Model, mouse tea.Mouse) tea.Cmd {
-	x, y := m.dialog.BodyOrigin()
-	return m.clipboard.Click(chrome.Point{X: mouse.X - x, Y: mouse.Y - y})
-}
-
-func wheelPreferenceDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
-	return m.updateSettingsWheel(message)
-}
-
-func wheelExportDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
-	return m.updateClipboard(message)
-}
-
-func wheelSaveDialog(m *Model, message tea.MouseWheelMsg) tea.Cmd {
-	if m.savePicker == nil || !m.savePicker.Opened() {
-		return nil
-	}
-	x, y := m.dialog.BodyOrigin()
-	mouse := message.Mouse()
-	mouse.X -= x
-	mouse.Y -= y
-	return m.updateSaveForm(tea.MouseWheelMsg(mouse))
-}
-
-func resizePreferenceDialog(m *Model) {
-	m.preferenceForm.SetHeight(m.dialog.BodyHeight())
-}
-
-func backPreferenceDialog(m *Model) (tea.Cmd, bool) {
-	if m.preferenceForm == nil || !m.preferenceForm.DirectoryOpen() {
-		return nil, false
-	}
-	return m.updateSettingsTabs(tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape})), true
-}
-
-func backSaveDialog(m *Model) (tea.Cmd, bool) {
-	if m.savePicker == nil || !m.savePicker.Opened() {
-		return nil, false
-	}
-	m.savePicker.Close()
-	m.saveDirectory = m.savePicker.Value()
-	m.saveForm.SetDirectory(saveDirectoryField, m.saveDirectory)
-	return nil, true
-}
-
-func closeExportDialog(m *Model) {
-	m.activeDialog = surfaceNone
-	m.clipboard.CancelExport()
-}
-
-func closeNoticeDialog(m *Model) {
-	m.activeDialog = m.noticeReturn
-	m.dismissNotice()
 }

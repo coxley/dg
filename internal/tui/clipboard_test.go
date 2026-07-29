@@ -61,8 +61,8 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 		"│ node │",
 		"└──────┘",
 	}, "\n"), copied)
-	require.Equal(t, surfaceNotice, model.activeDialog)
-	require.Equal(t, "Copied to clipboard", model.notice)
+	require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
+	require.Equal(t, "Copied to clipboard", model.dialogs.notice.text)
 }
 
 func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
@@ -115,7 +115,7 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 					require.NotNil(t, command)
 					updateModel(t, model, command())
 
-					require.Equal(t, surfaceExport, model.activeDialog)
+					require.Equal(t, surfaceExport, model.dialogs.ActiveID())
 					require.Equal(
 						t,
 						clipboardview.LineSlash,
@@ -133,7 +133,7 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 						t,
 						updateModelCommand(t, model, stale),
 					)
-					require.Equal(t, surfaceExport, model.activeDialog)
+					require.Equal(t, surfaceExport, model.dialogs.ActiveID())
 				})
 			})
 		}
@@ -161,4 +161,22 @@ func TestCopySelectionReportsClipboardFailure(t *testing.T) {
 	require.Nil(t, updateModelCommand(t, model, command()))
 
 	require.Equal(t, "copy selection: unavailable", model.status)
+}
+
+func TestStaleExportCloseDoesNotDismissCopiedNotice(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.dialogs.OpenExport()
+	command, handled := model.updatePresentation(clipboardview.CopiedMsg{})
+	require.True(t, handled)
+	require.NotNil(t, command)
+	require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
+
+	command, handled = model.updatePresentation(clipboardview.CloseExportMsg{})
+
+	require.True(t, handled)
+	require.Nil(t, command)
+	require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
+	require.Equal(t, "Copied to clipboard", model.dialogs.notice.text)
 }

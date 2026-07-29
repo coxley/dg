@@ -2,15 +2,15 @@
 
 ## Responsibility
 
-`directorypicker` is the single bounded adapter around Huh filesystem
-navigation. It owns picker initialization, dimensions, theme selection, and
-child-command routing.
+`directorypicker` owns bounded filesystem navigation, dimensions, selection,
+and theme selection.
 
 ## Boundaries
 
 - Callers own the selected path, open/close policy, and surrounding form.
 - Do not add ordinary fields, actions, layout, or traversal to this package.
-- Huh imports outside this package indicate a boundary regression.
+- Show only non-hidden directories. Files and hidden entries do not
+  participate in rendering or navigation.
 
 ## Verification
 

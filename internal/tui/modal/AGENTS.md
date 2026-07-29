@@ -8,9 +8,9 @@ tabs, and the reusable declarative confirmation body.
 
 ## Boundaries
 
-- Parent models provide body content and preferred dimensions through
-  `Configure`.
-- Root dialog specs and workspace surfaces own application identity, scope,
+- The TUI dialog controller provides body content and preferred dimensions
+  through `Configure`.
+- The controller and workspace surfaces own application identity, scope,
   dismissal policy, and body routing.
 - Tab IDs carry identity only; this package has no knowledge of help,
   preferences, save, or export semantics.

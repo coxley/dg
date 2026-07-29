@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Follow-up Phase C complete; Phase D not started
+- Current phase: Follow-up Phase D complete; Phase E not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -723,6 +723,9 @@ history, layers, and object-tree behavior remain application feature phases.
 - [x] Update `internal/tui/AGENTS.md` to describe the final architecture.
 - [x] Audit public chrome declarations for unused configurability and delete it.
 
+Follow-up Phase D replaced the bounded Huh adapter and removed its dependency
+after directory fields required files and hidden entries to be absent.
+
 ## Post-Migration Feedback Plan
 
 The declarative migration completed at `6169c7c`. The following phases refine
@@ -808,7 +811,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 | A. Control navigation and ButtonList | Complete | Forms traverse every control and wrap |
 | B. Settings and construction | Complete | One injected snapshot configures startup |
 | C. Command resolver and shortcut presentation | Complete | Dispatch and Help share one effective binding set |
-| D. Dialog ownership | Not started | Root owns no body-local form state |
+| D. Dialog ownership | Complete | Root owns no body-local form state |
 | E. Preference previews and semantic tints | Not started | Preview, rollback, and persistence agree |
 | F. Interaction-state regions | Not started | Root interaction states are explicit and exhaustively dispatched |
 | G. Sidebar geometry | Not started | Full-width content slides without reflow and nav remains fixed |
@@ -874,19 +877,19 @@ headless-terminal sizes remain defined under Verification Strategy.
 
 ### Follow-up Phase D: dialog ownership
 
-- [ ] Replace root callbacks that accept `*Model` with one small stateful dialog
+- [x] Replace root callbacks that accept `*Model` with one small stateful dialog
   body boundary.
-- [ ] Let the dialog controller own the active ID, shell, placement, pointer
+- [x] Let the dialog controller own the active ID, shell, placement, pointer
   capture, common Back/outside behavior, and message routing.
-- [ ] Let each body own its form or picker, local focus, editable values,
+- [x] Let each body own its form or picker, local focus, editable values,
   scopes, text-capture policy, rendering, and local updates.
-- [ ] Construct bodies once and expose typed open/reset methods such as
+- [x] Construct bodies once and expose typed open/reset methods such as
   `OpenSave`, `OpenPreferences`, and `OpenNotice`; do not pass untyped values.
-- [ ] Emit semantic cross-boundary messages for preference preview/save/cancel,
+- [x] Emit semantic cross-boundary messages for preference preview/save/cancel,
   document save, export, and notice dismissal.
-- [ ] Keep field, picker, scroll, and local focus messages inside the active
+- [x] Keep field, picker, scroll, and local focus messages inside the active
   body.
-- [ ] Arrange one modal rectangle, derive the body rectangle from its shell,
+- [x] Arrange one modal rectangle, derive the body rectangle from its shell,
   and use that same plan for rendering and pointer input. Remove preparatory
   geometry mutation during rendering.
 
@@ -1044,7 +1047,6 @@ decision log when the relevant phase supplies evidence.
 - Focus indication when a visible docked sidebar does not own keyboard focus.
 - Whether Help position and size persistence belongs in the initial surface
   phase or a later feature sweep.
-- Whether the Huh file picker is adapted temporarily or replaced during Phase 7.
 - Whether headless-terminal smoke runs in default CI, an integration target, or
   both.
 
@@ -1111,6 +1113,10 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Resolve an observed Super chord independently from capability-filtered Help bindings. | Capability reports control advertisement, but an input the terminal already delivered must still execute; this preserves mixed Control/Super copy behavior. |
 | 2026-07-29 | Canonicalize shifted question-mark and brace aliases before resolution and collision checks. | Terminals can report the same physical punctuation as text or as Shift plus its base key; one canonical chord prevents terminal-dependent dispatch and duplicate Help entries. |
 | 2026-07-29 | Derive contextual Help and the sidebar footer from profile-projected bindings plus a separate display vocabulary. | Mac surfaces render `cmd` while Bubble Tea input remains normalized as `super`, and shortcut text updates during preview and rollback. |
+| 2026-07-29 | Retain one dialog controller with typed stateful bodies and one arranged shell/body plan. | Save, Preferences, Export, and Notice now own their local forms, pickers, focus, values, and updates without root callbacks or render-time geometry preparation. |
+| 2026-07-29 | Route concrete child message types separately while handling only body-emitted application effects in root. | Grouping child message types behind one controller predicate added one allocation to every canvas Update/View frame; concrete routing restored the Phase C hot-path allocation counts. |
+| 2026-07-29 | Keep failed document and settings writes in their owning dialog with the current draft intact. | Application effects now close or replace a dialog only after the corresponding write succeeds, so retry and cancel remain available after errors. |
+| 2026-07-29 | Replace the bounded Huh adapter with a directory-only picker that omits files and hidden entries. | Huh's `FileAllowed(false)` disabled file selection but still rendered and traversed file rows; the application field is specifically a directory choice. |
 
 ## Changed-File Ledger
 
@@ -1133,6 +1139,7 @@ Update this table after each completed phase or reviewable slice.
 | Follow-up A | `internal/tui/CHROME_PLAN.md`, `internal/tui/chrome/{AGENTS.md,buttonlist.go,buttonlist_test.go,command.go,command_test.go,form.go,form_test.go,textinput.go}`, `internal/tui/clipboard/{clipboard.go,clipboard_test.go}`, `internal/tui/cmd/chrome-lab/main.go`, `internal/tui/modal/{confirmation.go,confirmation_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/{save.go,theme.go}` | Resolve physical control keys once into semantic intents, replace ActionBar with one retained horizontal ButtonList, traverse every form button as a stable focus target, and migrate existing form declarations and styles. |
 | Follow-up B | `go.mod`, `go.sum`, `cmd/dg/{main.go,main_test.go}`, `internal/settings/{settings.go,settings_test.go}`, `internal/tui/{model.go,model_test.go,preferences.go,save.go}`, `internal/tui/cmd/chrome-lab/main_test.go`, `internal/tui/CHROME_PLAN.md` | Add typed XDG settings with atomic persistence, inject one loaded snapshot into layout and TUI construction, retain allocated dialog bodies, and add one fixed-size program-level smoke. |
 | Follow-up C | `internal/tui/CHROME_PLAN.md`, `internal/tui/{bindings.go,bindings_test.go,help.go,model.go,model_test.go,preferences.go,sidebar.go,sidebar_test.go,workspace.go}`, deleted `internal/tui/keymap.go`, `internal/tui/chrome/{command.go,command_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}` | Make binding declarations the sole key-dispatch and Help source, project Primary chords by shortcut style, separate capability from execution and vocabulary, delete the legacy key map, and update live shortcut presentation. |
+| Follow-up D | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,view.go,workspace.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/modal/AGENTS.md`, `internal/tui/preferences/{preferences.go,preferences_test.go}` | Replace root callback specs and body-local fields with one retained dialog controller, typed stateful bodies and semantic effect messages; share one arranged plan across rendering and input; keep failed writes and drafts open; replace Huh with visible-directory-only navigation; preserve canvas hot-path allocations. |
 
 ## Verification Ledger
 
@@ -1280,3 +1287,18 @@ passing command without preserving the investigated failure.
 | 2026-07-29 | Follow-up C recovery | `dd-gopls check <all changed Phase C Go files>` | Passed with no diagnostics. |
 | 2026-07-29 | Follow-up C recovery | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed resolver profile, shortcut-style form, text capture, dialogs, sidebar, and all prior scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
 | 2026-07-29 | Follow-up C recovery | Root raw Command-P probe and Command-P/Command-B `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed Preferences open with `Shortcut style`, sidebar open with `cmd+b close`, exact dimensions, and hidden cursor assertions; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up D | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/modal ./internal/tui/preferences ./internal/tui -count=1` | Passed shell, Preferences-body, controller ownership, shared-plan render/input, semantic effect, cancellation, and failed settings/document write draft-retention tests. |
+| 2026-07-29 | Follow-up D | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg -count=1` | Passed every affected TUI component, chrome-lab, adapter, and command package. |
+| 2026-07-29 | Follow-up D | Initial `dd-gopls check <all changed Phase D Go files>` | Could not write the sandboxed Go module/stat and build caches. Re-ran with normal local cache access. |
+| 2026-07-29 | Follow-up D | `dd-gopls check <all changed Phase D Go files>` | Passed with no diagnostics before and after the final allocation fix. |
+| 2026-07-29 | Follow-up D | Initial `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Found one new approximately 32-byte allocation in every measured Update/View path. An archived `e4c80bb` baseline confirmed Phase C used 9 AltDrag, 13 MoveCommittedDuplicate, and 10 MoveAndView allocations per operation. |
+| 2026-07-29 | Follow-up D | Final `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: AltDrag 46,935 ns/op, 10,920 B/op, 9 allocs/op; MoveCommittedDuplicate 47,878 ns/op, 10,968 B/op, 13 allocs/op; MoveAndView 5,223 ns/op, 4,712 B/op, 10 allocs/op. Concrete child routing restored Phase C allocation counts, which remained stable after replacing the picker. |
+| 2026-07-29 | Follow-up D | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...`; `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...`; `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed all packages under normal and race execution; vet passed; lint reported 0 issues. |
+| 2026-07-29 | Follow-up D | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed forms, nested picker, dialogs, pointer capture, resolver profiles, sidebar, and all prior scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
+| 2026-07-29 | Follow-up D | Initial root Preferences/Save `ht` matrix attempts | The app reached both pickers, but repository-specific wait text did not exist in the Preferences home-directory view, one JSON escape contained a typo, and the constrained Save picker showed `.git` instead of `AGENTS.md`. Captured JSON/PNG evidence, replaced content-specific waits with the selected-directory-row invariant, and reran. |
+| 2026-07-29 | Follow-up D | Root raw Command-P/Command-S `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed Preferences open, live field update, nested picker open/Back, cancellation, Save open, nested picker open/Back, cancellation, exact dimensions, final canvas composition, and hidden cursor assertions; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up D | User-requested visible-directory-only picker check with `go test ./internal/tui/directorypicker ./internal/tui/preferences ./internal/tui -count=1` | The first attempt proved `FileAllowed(false)` still rendered and traversed disabled file rows. Replaced the Huh adapter with bounded directory-only navigation. The first integration run then exposed a zero-height natural-measurement view; added a bounded natural height before final shell arrangement. |
+| 2026-07-29 | Follow-up D | `GOCACHE=/private/tmp/dg-codex-go-build go mod tidy` | Passed; removed Huh, Bubbles, and their now-unused transitive dependencies. |
+| 2026-07-29 | Follow-up D | Initial post-picker `golangci-lint run --path-mode abs` | Reported one repeated directory-picker test title. Reused one test constant. |
+| 2026-07-29 | Follow-up D | Final directory-picker/narrow tests; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs`; `dd-gopls check <all changed Phase D Go files>` | Passed visible-directory filtering, navigation, selection, dialog integration, all packages under normal and race execution, vet, lint with 0 issues, and diagnostics with no findings. |
+| 2026-07-29 | Follow-up D | Post-picker `./internal/tui/cmd/chrome-lab/smoke.sh`; root raw Command-P/Command-S `ht` matrix at `100x30`, `80x16`, and `80x12` | Chrome-lab passed all scenarios. Root passed Preferences and Save picker open/Back/cancel, files and hidden entries absent, exact dimensions, final canvas composition, and hidden cursor; all sessions cleaned up. |

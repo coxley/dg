@@ -173,7 +173,15 @@ func (m *Model) Completed() (Action, bool) {
 	return m.action, m.completed
 }
 
-// DirectoryOpen reports whether the bounded Huh picker replaces the form.
+// TakeCompleted returns and clears the submitted form action.
+func (m *Model) TakeCompleted() (Action, bool) {
+	action, completed := m.action, m.completed
+	m.action = ActionNone
+	m.completed = false
+	return action, completed
+}
+
+// DirectoryOpen reports whether the bounded directory picker replaces the form.
 func (m *Model) DirectoryOpen() bool {
 	return m.pickerOpen
 }

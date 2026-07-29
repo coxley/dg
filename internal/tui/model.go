@@ -13,7 +13,6 @@ import (
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
-	"github.com/coxley/dg/internal/tui/directorypicker"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
@@ -89,14 +88,13 @@ type Model struct {
 	duplicatePoint    layout.Point
 	duplicateGeo      *layout.Layout
 	nav               nav.Model
-	dialog            modalview.Model
+	dialogs           dialogController
 	canvas            canvasview.Model
 	bindings          *chrome.Resolver
 	workspace         chrome.Workspace
 	sidebar           sidebarState
 
 	mode             mode
-	activeDialog     chrome.SurfaceID
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
@@ -130,19 +128,11 @@ type Model struct {
 	statusError string
 	path        string
 
-	clipboard     *clipboardview.Model
-	saveForm      *chrome.Form
-	savePicker    *directorypicker.Model
-	saveDirectory string
-	saveName      string
-	notice        string
-	noticeID      uint64
-	noticeReturn  chrome.SurfaceID
+	clipboard *clipboardview.Model
 
 	preferences    preferenceState
 	settingsStore  *settings.Store
 	preferenceEdit bool
-	preferenceForm *preferencesview.Model
 	helpInspector  helpInspector
 
 	nodeStyle layout.NodeStyle
@@ -213,15 +203,13 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	}, m.theme.sidebarStyles())
 	m.applySettingsSnapshot(configured.settings)
 	m.clipboard = clipboardview.New(m.theme.formStyles())
+	m.dialogs = newDialogController(m.theme, m.clipboard, m.preferenceValue())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
 		{ID: "rectangle", Tool: nav.Rectangle, Label: " Rectangle "},
 		{ID: "line", Tool: nav.Line, Label: " Line "},
 	})
-	m.dialog = modalview.New(m.theme.Modal)
 	m.canvas = canvasview.New(m.theme.Canvas)
-	m.resetPreferenceForm()
-	m.resetSaveForm()
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -275,20 +263,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		syncWorkspace = true
 		m.theme = DefaultTheme(message.IsDark())
 		m.nav.SetStyles(m.theme.Nav)
-		m.dialog.SetStyles(m.theme.Modal)
+		m.dialogs.SetStyles(m.theme)
 		m.canvas.SetStyles(m.theme.Canvas)
 		m.sidebar.setStyles(m.theme.sidebarStyles())
 		clear(m.styledRuns)
-		if m.preferenceForm != nil {
-			m.preferenceForm.SetStyles(m.theme.preferenceStyles())
-		}
-		if m.saveForm != nil {
-			m.saveForm.SetStyles(m.theme.formStyles())
-		}
-		if m.savePicker != nil {
-			m.savePicker.SetStyles(directorypicker.Styles{Dark: m.theme.Dark})
-		}
-		m.clipboard.SetStyles(m.theme.formStyles())
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
 		m.bindings.SetSuperAvailable(message.SupportsKeyDisambiguation())
@@ -300,7 +278,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(message.Height, 0)
 		m.workspace.SetTerminal(chrome.Size{Width: m.width, Height: m.height})
 		m.nav.SetWidth(m.width)
-		m.resizePreferenceForm()
 		m.ensureCursorVisible()
 		return m, m.retargetSidebar()
 	case tea.KeyPressMsg:
@@ -326,15 +303,17 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateDialog(message)
 	case chrome.FormFlashExpiredMsg:
 		return m, m.updateDialog(message)
-	case directorypicker.UpdateMsg:
-		return m, m.updateDialog(message)
 	case preferencesview.UpdateMsg:
-		return m, m.updateSettingsTabs(message)
+		return m, m.updateDialog(message)
 	case clipboardview.UpdateMsg:
+		if m.dialogs.ActiveID() == surfaceExport {
+			return m, m.updateDialog(message)
+		}
 		return m, m.updateClipboard(message)
 	case noticeExpiredMsg:
-		if m.activeDialog == surfaceNotice && message.id == m.noticeID {
-			closeNoticeDialog(m)
+		if m.dialogs.ActiveID() == surfaceNotice &&
+			m.dialogs.notice.Generation() == message.id {
+			return m, m.dismissDialog()
 		}
 	case sidebarMotionMsg:
 		syncWorkspace = true
@@ -351,7 +330,7 @@ func (m *Model) syncWorkspaceAfterUpdate(sync bool) {
 
 func (m *Model) workspaceNeedsSync() bool {
 	return m.helpInspector.visible ||
-		m.activeDialog != surfaceNone ||
+		m.dialogs.ActiveID() != surfaceNone ||
 		m.sidebar.open ||
 		m.workspace.SurfaceMoving(surfaceSidebar) ||
 		m.workspace.SurfacePosition(surfaceSidebar) != 0
@@ -371,14 +350,15 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case modalview.CloseMsg:
-		m.closeDialog()
-		return nil, true
+		return m.dismissDialog(), true
 	case clipboardview.OpenExportMsg:
-		m.openDialog(surfaceExport)
+		m.dialogs.OpenExport()
 		m.status = ""
 		return nil, true
 	case clipboardview.CloseExportMsg:
-		closeExportDialog(m)
+		if m.dialogs.ActiveID() == surfaceExport {
+			m.dialogs.CloseWithoutMessage()
+		}
 		return nil, true
 	case clipboardview.CopiedMsg:
 		return m.showNotice("Copied to clipboard", surfaceNone), true
@@ -391,7 +371,7 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m *Model) updatePaste(message tea.PasteMsg) tea.Cmd {
-	if m.activeDialog != surfaceNone {
+	if m.dialogs.ActiveID() != surfaceNone {
 		return m.updateDialog(message)
 	}
 	if m.mode == modeEditLabel {
@@ -406,11 +386,14 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	copyKey := m.bindings.MatchesKey(message, commandCopy)
-	if spec, ok := m.activeDialogSpec(); ok && spec.DismissAnyKey {
-		returnModal := m.noticeReturn
-		closeNoticeDialog(m)
-		if !copyKey || returnModal != surfaceNone {
-			return nil
+	if m.dialogs.DismissAnyKey() {
+		returnTo := m.dialogs.notice.ReturnTo()
+		command := m.dismissDialog()
+		if !copyKey || returnTo != surfaceNone {
+			return command
+		}
+		if command != nil {
+			return tea.Sequence(command, m.copySelection())
 		}
 	}
 	if !copyKey && !isModifierKey(message) {
@@ -425,7 +408,7 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		return m.updateSemanticCommand(command)
 	}
 	switch {
-	case m.activeDialog != surfaceNone:
+	case m.dialogs.ActiveID() != surfaceNone:
 		return m.updateDialog(message)
 	case m.sidebar.focused:
 	case m.mode == modeEditLabel:
@@ -439,19 +422,10 @@ type noticeExpiredMsg struct {
 }
 
 func (m *Model) showNotice(text string, returnTo chrome.SurfaceID) tea.Cmd {
-	m.noticeID++
-	id := m.noticeID
-	m.notice = text
-	m.noticeReturn = returnTo
-	m.openDialog(surfaceNotice)
+	id := m.dialogs.OpenNotice(text, returnTo)
 	return tea.Tick(noticeDuration, func(time.Time) tea.Msg {
 		return noticeExpiredMsg{id: id}
 	})
-}
-
-func (m *Model) dismissNotice() {
-	m.notice = ""
-	m.noticeReturn = surfaceNone
 }
 
 func (m *Model) setError(text string) {
@@ -1006,7 +980,7 @@ func (m *Model) finishMove() {
 func (m *Model) interruptInteraction() {
 	m.clipboard.CancelPending()
 	if m.preferenceEdit {
-		m.closeSettingsModal()
+		m.cancelPreferences()
 	}
 	if m.history != nil {
 		m.history.Interrupt()

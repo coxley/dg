@@ -245,6 +245,21 @@ func TestActionClickSubmitsSelectedAction(t *testing.T) {
 	require.Equal(t, ActionSaveDefaults, got)
 }
 
+func TestTakeCompletedConsumesSelectedAction(t *testing.T) {
+	t.Parallel()
+
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, borderedStyles())
+	model.submit(actionSave)
+
+	action, completed := model.TakeCompleted()
+
+	require.True(t, completed)
+	require.Equal(t, ActionSave, action)
+	action, completed = model.TakeCompleted()
+	require.False(t, completed)
+	require.Equal(t, ActionNone, action)
+}
+
 func TestActionsUseDeclaredBottomLeftGeometry(t *testing.T) {
 	t.Parallel()
 

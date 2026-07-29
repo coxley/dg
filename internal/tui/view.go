@@ -77,7 +77,7 @@ func (m *Model) View() tea.View {
 	view.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
 	view.KeyboardEnhancements.ReportAlternateKeys = true
 	switch {
-	case m.activeDialog != surfaceNone:
+	case m.dialogs.ActiveID() != surfaceNone:
 	case m.mode == modeEditLabel:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
 			cursor := &m.viewCursor[m.nextCursor]
@@ -117,7 +117,7 @@ func (m *Model) activeFrame() canvasview.FrameID {
 func (m *Model) composeSurfaces(content string) string {
 	help, helpVisible := m.surfacePlan(surfaceHelp)
 	sidebar, sidebarVisible := m.surfacePlan(surfaceSidebar)
-	overlay := m.dialog.Overlay()
+	overlay := m.dialogs.Overlay()
 	if !helpVisible && !sidebarVisible && overlay.Content == "" {
 		return content
 	}
@@ -138,11 +138,11 @@ func (m *Model) composeSurfaces(content string) string {
 	}
 	if overlay.Content != "" {
 		dialogRect := overlayRect(overlay)
-		if surface, ok := m.surfacePlan(m.activeDialog); ok {
+		if surface, ok := m.surfacePlan(m.dialogs.ActiveID()); ok {
 			dialogRect = surface.Rect
 		}
 		layers = append(layers, lipgloss.NewLayer(overlay.Content).
-			ID(string(m.activeDialog)).
+			ID(string(m.dialogs.ActiveID())).
 			X(dialogRect.X).
 			Y(dialogRect.Y).
 			Z(surfacePriorityModal))

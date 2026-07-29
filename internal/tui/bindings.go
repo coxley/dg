@@ -106,8 +106,8 @@ var (
 )
 
 func (m *Model) activeBindingScopes() []chrome.ScopeID {
-	if spec, ok := m.activeDialogSpec(); ok {
-		return spec.Scopes(m)
+	if m.dialogs.ActiveID() != surfaceNone {
+		return m.dialogs.Scopes()
 	}
 	if m.sidebar.focused {
 		return sidebarBindingScopes[:]
@@ -238,7 +238,7 @@ func (m *Model) updateAppearanceCommand(command chrome.CommandID) {
 func (m *Model) updateEditCommand(command chrome.CommandID) tea.Cmd {
 	switch command {
 	case commandCopy:
-		if m.activeDialog == surfaceNone && m.mode == modeNavigate {
+		if m.dialogs.ActiveID() == surfaceNone && m.mode == modeNavigate {
 			return m.copySelection()
 		}
 	case commandDelete:
@@ -266,9 +266,9 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 			m.sidebar.blur()
 			return nil
 		}
-		if spec, ok := m.activeDialogSpec(); ok && spec.Back != nil {
-			if command, handled := spec.Back(m); handled {
-				return command
+		if m.dialogs.ActiveID() != surfaceNone {
+			if result := m.dialogs.Back(); result.handled {
+				return m.handleDialogResult(result)
 			}
 		}
 		if id, ok := m.workspace.Back(); ok {
@@ -282,9 +282,9 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		m.interruptInteraction()
 		return tea.Quit
 	case commandSave:
-		switch m.activeDialog {
+		switch m.dialogs.ActiveID() {
 		case surfaceSave:
-			m.commitSaveForm()
+			return m.handleDialogResult(m.dialogs.SubmitSave())
 		case surfaceNone:
 			m.requestSave()
 		}

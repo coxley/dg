@@ -21,8 +21,7 @@ Composable presentation models live in sub-packages:
   viewports, and cell-aware transitions.
 - `clipboard` owns copy debounce, export formatting and chrome form state, terminal
   capability probing, and fallback writes.
-- `directorypicker` is the only bounded Huh adapter and owns filesystem
-  navigation.
+- `directorypicker` owns bounded directory-only filesystem navigation.
 - `nav` owns floating tool navigation styles, geometry, hover, and activation.
 - `modal` owns modal and tab styles, sizing, full-screen fallback, movement,
   and pointer hit testing.
@@ -30,11 +29,14 @@ Composable presentation models live in sub-packages:
   persistence-facing actions.
 
 The root configures these models and translates their semantic `tea.Msg`
-values into editor actions. Component interactions cross boundaries through
-`tea.Msg` and `tea.Cmd`; do not reach into child state from root.
+values into editor actions. A retained dialog controller owns active dialog
+identity, shell geometry, pointer capture, and body routing. Stateful dialog
+bodies own forms, pickers, focus, and drafts. Component interactions cross
+boundaries through `tea.Msg` and `tea.Cmd`; do not reach into child state from
+root.
 
 Bubbles help renders shortcuts. Save, Export, and Preferences use chrome forms.
-Only filesystem navigation uses `huh/v2`, behind `directorypicker`.
+`directorypicker` provides the only filesystem-navigation surface.
 
 The sparse canvas renderer remains custom. Generic viewports do not model
 document coordinates, occlusion, preview ownership, or its hot-path needs.
@@ -75,9 +77,10 @@ Profile drag changes with the existing TUI benchmarks and `go tool pprof`.
 ## Dialogs, settings, sidebar, and clipboard
 
 Save, Export, Preferences, and Notice declare distinct workspace surfaces
-through one dialog-spec table. Left-dragging empty dialog cells moves a
+through one dialog controller. Left-dragging empty dialog cells moves a
 floating shell; right-dragging resizes it. Fit alone selects floating or
-full-screen placement. Back and outside-click behavior comes from each
+full-screen placement. One retained dialog plan supplies rendering and local
+pointer coordinates. Back and outside-click behavior comes from each
 declaration.
 
 The preferences model reports editable values; root applies router changes

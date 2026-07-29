@@ -21,39 +21,42 @@ const (
 	saveCancelAction   chrome.ID = "save-cancel"
 )
 
-func (m *Model) requestSave() {
-	if m.mode != modeNavigate {
-		m.setError(finishOperation)
-		return
-	}
-	if m.path == "" {
-		m.openSaveForm()
-		return
-	}
-	m.save(m.path)
+type saveDocumentMsg struct {
+	Directory string
+	Name      string
 }
 
-func (m *Model) openSaveForm() {
-	m.saveDirectory = m.preferences.saveDirectory
-	if m.saveDirectory == "" {
-		m.saveDirectory = "."
-	}
-	m.saveName = defaultSaveName
-	m.resetSaveForm()
-	m.openDialog(surfaceSave)
-	m.status = ""
+type saveDialogBody struct {
+	form      *chrome.Form
+	picker    *directorypicker.Model
+	directory string
+	name      string
+	theme     Theme
+	bounds    chrome.Rect
 }
 
-func (m *Model) resetSaveForm() {
-	directory := m.saveDirectory
+func newSaveDialogBody(theme Theme) *saveDialogBody {
+	body := &saveDialogBody{theme: theme}
+	body.Reset(".")
+	return body
+}
+
+func (b *saveDialogBody) Reset(directory string) {
 	if directory == "" {
 		directory = "."
 	}
-	name := m.saveName
-	if name == "" {
-		name = defaultSaveName
-	}
-	m.saveForm = chrome.NewForm(chrome.FormDeclaration{
+	b.directory = directory
+	b.name = defaultSaveName
+	b.form = b.newForm(directory, b.name)
+	b.picker = directorypicker.New(directorypicker.Config{
+		Title: "Directory",
+		Value: directory,
+	}, directorypicker.Styles{Dark: b.theme.Dark})
+	b.SetBounds(b.bounds)
+}
+
+func (b *saveDialogBody) newForm(directory, name string) *chrome.Form {
+	return chrome.NewForm(chrome.FormDeclaration{
 		Fields: []chrome.FormField{
 			{
 				ID: saveDirectoryField, Label: "Directory",
@@ -72,50 +75,164 @@ func (m *Model) resetSaveForm() {
 				{ID: saveCancelAction, Label: "Cancel"},
 			},
 		},
-	}, m.theme.formStyles())
-	m.savePicker = directorypicker.New(directorypicker.Config{
-		Title:      "Directory",
-		Value:      directory,
-		AllowFiles: true,
-		ShowHidden: true,
-	}, directorypicker.Styles{Dark: m.theme.Dark})
+	}, b.theme.formStyles())
 }
 
-func (m *Model) updateSaveForm(message tea.Msg) tea.Cmd {
-	if m.savePicker != nil && m.savePicker.Opened() {
-		picker, command := m.savePicker.Update(message)
-		m.savePicker = picker.(*directorypicker.Model)
-		m.saveDirectory = m.savePicker.Value()
-		if !m.savePicker.Opened() {
-			m.saveForm.SetDirectory(saveDirectoryField, m.saveDirectory)
+func (*saveDialogBody) Context() string {
+	return string(commandSave)
+}
+
+func (*saveDialogBody) PreferredWidth() int {
+	return 68
+}
+
+func (b *saveDialogBody) Scopes() []chrome.ScopeID {
+	if b.picker.Opened() {
+		return []chrome.ScopeID{scopeDirectory, scopeModal, scopeGlobal}
+	}
+	return []chrome.ScopeID{scopeModal, scopeGlobal}
+}
+
+func (*saveDialogBody) TextEntry() bool {
+	return true
+}
+
+func (b *saveDialogBody) SetBounds(bounds chrome.Rect) {
+	b.bounds = bounds
+	b.form.SetBounds(bounds)
+	b.picker.SetBounds(bounds.Width, bounds.Height)
+}
+
+func (b *saveDialogBody) Update(message tea.Msg) dialogBodyResult {
+	switch message := message.(type) {
+	case dialogClickMsg:
+		if b.picker.Opened() {
+			return b.updatePicker(tea.MouseClickMsg(message.Mouse))
 		}
-		return command
+		command := b.form.Click(message.Point)
+		if command == nil {
+			return dialogBodyResult{handled: true}
+		}
+		return b.Update(command())
+	case dialogWheelMsg:
+		if !b.picker.Opened() {
+			return dialogBodyResult{}
+		}
+		return b.updatePicker(tea.MouseWheelMsg(message.Mouse))
+	case dialogBackMsg:
+		if !b.picker.Opened() {
+			return dialogBodyResult{}
+		}
+		b.closePicker()
+		return dialogBodyResult{handled: true}
+	case dialogCloseMsg:
+		b.picker.Close()
+		return dialogBodyResult{handled: true}
+	}
+	if b.picker.Opened() {
+		return b.updatePicker(message)
 	}
 	switch message := message.(type) {
 	case chrome.FormActivateMsg:
 		if message.ID == saveDirectoryField {
-			m.savePicker.SetValue(m.saveDirectory)
-			m.savePicker.Open()
+			b.picker.SetValue(b.directory)
+			b.picker.Open()
 		}
-		return nil
+		return dialogBodyResult{handled: true}
 	case chrome.FormSubmitMsg:
 		switch message.ID {
 		case saveConfirmAction:
-			m.commitSaveForm()
+			b.sync()
+			return dialogBodyResult{
+				message: saveDocumentMsg{
+					Directory: b.directory,
+					Name:      b.name,
+				},
+				handled: true,
+			}
 		case saveCancelAction:
-			m.closeSaveForm()
+			return dialogBodyResult{
+				message: dialogCancelMsg{},
+				handled: true,
+			}
 		}
-		return nil
+		return dialogBodyResult{}
 	default:
-		form, command := m.saveForm.Update(message)
-		m.saveForm = form.(*chrome.Form)
-		m.syncSaveForm()
-		return command
+		form, command := b.form.Update(message)
+		b.form = form.(*chrome.Form)
+		b.sync()
+		return dialogBodyResult{command: command, handled: true}
 	}
 }
 
-func (m *Model) commitSaveForm() {
-	name := strings.TrimSpace(m.saveName)
+func (b *saveDialogBody) View() string {
+	if b.picker.Opened() {
+		return b.picker.View().Content
+	}
+	return b.form.View().Content
+}
+
+func (b *saveDialogBody) SetStyles(theme Theme) {
+	b.theme = theme
+	b.form.SetStyles(theme.formStyles())
+	b.picker.SetStyles(directorypicker.Styles{Dark: theme.Dark})
+}
+
+func (b *saveDialogBody) FocusID() chrome.ID {
+	return b.form.FocusID()
+}
+
+func (b *saveDialogBody) AccessibleLines() []string {
+	return b.form.AccessibleLines()
+}
+
+func (b *saveDialogBody) PickerOpen() bool {
+	return b.picker.Opened()
+}
+
+func (b *saveDialogBody) SetValue(directory, name string) {
+	b.Reset(directory)
+	b.name = name
+	b.form = b.newForm(directory, name)
+	b.SetBounds(b.bounds)
+}
+
+func (b *saveDialogBody) updatePicker(message tea.Msg) dialogBodyResult {
+	picker, command := b.picker.Update(message)
+	b.picker = picker.(*directorypicker.Model)
+	b.directory = b.picker.Value()
+	if !b.picker.Opened() {
+		b.closePicker()
+	}
+	return dialogBodyResult{command: command, handled: true}
+}
+
+func (b *saveDialogBody) closePicker() {
+	b.picker.Close()
+	b.directory = b.picker.Value()
+	b.form.SetDirectory(saveDirectoryField, b.directory)
+}
+
+func (b *saveDialogBody) sync() {
+	b.directory, _ = b.form.Directory(saveDirectoryField)
+	b.name, _ = b.form.Text(saveNameField)
+}
+
+func (m *Model) requestSave() {
+	if m.mode != modeNavigate {
+		m.setError(finishOperation)
+		return
+	}
+	if m.path == "" {
+		m.dialogs.OpenSave(m.preferences.saveDirectory)
+		m.status = ""
+		return
+	}
+	m.save(m.path)
+}
+
+func (m *Model) saveFromDialog(message saveDocumentMsg) {
+	name := strings.TrimSpace(message.Name)
 	if name == "" {
 		m.setError("enter a file name")
 		return
@@ -124,9 +241,9 @@ func (m *Model) commitSaveForm() {
 		m.setError("file name must not contain a directory")
 		return
 	}
-	path := filepath.Join(m.saveDirectory, name)
-	if info, err := os.Stat(m.saveDirectory); err == nil && !info.IsDir() {
-		path = m.saveDirectory
+	path := filepath.Join(message.Directory, name)
+	if info, err := os.Stat(message.Directory); err == nil && !info.IsDir() {
+		path = message.Directory
 		if name != defaultSaveName {
 			path = filepath.Join(filepath.Dir(path), name)
 		}
@@ -134,22 +251,7 @@ func (m *Model) commitSaveForm() {
 	if !m.save(path) {
 		return
 	}
-	m.closeSaveForm()
-}
-
-func (m *Model) closeSaveForm() {
-	m.activeDialog = surfaceNone
-	m.savePicker.Close()
-	m.saveDirectory = ""
-	m.saveName = ""
-}
-
-func (m *Model) syncSaveForm() {
-	if m.saveForm == nil {
-		return
-	}
-	m.saveDirectory, _ = m.saveForm.Directory(saveDirectoryField)
-	m.saveName, _ = m.saveForm.Text(saveNameField)
+	m.dialogs.CloseWithoutMessage()
 }
 
 func (m *Model) save(path string) bool {

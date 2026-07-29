@@ -34,7 +34,11 @@ func (m *Model) syncWorkspace() {
 		canvasWidth -= m.workspace.SurfacePosition(surfaceSidebar)
 	}
 	m.nav.SetWidth(max(canvasWidth, 0))
-	overlay := m.currentDialogOverlay()
+	overlay := m.dialogs.Arrange(
+		m.width,
+		m.height,
+		m.nav.Bounds().Bottom(),
+	)
 	surfaces := make([]chrome.Surface, 0, 4+len(dialogSpecs))
 	surfaces = append(
 		surfaces,
@@ -76,7 +80,7 @@ func (m *Model) syncWorkspace() {
 			Anchor:         chrome.AnchorTerminal,
 			Requested:      overlayRect(overlay),
 			Priority:       surfacePriorityModal,
-			Visible:        m.activeDialog == spec.ID && overlay.Width != 0,
+			Visible:        m.dialogs.ActiveID() == spec.ID && overlay.Width != 0,
 			DismissOutside: spec.DismissOutside,
 			DismissBack:    true,
 			FocusOnOpen:    true,
@@ -104,13 +108,8 @@ func (m *Model) surfacePlan(id chrome.SurfaceID) (chrome.SurfacePlan, bool) {
 }
 
 func (m *Model) helpContext() string {
-	if m.activeDialog == surfacePreferences &&
-		m.preferenceForm != nil &&
-		m.preferenceForm.DirectoryOpen() {
-		return "directory picker"
-	}
-	if spec, ok := m.activeDialogSpec(); ok {
-		return spec.Context
+	if m.dialogs.ActiveID() != surfaceNone {
+		return m.dialogs.Context()
 	}
 	if m.sidebar.focused {
 		return "sidebar"
@@ -122,8 +121,8 @@ func (m *Model) helpContext() string {
 }
 
 func (m *Model) textEntryActive() bool {
-	if spec, ok := m.activeDialogSpec(); ok {
-		return spec.TextEntry
+	if m.dialogs.ActiveID() != surfaceNone {
+		return m.dialogs.TextEntry()
 	}
 	return m.mode == modeEditLabel
 }
@@ -136,8 +135,8 @@ func (m *Model) dismissSurface(id chrome.SurfaceID) tea.Cmd {
 	case surfaceSidebar:
 		return m.dismissSidebar()
 	default:
-		if id == m.activeDialog {
-			m.closeDialog()
+		if id == m.dialogs.ActiveID() {
+			return m.dismissDialog()
 		}
 		return nil
 	}
@@ -176,11 +175,11 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 			m.workspace.Capture(surfaceHelp)
 		}
 	default:
-		if id != m.activeDialog {
+		if id != m.dialogs.ActiveID() {
 			return nil
 		}
 		command := m.updateDialogMouseClick(message.Mouse())
-		if m.dialog.CapturesPointer() {
+		if m.dialogs.CapturesPointer() {
 			m.workspace.Capture(id)
 		}
 		return command
@@ -201,7 +200,7 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 			m.helpInspector.update(message, plan.Rect)
 		case surfaceSidebar:
 		default:
-			if id == m.activeDialog {
+			if id == m.dialogs.ActiveID() {
 				return m.updateDialogMouseMotion(message.Mouse())
 			}
 		}
@@ -224,11 +223,11 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
 		m.helpInspector.update(message, plan.Rect)
 	case surfaceSidebar:
 	default:
-		if id != m.activeDialog {
+		if id != m.dialogs.ActiveID() {
 			m.updateMouseRelease(message.Mouse())
 			break
 		}
-		m.dialog, _ = m.dialog.Update(message)
+		m.dialogs.Release(message)
 	}
 	m.workspace.Release()
 }
@@ -251,7 +250,7 @@ func (m *Model) updateSurfaceMouseWheel(message tea.MouseWheelMsg) tea.Cmd {
 				m.sidebar.scroll(1)
 			}
 		default:
-			if id == m.activeDialog {
+			if id == m.dialogs.ActiveID() {
 				return m.updateDialogWheel(message)
 			}
 		}

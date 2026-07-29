@@ -51,11 +51,11 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
 	require.Equal(t, "dark", model.preferences.darkTint)
 	require.Equal(t, "light", model.preferences.lightTint)
-	require.NotNil(t, model.preferenceForm)
-	require.NotNil(t, model.saveForm)
-	require.NotNil(t, model.savePicker)
+	require.NotNil(t, model.dialogs.preferences.model)
+	require.NotNil(t, model.dialogs.save.form)
+	require.NotNil(t, model.dialogs.save.picker)
 	require.NotNil(t, model.clipboard)
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
 
 func TestModelNavigatesAndCyclesHits(t *testing.T) {
@@ -540,7 +540,7 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	model.bindings.SetProfile(chrome.ProfileStandard)
 	updateModel(t, model, keyPress('?', "?"))
 	require.True(t, model.helpInspector.visible)
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	view := ansi.Strip(model.View().Content)
 	require.Contains(t, view, "HELP · canvas")
 	require.Contains(t, view, "?")
@@ -557,7 +557,7 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 		Text: "p",
 		Mod:  tea.ModCtrl,
 	}))
-	require.Equal(t, surfacePreferences, model.activeDialog)
+	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
 	require.Contains(t, ansi.Strip(model.View().Content), "Step cost")
 	require.Contains(
 		t,
@@ -570,7 +570,7 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	require.NotNil(t, command)
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, before, model.geo.Router())
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.True(t, model.helpInspector.visible)
 }
 
@@ -587,10 +587,10 @@ func TestEnhancedQuestionMarkOpensAndClosesHelp(t *testing.T) {
 
 	updateModel(t, model, question)
 	require.True(t, model.helpInspector.visible)
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	updateModel(t, model, question)
 	require.False(t, model.helpInspector.visible)
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
 
 func TestPreferenceModalFitsShortTerminals(t *testing.T) {
@@ -602,7 +602,7 @@ func TestPreferenceModalFitsShortTerminals(t *testing.T) {
 
 	require.LessOrEqual(
 		t,
-		model.currentDialogOverlay().Height,
+		model.dialogs.Overlay().Height,
 		model.height,
 	)
 }
@@ -621,11 +621,11 @@ func TestPreferencesCloseWithQWithoutHidingHelp(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, surfacePreferences, back)
 	updateModel(t, model, keyPress('q', "q"))
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.True(t, model.helpInspector.visible)
 }
 
-func TestDialogSpecsOwnDistinctModalSurfacesAndScopes(t *testing.T) {
+func TestDialogControllerOwnsDistinctModalSurfacesAndScopes(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -641,13 +641,15 @@ func TestDialogSpecsOwnDistinctModalSurfacesAndScopes(t *testing.T) {
 		{
 			name: "save dialog",
 			id:   surfaceSave,
-			open: (*Model).openSaveForm,
+			open: func(model *Model) {
+				model.dialogs.OpenSave(model.preferences.saveDirectory)
+			},
 		},
 		{
 			name: "export",
 			id:   surfaceExport,
 			open: func(model *Model) {
-				model.openDialog(surfaceExport)
+				model.dialogs.OpenExport()
 			},
 		},
 		{
@@ -673,12 +675,10 @@ func TestDialogSpecsOwnDistinctModalSurfacesAndScopes(t *testing.T) {
 			back, ok := model.workspace.Back()
 			require.True(t, ok)
 			require.Equal(t, test.id, back)
-			spec, ok := model.activeDialogSpec()
-			require.True(t, ok)
-			require.Equal(t, spec.Scopes(model), model.activeBindingScopes())
+			require.Equal(t, model.dialogs.Scopes(), model.activeBindingScopes())
 
-			model.closeDialog()
-			require.Equal(t, surfaceNone, model.activeDialog)
+			model.dismissDialog()
+			require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 		})
 	}
 }
@@ -698,15 +698,15 @@ func TestDialogShellMovesEveryFloatingSurface(t *testing.T) {
 		case surfacePreferences:
 			model.openPreferences()
 		case surfaceSave:
-			model.openSaveForm()
+			model.dialogs.OpenSave(model.preferences.saveDirectory)
 		case surfaceExport:
-			model.openDialog(surfaceExport)
+			model.dialogs.OpenExport()
 		case surfaceNotice:
 			model.showNotice("Saved", surfaceNone)
 		}
 		model.syncWorkspace()
-		before := model.currentDialogOverlay()
-		require.False(t, model.dialog.Fullscreen())
+		before := model.dialogs.Overlay()
+		require.False(t, model.dialogs.Fullscreen())
 
 		updateModel(t, model, tea.MouseClickMsg{
 			X:      before.Left + 2,
@@ -720,7 +720,7 @@ func TestDialogShellMovesEveryFloatingSurface(t *testing.T) {
 			Button: tea.MouseLeft,
 		})
 
-		after := model.currentDialogOverlay()
+		after := model.dialogs.Overlay()
 		require.Equal(t, before.Left+3, after.Left)
 		require.Equal(t, before.Top+2, after.Top)
 		updateModel(t, model, tea.MouseReleaseMsg{Button: tea.MouseLeft})
@@ -752,7 +752,7 @@ func TestHelpInspectorMovesWithoutTakingFocus(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, before.X-4, moved.Rect.X)
 	require.Equal(t, before.Y-2, moved.Rect.Y)
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.Equal(t, surfaceHelp, model.workspace.CaptureID())
 	updateModel(t, model, tea.MouseReleaseMsg{
 		X:      moved.Rect.X,
@@ -784,7 +784,7 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 		model, _ := newTestModel(t)
 		updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 		model.openPreferences()
-		x, y := modalTextPoint(t, model.currentDialogOverlay(), "Cancel")
+		x, y := modalTextPoint(t, model.dialogs.Overlay(), "Cancel")
 
 		updateModel(t, model, tea.MouseClickMsg{
 			X:      x,
@@ -792,7 +792,7 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 			Button: tea.MouseLeft,
 		})
 
-		require.Equal(t, surfaceNone, model.activeDialog)
+		require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	})
 
 	t.Run("save as defaults", func(t *testing.T) {
@@ -803,7 +803,7 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 		model.openPreferences()
 		x, y := modalTextPoint(
 			t,
-			model.currentDialogOverlay(),
+			model.dialogs.Overlay(),
 			"Save as Defaults",
 		)
 
@@ -827,19 +827,19 @@ func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
 	for range 7 {
-		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
 	command := updateModelCommand(t, model, keyPress('l', "l"))
 	require.NotNil(t, command)
 	updateModel(t, model, command())
-	require.True(t, model.preferenceForm.DirectoryOpen())
+	require.True(t, model.dialogs.preferences.model.DirectoryOpen())
 
 	updateModelCommand(t, model, keyPress(tea.KeyEscape, ""))
-	require.False(t, model.preferenceForm.DirectoryOpen())
-	require.Equal(t, surfacePreferences, model.activeDialog)
+	require.False(t, model.dialogs.preferences.model.DirectoryOpen())
+	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
 
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
 
 func TestPreferenceQClosesDirectoryBeforeModal(t *testing.T) {
@@ -849,19 +849,19 @@ func TestPreferenceQClosesDirectoryBeforeModal(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
 	for range 7 {
-		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
 	command := updateModelCommand(t, model, keyPress('l', "l"))
 	require.NotNil(t, command)
 	updateModel(t, model, command())
-	require.True(t, model.preferenceForm.DirectoryOpen())
+	require.True(t, model.dialogs.preferences.model.DirectoryOpen())
 
 	updateModelCommand(t, model, keyPress('q', "q"))
-	require.False(t, model.preferenceForm.DirectoryOpen())
-	require.Equal(t, surfacePreferences, model.activeDialog)
+	require.False(t, model.dialogs.preferences.model.DirectoryOpen())
+	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
 
 	updateModel(t, model, keyPress('q', "q"))
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
 
 func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
@@ -874,7 +874,7 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.NotEqual(t, before, model.geo.Router())
 
-	overlay := model.currentDialogOverlay()
+	overlay := model.dialogs.Overlay()
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      overlay.Left + 4,
 		Y:      overlay.Top,
@@ -885,7 +885,7 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 		Y:      overlay.Top + 2,
 		Button: tea.MouseLeft,
 	})
-	moved := model.currentDialogOverlay()
+	moved := model.dialogs.Overlay()
 	require.Equal(t, overlay.Left+3, moved.Left)
 	require.Equal(t, overlay.Top+2, moved.Top)
 
@@ -896,7 +896,7 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 	})
 	require.NotNil(t, command)
 	updateModel(t, model, command())
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.Equal(t, before, model.geo.Router())
 }
 
@@ -906,7 +906,15 @@ func TestSettingsModalCanResize(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 40})
 	model.openPreferences()
-	before := model.currentDialogOverlay()
+	before := model.dialogs.Overlay()
+	require.Equal(
+		t,
+		chrome.Rect{
+			Width:  model.dialogs.plan.body.Width,
+			Height: model.dialogs.plan.body.Height,
+		},
+		model.dialogs.preferences.bounds,
+	)
 	mouse := tea.Mouse{
 		X:      before.Left + before.Width - 1,
 		Y:      before.Top + before.Height - 1,
@@ -917,15 +925,25 @@ func TestSettingsModalCanResize(t *testing.T) {
 	mouse.X += 4
 	mouse.Y += 2
 	updateModel(t, model, tea.MouseMotionMsg(mouse))
-	after := model.currentDialogOverlay()
+	after := model.dialogs.Overlay()
 	require.Equal(t, before.Width+4, after.Width)
 	require.Equal(t, before.Height+2, after.Height)
+	require.Equal(
+		t,
+		chrome.Rect{
+			Width:  model.dialogs.plan.body.Width,
+			Height: model.dialogs.plan.body.Height,
+		},
+		model.dialogs.preferences.bounds,
+	)
+	plan := model.dialogs.plan
 	lines := strings.Split(ansi.Strip(after.Content), "\n")
 	require.Len(t, lines, after.Height)
 	require.True(t, strings.HasPrefix(lines[len(lines)-1], "└"))
 	require.True(t, strings.HasSuffix(lines[len(lines)-1], "┘"))
 	screen := strings.Split(ansi.Strip(model.View().Content), "\n")
-	after = model.currentDialogOverlay()
+	require.Equal(t, plan, model.dialogs.plan)
+	after = model.dialogs.Overlay()
 	bottom := screen[after.Top+after.Height-1]
 	require.Equal(t, "└", ansi.Cut(bottom, after.Left, after.Left+1))
 	require.Equal(
@@ -939,7 +957,7 @@ func TestSettingsModalCanResize(t *testing.T) {
 	)
 
 	updateModel(t, model, tea.MouseReleaseMsg(mouse))
-	require.False(t, model.dialog.Resizing())
+	require.False(t, model.dialogs.Resizing())
 }
 
 func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
@@ -956,7 +974,7 @@ func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	require.Equal(t, before, model.geo.Router().Costs.Step)
 	command := updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before+1, model.geo.Router().Costs.Step)
-	require.Equal(t, 1, model.preferenceForm.FieldFlash(0))
+	require.Equal(t, 1, model.dialogs.preferences.model.FieldFlash(0))
 	require.NotNil(t, command)
 }
 
@@ -967,10 +985,10 @@ func TestPreferenceFormCanReachSaveAndCancel(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
 	model.openPreferences()
 	for range 9 {
-		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
 
-	view := ansi.Strip(model.preferenceForm.View().Content)
+	view := ansi.Strip(model.dialogs.preferences.model.View().Content)
 	require.Contains(t, view, "Save")
 	require.Contains(t, view, "Cancel")
 }
@@ -987,7 +1005,7 @@ func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 	updateModel(t, model, tea.BlurMsg{})
 
 	require.Equal(t, before, model.geo.Router())
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.False(t, model.preferenceEdit)
 }
 
@@ -999,11 +1017,11 @@ func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
 	model.openPreferences()
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.NotEqual(t, before, model.geo.Router())
-	model.closeSettingsModal()
+	model.cancelPreferences()
 
 	model.openPreferences()
 	require.Equal(t, before, model.preferences.router)
-	require.Equal(t, before.Costs.Step, model.preferenceForm.Value().Router.Costs.Step)
+	require.Equal(t, before.Costs.Step, model.dialogs.preferences.model.Value().Router.Costs.Step)
 }
 
 func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
@@ -1014,16 +1032,16 @@ func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
 	model.settingsStore = settings.NewStore(path)
 	model.openPreferences()
 	for range 8 {
-		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
-	model.updateSettingsTabs(keyPress(tea.KeyLeft, ""))
+	model.updateDialog(keyPress(tea.KeyLeft, ""))
 	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
 	chord, ok := model.bindings.ChordFor(scopeGlobal, commandSave)
 	require.True(t, ok)
 	require.Equal(t, chrome.Chord("super+s"), chord)
 	require.Contains(t, model.sidebar.declaration.Footer, "cmd+b")
 
-	model.closeSettingsModal()
+	model.cancelPreferences()
 	require.Equal(t, chrome.ProfileStandard, model.preferences.keyProfile)
 	chord, ok = model.bindings.ChordFor(scopeGlobal, commandSave)
 	require.True(t, ok)
@@ -1032,10 +1050,13 @@ func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
 
 	model.openPreferences()
 	for range 8 {
-		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
+		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
-	model.updateSettingsTabs(keyPress(tea.KeyLeft, ""))
-	require.NotNil(t, model.applyPreferences(true))
+	model.updateDialog(keyPress(tea.KeyLeft, ""))
+	require.NotNil(t, model.savePreferences(preferenceSaveMsg{
+		Value:        model.dialogs.preferences.model.Value(),
+		SaveDefaults: true,
+	}))
 
 	snapshot, err := model.settingsStore.Load()
 	require.NoError(t, err)
@@ -1050,12 +1071,42 @@ func TestPreferencesSaveShowsNotice(t *testing.T) {
 	model.settingsStore = settings.NewStore(path)
 	model.openPreferences()
 
-	command := model.applyPreferences(true)
+	command := model.savePreferences(preferenceSaveMsg{
+		Value:        model.dialogs.preferences.model.Value(),
+		SaveDefaults: true,
+	})
 
 	require.NotNil(t, command)
-	require.Equal(t, surfaceNotice, model.activeDialog)
-	require.Equal(t, "Preferences saved", model.notice)
+	require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
+	require.Equal(t, "Preferences saved", model.dialogs.notice.text)
 	require.FileExists(t, path)
+}
+
+func TestPreferencePersistenceFailureKeepsDraftOpen(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	model.settingsStore = settings.NewStore(filepath.Join(blocker, "config.json"))
+	model.openPreferences()
+	before := model.geo.Router()
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+	draft := model.dialogs.preferences.model.Value()
+	require.NotEqual(t, before, draft.Router)
+
+	command := model.savePreferences(preferenceSaveMsg{
+		Value:        draft,
+		SaveDefaults: true,
+	})
+
+	require.Nil(t, command)
+	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
+	require.True(t, model.preferenceEdit)
+	require.True(t, model.transactionOpen)
+	require.Equal(t, draft, model.dialogs.preferences.model.Value())
+	require.Equal(t, draft.Router, model.geo.Router())
+	require.Contains(t, model.status, "save preferences:")
 }
 
 func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {
@@ -1068,17 +1119,17 @@ func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {
 		}()
 
 		time.Sleep(noticeDuration - time.Millisecond)
-		require.Equal(t, surfaceNotice, model.activeDialog)
+		require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
 		require.Empty(t, messages)
 		time.Sleep(time.Millisecond)
 		updateModel(t, model, <-messages)
-		require.Equal(t, surfaceNone, model.activeDialog)
-		require.Empty(t, model.notice)
+		require.Equal(t, surfaceNone, model.dialogs.ActiveID())
+		require.Empty(t, model.dialogs.notice.text)
 
 		model.showNotice("done", surfaceNone)
 		updateModel(t, model, keyPress('x', "x"))
-		require.Equal(t, surfaceNone, model.activeDialog)
-		require.Empty(t, model.notice)
+		require.Equal(t, surfaceNone, model.dialogs.ActiveID())
+		require.Empty(t, model.dialogs.notice.text)
 	})
 }
 
@@ -1913,13 +1964,14 @@ func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 	path := filepath.Join(dir, defaultSaveName)
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	require.Equal(t, surfaceSave, model.activeDialog)
-	model.saveDirectory = dir
-	model.saveName = defaultSaveName
-	model.commitSaveForm()
+	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
+	model.dialogs.save.SetValue(dir, defaultSaveName)
+	model.handleDialogResult(model.dialogs.save.Update(chrome.FormSubmitMsg{
+		ID: saveConfirmAction,
+	}))
 
 	require.Equal(t, modeNavigate, model.mode)
-	require.Equal(t, surfaceNone, model.activeDialog)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.Equal(t, path, model.path)
 	require.Equal(t, "saved "+path, model.status)
 	requireSavedLabel(t, path, "node")
@@ -1932,6 +1984,25 @@ func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 	requireSavedLabel(t, path, "updated")
 }
 
+func TestModelSaveFailureKeepsDraftOpen(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	directory := filepath.Join(t.TempDir(), "missing")
+	model.dialogs.save.SetValue(directory, "draft.json")
+
+	model.handleDialogResult(model.dialogs.save.Update(chrome.FormSubmitMsg{
+		ID: saveConfirmAction,
+	}))
+
+	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
+	require.Equal(t, directory, model.dialogs.save.directory)
+	require.Equal(t, "draft.json", model.dialogs.save.name)
+	require.Empty(t, model.path)
+	require.Contains(t, model.status, "save diagram:")
+}
+
 func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	t.Parallel()
 
@@ -1939,6 +2010,7 @@ func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "diagram-one.json"), nil, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "diagram-two.json"), nil, 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o700))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, ".hidden"), 0o700))
 
 	model, _ := newTestModel(t)
 	model.preferences.saveDirectory = dir
@@ -1947,16 +2019,17 @@ func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	require.NotNil(t, command)
 	updateModel(t, model, command())
-	require.True(t, model.savePicker.Opened())
+	require.True(t, model.dialogs.save.picker.Opened())
 
 	views := model.View().Content
 	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
 	views += model.View().Content
 	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
 	views += model.View().Content
-	require.Contains(t, views, "diagram-one.json")
-	require.Contains(t, views, "diagram-two.json")
 	require.Contains(t, views, "nested")
+	require.NotContains(t, views, "diagram-one.json")
+	require.NotContains(t, views, "diagram-two.json")
+	require.NotContains(t, views, ".hidden")
 }
 
 func TestModelSaveTextInputTypesAndPastesWithoutParentCommands(t *testing.T) {
@@ -1966,14 +2039,14 @@ func TestModelSaveTextInputTypesAndPastesWithoutParentCommands(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
-	require.Equal(t, saveNameField, model.saveForm.FocusID())
+	require.Equal(t, saveNameField, model.dialogs.save.form.FocusID())
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
 	updateModel(t, model, keyPress('q', "q"))
 	updateModel(t, model, tea.PasteMsg{Content: "uick.json\n"})
-	require.Equal(t, "quick.json", model.saveName)
-	require.Equal(t, surfaceSave, model.activeDialog)
-	require.Contains(t, model.saveForm.AccessibleLines(), "File name: quick.json")
+	require.Equal(t, "quick.json", model.dialogs.save.name)
+	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
+	require.Contains(t, model.dialogs.save.form.AccessibleLines(), "File name: quick.json")
 }
 
 func TestModelMouseSelectsAndDragsNode(t *testing.T) {

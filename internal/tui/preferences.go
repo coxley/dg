@@ -25,6 +25,164 @@ type preferenceState struct {
 	lightTint             string
 }
 
+type preferenceDialogValue = preferencesview.Value
+
+type preferencePreviewMsg struct {
+	Value preferenceDialogValue
+}
+
+type preferenceSaveMsg struct {
+	Value        preferenceDialogValue
+	SaveDefaults bool
+}
+
+type preferenceCancelMsg struct{}
+
+type dialogCancelMsg struct{}
+
+type preferenceDialogBody struct {
+	model  *preferencesview.Model
+	theme  Theme
+	bounds chrome.Rect
+}
+
+func newPreferenceDialogBody(
+	value preferenceDialogValue,
+	theme Theme,
+) *preferenceDialogBody {
+	body := &preferenceDialogBody{theme: theme}
+	body.model = preferencesview.New(
+		value,
+		minimumSettingsModalWidth-
+			theme.Modal.Container.GetHorizontalFrameSize()-
+			theme.Modal.Body.GetHorizontalFrameSize(),
+		0,
+		theme.preferenceStyles(),
+	)
+	return body
+}
+
+func (b *preferenceDialogBody) Reset(value preferenceDialogValue) {
+	b.model.Reset(value)
+	b.SetBounds(b.bounds)
+}
+
+func (b *preferenceDialogBody) Context() string {
+	if b.model.DirectoryOpen() {
+		return "directory picker"
+	}
+	return string(scopePreferences)
+}
+
+func (*preferenceDialogBody) PreferredWidth() int {
+	return minimumSettingsModalWidth
+}
+
+func (b *preferenceDialogBody) Scopes() []chrome.ScopeID {
+	if b.model.DirectoryOpen() {
+		return []chrome.ScopeID{scopeDirectory, scopePreferences, scopeGlobal}
+	}
+	return []chrome.ScopeID{scopePreferences, scopeGlobal}
+}
+
+func (*preferenceDialogBody) TextEntry() bool {
+	return false
+}
+
+func (b *preferenceDialogBody) SetBounds(bounds chrome.Rect) {
+	b.bounds = bounds
+	b.model.SetWidth(bounds.Width)
+	b.model.SetHeight(bounds.Height)
+}
+
+func (b *preferenceDialogBody) Update(message tea.Msg) dialogBodyResult {
+	before := b.model.Value()
+	switch message := message.(type) {
+	case dialogClickMsg:
+		return b.update(preferencesview.ClickMsg{
+			X: message.Point.X,
+			Y: message.Point.Y,
+		}, before)
+	case dialogWheelMsg:
+		var delta int
+		switch message.Mouse.Button {
+		case tea.MouseWheelUp:
+			delta = -1
+		case tea.MouseWheelDown:
+			delta = 1
+		default:
+			return dialogBodyResult{}
+		}
+		return b.update(preferencesview.ScrollMsg{Delta: delta}, before)
+	case dialogBackMsg:
+		if !b.model.DirectoryOpen() {
+			return dialogBodyResult{}
+		}
+		return b.update(
+			tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}),
+			before,
+		)
+	case dialogCloseMsg:
+		return dialogBodyResult{
+			message: preferenceCancelMsg{},
+			handled: true,
+		}
+	default:
+		return b.update(message, before)
+	}
+}
+
+func (b *preferenceDialogBody) update(
+	message tea.Msg,
+	before preferenceDialogValue,
+) dialogBodyResult {
+	model, command := b.model.Update(message)
+	b.model = model.(*preferencesview.Model)
+	if action, completed := b.model.TakeCompleted(); completed {
+		switch action {
+		case preferencesview.ActionCancel:
+			return dialogBodyResult{
+				message: preferenceCancelMsg{},
+				command: command,
+				handled: true,
+			}
+		case preferencesview.ActionSave:
+			return dialogBodyResult{
+				message: preferenceSaveMsg{Value: b.model.Value()},
+				command: command,
+				handled: true,
+			}
+		case preferencesview.ActionSaveDefaults:
+			return dialogBodyResult{
+				message: preferenceSaveMsg{
+					Value:        b.model.Value(),
+					SaveDefaults: true,
+				},
+				command: command,
+				handled: true,
+			}
+		case preferencesview.ActionNone:
+		}
+	}
+	if value := b.model.Value(); value != before {
+		return dialogBodyResult{
+			message: preferencePreviewMsg{Value: value},
+			command: command,
+			handled: true,
+		}
+	}
+	return dialogBodyResult{command: command, handled: true}
+}
+
+func (b *preferenceDialogBody) View() string {
+	return b.model.View().Content
+}
+
+func (b *preferenceDialogBody) SetStyles(theme Theme) {
+	b.theme = theme
+	b.model.SetStyles(theme.preferenceStyles())
+}
+
 func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {
 	m.preferences.router = m.geo.Router()
 	m.preferences.applyToFuture = snapshot.ApplyToFuture
@@ -72,17 +230,25 @@ func (m *Model) openHelp() {
 }
 
 func (m *Model) openPreferences() {
-	if m.activeDialog == surfacePreferences {
+	if m.dialogs.ActiveID() == surfacePreferences {
 		return
 	}
-	if m.activeDialog != surfaceNone || m.mode != modeNavigate {
+	if m.dialogs.ActiveID() != surfaceNone || m.mode != modeNavigate {
 		m.setError(finishOperation)
 		return
 	}
-	m.resetPreferenceForm()
 	m.beginPreferenceEdit()
-	m.openDialog(surfacePreferences)
+	m.dialogs.OpenPreferences(m.preferenceValue())
 	m.syncWorkspace()
+}
+
+func (m *Model) preferenceValue() preferenceDialogValue {
+	return preferenceDialogValue{
+		Router:        m.geo.Router(),
+		SaveDirectory: m.preferences.saveDirectory,
+		CommentPrefix: m.preferences.commentPrefix,
+		KeyProfile:    m.preferences.keyProfile,
+	}
 }
 
 func (m *Model) beginPreferenceEdit() {
@@ -99,7 +265,7 @@ func (m *Model) beginPreferenceEdit() {
 	m.beginTransaction()
 }
 
-func (m *Model) closeSettingsModal() {
+func (m *Model) cancelPreferences() {
 	var err error
 	if m.preferenceEdit {
 		hadTransaction := m.transactionOpen
@@ -118,116 +284,49 @@ func (m *Model) closeSettingsModal() {
 		err = errors.Join(err, m.render())
 	}
 	m.preferenceEdit = false
-	m.activeDialog = surfaceNone
+	m.dialogs.CloseWithoutMessage()
 	if err != nil {
 		m.setError(err.Error())
 	}
 }
 
-func (m *Model) applyPreferences(saveDefaults bool) tea.Cmd {
-	if err := m.commitTransaction(); err != nil {
-		m.setError(err.Error())
-		return nil
-	}
-	m.preferences.applyToFuture = saveDefaults
-	m.preferenceEdit = false
-	err := m.settingsStore.Save(settings.Snapshot{
-		Router:        m.preferences.router,
-		ApplyToFuture: m.preferences.applyToFuture,
-		SaveDirectory: m.preferences.saveDirectory,
-		CommentPrefix: m.preferences.commentPrefix,
-		ShortcutStyle: shortcutStyle(m.preferences.keyProfile),
-		DarkTint:      m.preferences.darkTint,
-		LightTint:     m.preferences.lightTint,
-	})
-	if err != nil {
-		m.setError("save preferences: " + err.Error())
-		m.activeDialog = surfaceNone
-		return nil
-	}
-	m.status = ""
-	return m.showNotice("Preferences saved", surfaceNone)
-}
-
-func (m *Model) resetPreferenceForm() {
-	m.preferenceForm = preferencesview.New(
-		preferencesview.Value{
-			Router:        m.geo.Router(),
-			SaveDirectory: m.preferences.saveDirectory,
-			CommentPrefix: m.preferences.commentPrefix,
-			KeyProfile:    m.preferences.keyProfile,
-		},
-		minimumSettingsModalWidth-
-			m.theme.Modal.Container.GetHorizontalFrameSize()-
-			m.theme.Modal.Body.GetHorizontalFrameSize(),
-		0,
-		m.theme.preferenceStyles(),
-	)
-}
-
-func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
-	if m.activeDialog != surfacePreferences {
-		return nil
-	}
-	form, command := m.preferenceForm.Update(message)
-	m.preferenceForm = form.(*preferencesview.Model)
-	m.syncPreferenceForm()
-	if action, completed := m.preferenceForm.Completed(); completed {
-		switch action {
-		case preferencesview.ActionCancel:
-			m.closeSettingsModal()
-			return command
-		case preferencesview.ActionSave:
-			return tea.Batch(command, m.applyPreferences(false))
-		case preferencesview.ActionSaveDefaults:
-			return tea.Batch(command, m.applyPreferences(true))
-		case preferencesview.ActionNone:
-		}
-	}
-	return command
-}
-
-func (m *Model) updateSettingsWheel(message tea.MouseWheelMsg) tea.Cmd {
-	var delta int
-	switch message.Mouse().Button {
-	case tea.MouseWheelUp:
-		delta = -1
-	case tea.MouseWheelDown:
-		delta = 1
-	default:
-		return nil
-	}
-	return m.updateSettingsTabs(preferencesview.ScrollMsg{Delta: delta})
-}
-
-func (m *Model) syncPreferenceForm() {
-	if m.preferenceForm == nil {
-		return
-	}
-	value := m.preferenceForm.Value()
-	router := value.Router
+func (m *Model) previewPreferences(value preferenceDialogValue) {
 	m.preferences.saveDirectory = value.SaveDirectory
 	m.preferences.commentPrefix = value.CommentPrefix
 	m.preferences.keyProfile = value.KeyProfile
 	m.bindings.SetProfile(value.KeyProfile)
 	m.syncSidebarShortcut()
-	if router == m.preferences.router {
+	if value.Router == m.preferences.router {
 		return
 	}
-	m.preferences.router = router
-	m.geo.SetRouter(router)
+	m.preferences.router = value.Router
+	m.geo.SetRouter(value.Router)
 	if err := m.rebuild(); err != nil {
 		m.setError(err.Error())
 	}
 }
 
-func (m *Model) resizePreferenceForm() {
-	if m.preferenceForm == nil {
-		return
+func (m *Model) savePreferences(message preferenceSaveMsg) tea.Cmd {
+	m.previewPreferences(message.Value)
+	snapshot := settings.Snapshot{
+		Router:        message.Value.Router,
+		ApplyToFuture: message.SaveDefaults,
+		SaveDirectory: message.Value.SaveDirectory,
+		CommentPrefix: message.Value.CommentPrefix,
+		ShortcutStyle: shortcutStyle(message.Value.KeyProfile),
+		DarkTint:      m.preferences.darkTint,
+		LightTint:     m.preferences.lightTint,
 	}
-	height := 0
-	if m.dialog.Overlay().Height != 0 {
-		height = m.dialog.BodyHeight()
+	if err := m.settingsStore.Save(snapshot); err != nil {
+		m.setError("save preferences: " + err.Error())
+		return nil
 	}
-	m.preferenceForm.SetHeight(height)
+	if err := m.commitTransaction(); err != nil {
+		m.setError(err.Error())
+		return nil
+	}
+	m.preferences.applyToFuture = message.SaveDefaults
+	m.preferenceEdit = false
+	m.status = ""
+	return m.showNotice("Preferences saved", surfaceNone)
 }
