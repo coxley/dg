@@ -6,9 +6,9 @@ Run the interactive lab from the repository root:
 go run ./internal/tui/cmd/chrome-lab
 ```
 
-Select scenarios with `1`–`6` or Tab, toggle density with `d`, scroll with the
+Select scenarios with `1`–`7` or Tab, toggle density with `d`, scroll with the
 arrow keys or mouse wheel, and drag with the left mouse button. Use
-`--scenario layout|pane|viewport|menu|density|overflow` to choose the initial
+`--scenario layout|pane|viewport|menu|density|overflow|focus` to choose the initial
 scenario.
 
 Run the real-PTY smoke:

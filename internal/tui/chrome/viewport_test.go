@@ -11,6 +11,7 @@ const (
 	viewportOne   = "one"
 	viewportTwo   = "two"
 	viewportThree = "three"
+	viewportLast  = "last"
 )
 
 func TestViewportScrollbarPolicyMatrix(t *testing.T) {
@@ -112,7 +113,7 @@ func BenchmarkViewportArrange(b *testing.B) {
 	viewport.SetContent([]string{
 		viewportOne + " " + viewportTwo + " " + viewportThree + " four five",
 		"01234567890123456789",
-		"last",
+		viewportLast,
 	})
 	viewport.SetOverflow(WrapText)
 	b.ReportAllocs()

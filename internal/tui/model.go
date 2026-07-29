@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
+	"github.com/coxley/dg/internal/tui/chrome"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
@@ -103,6 +104,7 @@ type Model struct {
 	nav               nav.Model
 	dialog            modalview.Model
 	canvas            canvasview.Model
+	bindings          *chrome.Resolver
 
 	mode             mode
 	modal            modal
@@ -184,6 +186,11 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		keys:       newKeyMap(),
 		styledRuns: make(map[styledRunKey]string),
 	}
+	resolver, err := chrome.NewResolver(applicationBindings)
+	if err != nil {
+		return nil, fmt.Errorf("configure bindings: %w", err)
+	}
+	m.bindings = resolver
 	m.clipboard = clipboardview.New(m.theme.formTheme())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
@@ -254,6 +261,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clipboard.SetTheme(m.theme.formTheme())
 	case tea.KeyboardEnhancementsMsg:
 		m.keys.setKeyboardEnhancements(true)
+		m.bindings.SetSuperAvailable(true)
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:
@@ -263,6 +271,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizePreferenceForm()
 		m.ensureCursorVisible()
 	case tea.KeyPressMsg:
+		if command, ok := m.bindings.Resolve(
+			message.Keystroke(),
+			m.activeBindingScopes(),
+			m.mode == modeEditLabel,
+		); ok {
+			return m, m.updateSemanticCommand(command)
+		}
 		return m, m.updateKey(message)
 	case tea.PasteMsg:
 		switch {

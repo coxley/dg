@@ -47,11 +47,15 @@ for size in 100x30 80x16 80x12; do
   ht send --raw --wait-idle 100ms --timeout 5s "$session" "$drag" >/dev/null
   ht send --raw --wait-text "pointer-capture: none" --timeout 5s \
     "$session" "$release" >/dev/null
+  ht send --wait-text "scenario: focus" --timeout 5s "$session" "7" >/dev/null
+  ht send --wait-text "profile: mac" --timeout 5s "$session" "p" >/dev/null
+  printf -v paste '\e[200~pasted\e[201~'
+  ht send --raw --wait-text "text: pasted" --timeout 5s "$session" "$paste" >/dev/null
 
   snapshot="$(ht view --json "$session")"
   grep -q "\"cols\": ${size%x*}" <<<"$snapshot"
   grep -q "\"rows\": ${size#*x}" <<<"$snapshot"
-  grep -q "scenario: pane" <<<"$snapshot"
+  grep -q "scenario: focus" <<<"$snapshot"
   grep -q "density: compact" <<<"$snapshot"
   grep -q "events: click=1" <<<"$snapshot"
 

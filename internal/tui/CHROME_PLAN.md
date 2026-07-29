@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 4 complete; Phase 5 not started
+- Current phase: Phase 5 complete; Phase 6 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -520,7 +520,7 @@ review, and integration gate before beginning the next phase.
 | 2. Geometry and menu | Complete | Existing nav uses chrome geometry |
 | 3. Pane and viewport | Complete | Overflow matrix and resize invariants pass |
 | 4. Chrome lab | Complete | Interactive and initial `ht` scenarios pass |
-| 5. Commands and focus | Not started | Effective binding matrix matches dispatch |
+| 5. Commands and focus | Complete | Effective binding matrix matches dispatch |
 | 6. Surfaces and contextual Help | Not started | One z-order/input router owns active surfaces |
 | 7. Declarative Preferences | Not started | No rendered-text geometry recovery remains |
 | 8. Existing modal migration | Not started | Root modal-type input switches are removed |
@@ -595,22 +595,22 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 5: semantic commands and focus scopes
 
-- [ ] Define opaque scope and command IDs, normalized chords, and profile-aware
+- [x] Define opaque scope and command IDs, normalized chords, and profile-aware
   chord declarations.
-- [ ] Implement active-scope resolution, shadowing, and collision diagnostics.
-- [ ] Emit semantic command messages instead of invoking application callbacks.
-- [ ] Build focus registration and traversal from arranged elements.
-- [ ] Implement focus save, restore, and last-valid-target behavior.
-- [ ] Guarantee text-entry precedence for typable input.
-- [ ] Move application binding declarations to a centralized
+- [x] Implement active-scope resolution, shadowing, and collision diagnostics.
+- [x] Emit semantic command messages instead of invoking application callbacks.
+- [x] Build focus registration and traversal from arranged elements.
+- [x] Implement focus save, restore, and last-valid-target behavior.
+- [x] Guarantee text-entry precedence for typable input.
+- [x] Move application binding declarations to a centralized
   `internal/tui/bindings.go`.
-- [ ] Implement and test Auto, Mac, and Standard profile resolution without
+- [x] Implement and test Auto, Mac, and Standard profile resolution without
   changing the current Preferences form.
-- [ ] Generate effective-binding data for Help and tests from the resolver.
-- [ ] Preserve paste, keyboard-enhancement, Keystroke-based copy detection, and
+- [x] Generate effective-binding data for Help and tests from the resolver.
+- [x] Preserve paste, keyboard-enhancement, Keystroke-based copy detection, and
   clipboard debounce cancellation semantics.
-- [ ] Connect focused elements to Viewport Reveal.
-- [ ] Extend the chrome lab and `ht` smoke with focus, profile, text, paste, and
+- [x] Connect focused elements to Viewport Reveal.
+- [x] Extend the chrome lab and `ht` smoke with focus, profile, text, paste, and
   effective-binding scenarios.
 
 ### Phase 6: surfaces and contextual Help
@@ -805,6 +805,7 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Use `█` thumbs with `│` and `─` tracks for the initial viewport. | These single-cell glyphs remain legible at constrained sizes and make thumb bounds deterministic; the chrome lab can provide evidence for later theme tokens. |
 | 2026-07-28 | Keep the headless chrome-lab smoke as an explicit integration command for now. | The smoke depends on the external `ht` daemon; deterministic model tests remain in the default Go suite while CI placement stays open for operational evidence. |
 | 2026-07-28 | Test resize through `WindowSizeMsg` plus separate real PTYs at each required size. | The installed `ht` version has no live resize command; this combination verifies in-process reflow and real terminal composition without sleeps. |
+| 2026-07-28 | Resolve commands to values and keep application behavior in `Update`. | Semantic messages preserve Bubble Tea ownership while allowing effective bindings and dispatch to share one registry. |
 
 ## Changed-File Ledger
 
@@ -817,6 +818,7 @@ Update this table after each completed phase or reviewable slice.
 | 2 | `internal/tui/chrome/AGENTS.md`, `internal/tui/chrome/{geometry,layout,menu,text}.go`, `internal/tui/chrome/{layout,menu}_test.go`, `internal/tui/nav/{nav.go,nav_test.go}`, `internal/tui/{model,view,modal}.go`, `internal/tui/CHROME_PLAN.md` | Add retained chrome geometry and menu mechanics, migrate navigation and root placement, and remove duplicated toolbar geometry. |
 | 3 | `internal/tui/chrome/{pane,viewport}.go`, `internal/tui/chrome/{pane,viewport}_test.go`, `internal/tui/CHROME_PLAN.md` | Add sticky panes, finite scrolling viewports, convergent reserved scrollbars, reveal, pointer translation, and nested independent scroll regions. |
 | 4 | `internal/tui/cmd/chrome-lab/{main.go,main_test.go,README.md,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add the interactive chrome lab, stable diagnostics, responsive scenarios, and failure-artifact PTY smoke runner. |
+| 5 | `internal/tui/chrome/{command,focus}.go`, matching tests, `internal/tui/bindings.go`, `internal/tui/model.go`, chrome-lab files, `internal/tui/CHROME_PLAN.md` | Add semantic command/profile resolution, focus scopes and restoration, root declarations, and focus/profile/paste lab scenarios. |
 
 ## Verification Ledger
 
@@ -869,3 +871,7 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 4 | Root `ht run` and `ht view --json` at `100x30`, `80x16`, and `80x12` | Passed: toolbar and status visible, cursor hidden. All sessions stopped and removed. |
 | 2026-07-28 | 4 | `dd-gopls check internal/tui/cmd/chrome-lab/{main.go,main_test.go}` | Passed with no diagnostics. |
 | 2026-07-28 | 4 | `bash -n internal/tui/cmd/chrome-lab/smoke.sh` | Passed. |
+| 2026-07-28 | 5 | Narrow chrome/root tests | Initially failed because global Save intercepted modal input, then because it bypassed existing-path save behavior. Restricted canvas scopes while modals are active and routed semantic Save through `requestSave`; passed. |
+| 2026-07-28 | 5 | Full test, race, vet, and lint gate | Tests, race, and vet passed; lint found repeated test fixtures in two runs. Consolidated semantic fixture constants and re-ran. |
+| 2026-07-28 | 5 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-28 | 5 | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed focus, profile, bracketed paste, pointer, and all prior scenarios at all three sizes. |

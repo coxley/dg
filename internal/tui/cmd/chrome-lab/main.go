@@ -21,6 +21,7 @@ const (
 	scenarioMenu     = "menu"
 	scenarioDensity  = "density"
 	scenarioOverflow = "overflow"
+	scenarioFocus    = "focus"
 )
 
 var scenarioNames = [...]string{
@@ -30,6 +31,7 @@ var scenarioNames = [...]string{
 	scenarioMenu,
 	scenarioDensity,
 	scenarioOverflow,
+	scenarioFocus,
 }
 
 type labModel struct {
@@ -47,6 +49,10 @@ type labModel struct {
 	pointer         chrome.Point
 	pointerCaptured bool
 	clicks          int
+	profile         chrome.KeyProfile
+	text            string
+	resolver        *chrome.Resolver
+	focus           *chrome.FocusRegistry
 }
 
 func newLabModel(scenario string) *labModel {
@@ -76,6 +82,17 @@ func newLabModel(scenario string) *labModel {
 	diagnostics := chrome.NewViewport("diagnostics-body")
 	diagnosticsPane := chrome.NewPane("diagnostics-pane", diagnostics)
 	diagnosticsPane.SetHeader([]string{"DIAGNOSTICS"})
+	resolver, err := chrome.NewResolver([]chrome.Binding{
+		{Scope: "field", Chords: chrome.Keys("q"), Command: "field-q", Label: "type q"},
+		{Scope: "global", Chords: []chrome.Chord{chrome.Primary(",")}, Command: "preferences", Label: "preferences"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	resolver.SetSuperAvailable(true)
+	focus := chrome.NewFocusRegistry()
+	focus.Register("field", []chrome.FocusTarget{{ID: "text", Enabled: true}})
+	focus.Open("field")
 	return &labModel{
 		scenario:        index,
 		menu:            menu,
@@ -83,6 +100,8 @@ func newLabModel(scenario string) *labModel {
 		contentPane:     contentPane,
 		diagnostics:     diagnostics,
 		diagnosticsPane: diagnosticsPane,
+		resolver:        resolver,
+		focus:           focus,
 	}
 }
 
@@ -110,6 +129,22 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(message.Height, 0)
 		m.reflow()
 	case tea.KeyPressMsg:
+		if scenarioNames[m.scenario] == scenarioFocus && message.String() == "p" {
+			if m.profile == chrome.ProfileMac {
+				m.profile = chrome.ProfileStandard
+			} else {
+				m.profile = chrome.ProfileMac
+			}
+			m.resolver.SetProfile(m.profile)
+			m.reflow()
+			return m, nil
+		}
+		if scenarioNames[m.scenario] == scenarioFocus &&
+			message.Text != "" && message.Mod == 0 {
+			m.text += message.Text
+			m.reflow()
+			return m, nil
+		}
 		switch message.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -130,11 +165,16 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.density = chrome.Regular
 			}
 			m.reflow()
-		case "1", "2", "3", "4", "5", "6":
+		case "1", "2", "3", "4", "5", "6", "7":
 			index, err := strconv.Atoi(message.String())
 			if err == nil {
 				m.selectScenario(index - 1)
 			}
+		}
+	case tea.PasteMsg:
+		if scenarioNames[m.scenario] == scenarioFocus {
+			m.text += message.Content
+			m.reflow()
 		}
 	case tea.MouseWheelMsg:
 		switch message.Button {
@@ -288,7 +328,7 @@ func (m *labModel) refreshDiagnostics() {
 		formatRect("rect.workspace", chrome.Rect{Width: m.width, Height: m.height}),
 		formatRect("rect.body", contentPlan.Content),
 		"animation: unavailable (phase 9)",
-		"bindings: 1-6/tab scenario",
+		"bindings: 1-7/tab scenario",
 		"bindings: d density; q quit",
 	})
 }
@@ -353,6 +393,27 @@ func (m *labModel) scenarioContent() []string {
 			"vertical content row 7",
 			"vertical content row 8",
 		}
+	case scenarioFocus:
+		profile := "standard"
+		if m.profile == chrome.ProfileMac {
+			profile = "mac"
+		}
+		effective := m.resolver.Effective([]chrome.ScopeID{"field", "global"})
+		lines := []string{
+			"Focus and semantic commands",
+			"focus: text",
+			"profile: " + profile,
+			"text: " + m.text,
+			"press p to change profile",
+		}
+		for _, binding := range effective {
+			lines = append(lines, fmt.Sprintf(
+				"effective: %s %s",
+				binding.Chord,
+				binding.Label,
+			))
+		}
+		return lines
 	default:
 		return nil
 	}
