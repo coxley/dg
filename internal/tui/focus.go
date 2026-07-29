@@ -9,7 +9,7 @@ import (
 )
 
 func (m *Model) focusNode(delta int) {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -83,7 +83,7 @@ func (m *Model) shiftFocusedNode(hit layout.Hit, dx, dy int) {
 	if !ok {
 		return
 	}
-	m.beginTransaction()
+	m.beginTransaction(transactionKeyboardMove)
 	if err := m.geo.PlaceNode(hit.ID, origin); err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
@@ -112,7 +112,7 @@ func (m *Model) shiftSelection(dx, dy int) {
 	if moved, ok := movePoint(cursor, dx, dy); ok {
 		cursor = moved
 	}
-	m.beginTransaction()
+	m.beginTransaction(transactionKeyboardMove)
 	moved, err := m.moveSelectedNodes(int64(dx), int64(dy), cursor)
 	if err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())

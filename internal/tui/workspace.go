@@ -114,7 +114,7 @@ func (m *Model) helpContext() string {
 	if m.sidebar.focused {
 		return "sidebar"
 	}
-	if m.mode == modeEditLabel {
+	if m.interaction.session.kind == sessionLabelEdit {
 		return "label editor"
 	}
 	return "canvas"
@@ -124,7 +124,7 @@ func (m *Model) textEntryActive() bool {
 	if m.dialogs.ActiveID() != surfaceNone {
 		return m.dialogs.TextEntry()
 	}
-	return m.mode == modeEditLabel
+	return m.interaction.session.kind == sessionLabelEdit
 }
 
 func (m *Model) dismissSurface(id chrome.SurfaceID) tea.Cmd {

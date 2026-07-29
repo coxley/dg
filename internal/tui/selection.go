@@ -53,7 +53,7 @@ func (m *Model) firstSelectedNode() (layout.Hit, bool) {
 }
 
 func (m *Model) expandSelection() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -68,33 +68,38 @@ func (m *Model) expandSelection() {
 
 func (m *Model) beginAreaSelection(point layout.Point) {
 	m.clearSelection()
-	m.selecting = true
-	m.selectionStartPoint = point
-	m.selectionEndPoint = point
+	m.interaction.gesture = pointerGesture{
+		kind:  gestureAreaSelection,
+		start: point,
+		point: point,
+	}
 	m.status = ""
 }
 
 func (m *Model) updateAreaSelection(point layout.Point) {
-	m.selectionEndPoint = point
+	m.interaction.gesture.point = point
 	m.cursor = point
 }
 
 func (m *Model) finishAreaSelection() {
 	m.geo.Selection().SelectArea(
-		m.selectionStartPoint,
-		m.selectionEndPoint,
+		m.interaction.gesture.start,
+		m.interaction.gesture.point,
 	)
-	m.selecting = false
+	m.interaction.resetGesture()
 	m.refreshHits()
 	m.status = ""
 }
 
 func (m *Model) marqueeArea() selectionArea {
-	return newSelectionArea(m.selectionStartPoint, m.selectionEndPoint)
+	return newSelectionArea(
+		m.interaction.gesture.start,
+		m.interaction.gesture.point,
+	)
 }
 
 func (m *Model) duplicateSelection(dx, dy int64) {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -106,7 +111,7 @@ func (m *Model) duplicateSelection(dx, dy int64) {
 		}
 		m.selectOnly(hit)
 	}
-	m.beginTransaction()
+	m.beginTransaction(transactionDuplicate)
 	if err := m.geo.DuplicateSelection(dx, dy); err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return

@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Follow-up Phase E complete; Phase F not started
+- Current phase: Follow-up Phase F complete; Phase G not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -813,7 +813,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 | C. Command resolver and shortcut presentation | Complete | Dispatch and Help share one effective binding set |
 | D. Dialog ownership | Complete | Root owns no body-local form state |
 | E. Preference previews and semantic tints | Complete | Preview, rollback, and persistence agree |
-| F. Interaction-state regions | Not started | Root interaction states are explicit and exhaustively dispatched |
+| F. Interaction-state regions | Complete | Root interaction states are explicit and exhaustively dispatched |
 | G. Sidebar geometry | Not started | Full-width content slides without reflow and nav remains fixed |
 | H. Sidebar motion policy | Not started | Spring dynamics are isolated behind scalar transition mechanics |
 
@@ -924,24 +924,24 @@ Persistence failures keep the owning dialog and its current draft open.
 
 ### Follow-up Phase F: interaction-state regions
 
-- [ ] Enumerate the current root interaction flags and assign each to one
+- [x] Enumerate the current root interaction flags and assign each to one
   orthogonal region: active tool, longer-lived session, pointer gesture, click
   tracker, or render cache.
-- [ ] Represent the pointer gesture as one tagged concrete state so mutually
+- [x] Represent the pointer gesture as one tagged concrete state so mutually
   exclusive gestures cannot coexist.
-- [ ] Represent connection editing as a concrete session plus connection
+- [x] Represent connection editing as a concrete session plus connection
   gesture. Keep previews separate from layout mutation and transact only on a
   valid commit.
-- [ ] Give move, resize, rectangle creation, duplication, keyboard movement,
+- [x] Give move, resize, rectangle creation, duplication, keyboard movement,
   and label editing explicit transaction ownership and Finish, Cancel, and
   Interrupt behavior.
-- [ ] Preserve interruption semantics: commit the last visible real-layout
+- [x] Preserve interruption semantics: commit the last visible real-layout
   placement and discard preview-only state.
-- [ ] Route behavior through one small exhaustive interaction switch plus
+- [x] Route behavior through one small exhaustive interaction switch plus
   isolated handlers. Adding a tool should add a declaration, binding, concrete
   state, tests, and one dispatch case rather than extending conditions across
   root methods.
-- [ ] Move dialog-local fields out of `Model` as Phase D bodies assume
+- [x] Move dialog-local fields out of `Model` as Phase D bodies assume
   ownership; do not create a global editor FSM.
 
 ### Follow-up Phase G: sidebar geometry
@@ -1121,6 +1121,7 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Keep independent BubbleTint dark and light registries behind the application theme adapter. | The upstream default lists differ in membership and size; selectors store stable IDs while chrome receives only semantic Lip Gloss styles. |
 | 2026-07-29 | Tint semantic interaction roles while inheriting normal terminal foreground and background. | Selection, active, hover, port, error, and focused-sidebar roles visibly preview the palette without painting the canvas or lengthening every normal chrome cell's ANSI output. |
 | 2026-07-29 | Reuse an arranged dialog body's bounds while terminal geometry is unchanged. | Re-running natural measurement on every constrained form input reset its scroll offset; retaining the body bounds keeps the newly focused tint and action rows visible at `80x12`. |
+| 2026-07-29 | Track editor transactions by semantic owner beside orthogonal tool, session, gesture, click, and preview regions. | One tagged pointer gesture makes exclusivity explicit; blur tests prove real-layout move, resize, rectangle, keyboard-move, and label changes commit while connection and duplication previews disappear without mutation. |
 
 ## Changed-File Ledger
 
@@ -1145,6 +1146,7 @@ Update this table after each completed phase or reviewable slice.
 | Follow-up C | `internal/tui/CHROME_PLAN.md`, `internal/tui/{bindings.go,bindings_test.go,help.go,model.go,model_test.go,preferences.go,sidebar.go,sidebar_test.go,workspace.go}`, deleted `internal/tui/keymap.go`, `internal/tui/chrome/{command.go,command_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}` | Make binding declarations the sole key-dispatch and Help source, project Primary chords by shortcut style, separate capability from execution and vocabulary, delete the legacy key map, and update live shortcut presentation. |
 | Follow-up D | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,view.go,workspace.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/modal/AGENTS.md`, `internal/tui/preferences/{preferences.go,preferences_test.go}` | Replace root callback specs and body-local fields with one retained dialog controller, typed stateful bodies and semantic effect messages; share one arranged plan across rendering and input; keep failed writes and drafts open; replace Huh with visible-directory-only navigation; preserve canvas hot-path allocations. |
 | Follow-up E | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,clipboard.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,sidebar_test.go,theme.go,theme_test.go,workspace.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}` | Add explicit preference baselines and drafts, live router/shortcut/tint previews, write-before-commit persistence, independent BubbleTint dark/light selectors, semantic theme roles that inherit terminal backgrounds, and constrained retained-dialog focus reveal. |
+| Follow-up F | `internal/tui/CHROME_PLAN.md`, `internal/tui/{bindings.go,duplicate.go,duplicate_benchmark_test.go,edit.go,focus.go,interaction.go,interaction_test.go,model.go,model_test.go,mouse.go,preferences.go,save.go,selection.go,sidebar.go,style.go,view.go,workspace.go}` | Replace root interaction booleans with orthogonal concrete regions, one tagged pointer gesture and exhaustive motion/release dispatch, semantic transaction ownership, isolated preview caches, and interruption coverage for committed layout state versus discarded previews. |
 
 ## Verification Ledger
 
@@ -1314,3 +1316,11 @@ passing command without preserving the investigated failure.
 | 2026-07-29 | Follow-up E | Initial sandboxed and final `./internal/tui/cmd/chrome-lab/smoke.sh` | The sandboxed run could not reach the local headless-terminal daemon. The final daemon-enabled smoke passed all scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
 | 2026-07-29 | Follow-up E | Initial and final root raw Command-P `ht` preference matrix at `100x30`, `80x16`, and `80x12` with isolated XDG config roots | The initial matrix exposed constrained dialog remeasurement resetting form scroll before Save at `80x12`. Reusing retained body bounds fixed it. The final matrix passed dark-tint preview, constrained action reveal, persisted independent tint IDs, exact dimensions, and hidden cursor; all sessions cleaned up. |
 | 2026-07-29 | Follow-up E | Final `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages under normal and race execution; vet passed; lint reported 0 issues. |
+| 2026-07-29 | Follow-up F | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -count=1`; `go test ./internal/tui/... ./cmd/dg -count=1` | Passed orthogonal state projection, tagged gesture dispatch, semantic transaction ownership, Finish/Cancel/Interrupt behavior, committed real-layout state, discarded connection/duplication previews, and all affected TUI and command packages. |
+| 2026-07-29 | Follow-up F | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: AltDrag 48,494 ns/op, 12,458 B/op, 9 allocs/op; MoveCommittedDuplicate 50,561 ns/op, 12,505 B/op, 13 allocs/op; MoveAndView 5,098 ns/op, 4,712 B/op, 10 allocs/op. Allocation counts match Phase E. |
+| 2026-07-29 | Follow-up F | Initial `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Reported one unused pointer-gesture predicate. Removed the dead helper; the final lint run passed with 0 issues. |
+| 2026-07-29 | Follow-up F | Initial sandboxed and final `dd-gopls check <all changed Phase F Go files>` | The sandboxed run could not write Go module, build, or imports caches. The cache-enabled final run passed with no diagnostics. |
+| 2026-07-29 | Follow-up F | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages under normal and race execution; vet passed; lint reported 0 issues. |
+| 2026-07-29 | Follow-up F | Initial sandboxed and final `./internal/tui/cmd/chrome-lab/smoke.sh` | The sandboxed run could not reach the local headless-terminal daemon. The daemon-enabled smoke passed all scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
+| 2026-07-29 | Follow-up F | Initial and diagnostic root `ht` interaction matrix attempts | The first harness waited for a `move` status hidden by the selected-object status. A traced `100x30` rerun confirmed Enter had entered move state; replaced that invisible-text wait with idle synchronization. |
+| 2026-07-29 | Follow-up F | Root keyboard-move, label-edit, and raw rectangle-drag `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed semantic input, exact dimensions, final selection composition, and hidden cursor assertions; all sessions stopped and removed. |

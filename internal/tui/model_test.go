@@ -93,7 +93,8 @@ func TestModelMoveIsOneUndoInteraction(t *testing.T) {
 	before := model.geo.Nodes[nodeID].Rect.Min
 	beforeCursor := model.cursor
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-	require.Equal(t, modeMove, model.mode)
+	require.Equal(t, modeMove, model.interaction.mode())
+	require.Equal(t, transactionKeyboardMove, model.interaction.transaction.owner)
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	updateModel(t, model, keyPress(tea.KeyDown, ""))
@@ -140,7 +141,7 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, keyPress('r', "r"))
-	require.Equal(t, modeRectangle, model.mode)
+	require.Equal(t, modeRectangle, model.interaction.mode())
 
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      15,
@@ -148,6 +149,7 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 	nodeID := model.target.ID
+	require.Equal(t, transactionRectangle, model.interaction.transaction.owner)
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      22,
 		Y:      12,
@@ -159,7 +161,7 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.True(t, model.geo.NodeExists(nodeID))
 	require.Equal(t, "", model.geo.Label(nodeID))
 	size, explicit := model.geo.ExplicitNodeSize(nodeID)
@@ -184,13 +186,13 @@ func TestModelSwitchesDirectlyBetweenDrawingTools(t *testing.T) {
 	model, _ := newTestModel(t)
 
 	updateModel(t, model, keyPress('r', "r"))
-	require.Equal(t, modeRectangle, model.mode)
+	require.Equal(t, modeRectangle, model.interaction.mode())
 	updateModel(t, model, keyPress('l', "l"))
-	require.Equal(t, modeConnect, model.mode)
+	require.Equal(t, modeConnect, model.interaction.mode())
 	updateModel(t, model, keyPress('r', "r"))
-	require.Equal(t, modeRectangle, model.mode)
+	require.Equal(t, modeRectangle, model.interaction.mode())
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 }
 
 func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
@@ -212,10 +214,35 @@ func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
 	})
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, layout.Size{Width: 8, Height: 5}, model.geo.Nodes[nodeID].Rect.Size)
 	updateModel(t, model, keyPress('u', "u"))
 	require.False(t, model.geo.NodeExists(nodeID))
+}
+
+func TestModelCancelDiscardsRectangle(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, keyPress('r', "r"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      15,
+		Y:      8,
+		Button: tea.MouseLeft,
+	})
+	nodeID := model.target.ID
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      22,
+		Y:      12,
+		Button: tea.MouseLeft,
+	})
+
+	updateModel(t, model, keyPress(tea.KeyEscape, ""))
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.False(t, model.geo.NodeExists(nodeID))
+	require.False(t, model.interaction.transaction.open())
 }
 
 func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
@@ -265,8 +292,12 @@ func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
 
 	source := portExiting(t, model, right, 1)
 	destination := portExiting(t, model, created, -1)
-	model.connectSource = source
-	model.connectStarted = true
+	model.interaction.session = interactionSession{
+		kind: sessionConnection,
+		connection: connectionSession{
+			source: source,
+		},
+	}
 	model.completeConnectionTo(destination)
 	require.Equal(t, layout.HitEdge, model.target.Kind)
 	inherited, ok := model.geo.EdgeStyle(model.target.ID)
@@ -428,8 +459,7 @@ func TestModelAltDragPreviewsAndCommitsDuplicate(t *testing.T) {
 		Mod:    tea.ModAlt,
 	}
 	updateModel(t, model, click)
-	require.True(t, model.duplicatePending)
-	require.False(t, model.duplicateDragging)
+	require.Equal(t, gestureDuplicatePending, model.interaction.gesture.kind)
 	require.Len(t, model.geo.Graph().Nodes, 1)
 
 	updateModel(t, model, tea.MouseMotionMsg{
@@ -438,8 +468,8 @@ func TestModelAltDragPreviewsAndCommitsDuplicate(t *testing.T) {
 		Button: tea.MouseLeft,
 		Mod:    tea.ModAlt,
 	})
-	require.True(t, model.duplicateDragging)
-	require.NotNil(t, model.duplicateGeo)
+	require.Equal(t, gestureDuplicate, model.interaction.gesture.kind)
+	require.NotNil(t, model.interaction.render.duplicateLayout)
 	require.NotEmpty(t, model.canvas.Frame(canvasview.DuplicateFrame).Text)
 	require.Len(t, model.geo.Graph().Nodes, 1)
 
@@ -449,8 +479,8 @@ func TestModelAltDragPreviewsAndCommitsDuplicate(t *testing.T) {
 		Button: tea.MouseLeft,
 		Mod:    tea.ModAlt,
 	})
-	require.False(t, model.duplicateDragging)
-	require.Nil(t, model.duplicateGeo)
+	require.NotEqual(t, gestureDuplicate, model.interaction.gesture.kind)
+	require.Nil(t, model.interaction.render.duplicateLayout)
 	require.Len(t, model.geo.Graph().Nodes, 2)
 	copied, ok := model.firstSelectedNode()
 	require.True(t, ok)
@@ -458,6 +488,34 @@ func TestModelAltDragPreviewsAndCommitsDuplicate(t *testing.T) {
 
 	updateModel(t, model, keyPress('u', "u"))
 	require.False(t, model.geo.NodeExists(copied.ID))
+}
+
+func TestModelBlurDiscardsDuplicatePreview(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	point := model.geo.Nodes[nodeID].LabelPoint
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(point.X),
+		Y:      int(point.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(point.X) + 4,
+		Y:      int(point.Y) + 2,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	require.Equal(t, gestureDuplicate, model.interaction.gesture.kind)
+
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, gestureNone, model.interaction.gesture.kind)
+	require.Nil(t, model.interaction.render.duplicateLayout)
+	require.Empty(t, model.canvas.Frame(canvasview.DuplicateFrame).Text)
+	require.Len(t, model.geo.Graph().Nodes, 1)
 }
 
 func TestModelAltClickWithoutDragDoesNotDuplicate(t *testing.T) {
@@ -478,7 +536,7 @@ func TestModelAltClickWithoutDragDoesNotDuplicate(t *testing.T) {
 		Mod:    tea.ModAlt,
 	})
 
-	require.False(t, model.duplicatePending)
+	require.NotEqual(t, gestureDuplicatePending, model.interaction.gesture.kind)
 	require.Len(t, model.geo.Graph().Nodes, 1)
 }
 
@@ -513,12 +571,15 @@ func TestModelAltDragTranslatesPreviewRoutes(t *testing.T) {
 	})
 	var previewEdge uint32
 	ok := false
-	for id := range model.duplicateGeo.Selection().Edges() {
+	for id := range model.interaction.render.duplicateLayout.Selection().Edges() {
 		previewEdge, ok = id, true
 		break
 	}
 	require.True(t, ok)
-	before := append([]layout.Point(nil), model.duplicateGeo.Edges[previewEdge].Points...)
+	before := append(
+		[]layout.Point(nil),
+		model.interaction.render.duplicateLayout.Edges[previewEdge].Points...,
+	)
 
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      int(start.X) + 31,
@@ -528,7 +589,11 @@ func TestModelAltDragTranslatesPreviewRoutes(t *testing.T) {
 	})
 
 	for i, point := range before {
-		require.Equal(t, point.Add(1, 2), model.duplicateGeo.Edges[previewEdge].Points[i])
+		require.Equal(
+			t,
+			point.Add(1, 2),
+			model.interaction.render.duplicateLayout.Edges[previewEdge].Points[i],
+		)
 	}
 }
 
@@ -1169,7 +1234,7 @@ func TestPreferencePersistenceFailureKeepsDraftOpen(t *testing.T) {
 	require.Nil(t, command)
 	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
 	require.True(t, model.preferenceEdit)
-	require.True(t, model.transactionOpen)
+	require.True(t, model.interaction.transaction.open())
 	require.Equal(t, draft, model.dialogs.preferences.model.Value())
 	require.Equal(t, draft.Router, model.geo.Router())
 	require.Equal(t, draft.DarkTint, model.theme.TintID)
@@ -1197,7 +1262,7 @@ func TestPreferencePersistenceFailurePermitsRetry(t *testing.T) {
 		Value:        draft,
 		SaveDefaults: true,
 	}))
-	require.True(t, model.transactionOpen)
+	require.True(t, model.interaction.transaction.open())
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	model.settingsStore = settings.NewStore(path)
@@ -1208,7 +1273,7 @@ func TestPreferencePersistenceFailurePermitsRetry(t *testing.T) {
 
 	require.NotNil(t, command)
 	require.False(t, model.preferenceEdit)
-	require.False(t, model.transactionOpen)
+	require.False(t, model.interaction.transaction.open())
 	require.Equal(t, draft, model.preferences.baseline)
 	require.Equal(t, draft.DarkTint, model.theme.TintID)
 	snapshot, err := model.settingsStore.Load()
@@ -1257,7 +1322,7 @@ func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.mode = modeConnect
+	model.interaction.tool = toolConnect
 
 	highlight := model.highlightStyle().Render("x")
 	require.Contains(t, highlight, "[38;")
@@ -1305,10 +1370,24 @@ func TestModelBlurCommitsActiveMove(t *testing.T) {
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	updateModel(t, model, tea.BlurMsg{})
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
 	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
+}
+
+func TestModelBlurCommitsLabelEdit(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress('e', "e"))
+	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, "nod", model.geo.Label(nodeID))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
+	require.Equal(t, "node", model.geo.Label(nodeID))
 }
 
 func TestModelEditsLabel(t *testing.T) {
@@ -1316,20 +1395,21 @@ func TestModelEditsLabel(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	updateModel(t, model, keyPress('e', "e"))
-	require.Equal(t, modeEditLabel, model.mode)
+	require.Equal(t, modeEditLabel, model.interaction.mode())
+	require.Equal(t, transactionLabelEdit, model.interaction.transaction.owner)
 
 	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
 	require.Equal(t, "nod", model.geo.Label(nodeID))
 	updateModel(t, model, keyPress('X', "X"))
 	require.Equal(t, "nodX", model.geo.Label(nodeID))
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-	require.Equal(t, modeEditLabel, model.mode)
+	require.Equal(t, modeEditLabel, model.interaction.mode())
 	require.Equal(t, "nodX\n", model.geo.Label(nodeID))
 	updateModel(t, model, tea.PasteMsg{Content: "two\nlines"})
 	require.Equal(t, "nodX\ntwo\nlines", string(model.editBuffer))
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, "nodX\ntwo\nlines", model.geo.Label(nodeID))
 	require.Empty(t, model.editBuffer)
 }
@@ -1344,7 +1424,7 @@ func TestModelEscapeCommitsLabelEdit(t *testing.T) {
 	require.Equal(t, "nodXe", model.geo.Label(nodeID))
 
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, "nodXe", model.geo.Label(nodeID))
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
@@ -1519,14 +1599,14 @@ func TestModelCreatesNodesWithEnterAndEscape(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, keyPress('n', "n"))
 	created := model.target.ID
-	require.Equal(t, modeEditLabel, model.mode)
+	require.Equal(t, modeEditLabel, model.interaction.mode())
 	require.True(t, model.geo.NodeExists(created))
 	require.Equal(t, layout.Size{Width: 4, Height: 3}, model.geo.Nodes[created].Rect.Size)
 
 	updateModel(t, model, keyPress('A', "A"))
 	require.Equal(t, "A", model.geo.Label(created))
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.True(t, model.geo.NodeExists(created))
 
 	model.cursor = layout.NewPoint(30, 10)
@@ -1549,10 +1629,10 @@ func TestModelConnectsSelectedPorts(t *testing.T) {
 
 	selectHit(t, model, layout.Hit{ID: source, Kind: layout.HitPort})
 	updateModel(t, model, keyPress('c', "c"))
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	updateModel(t, model, keyPress('l', "l"))
-	require.Equal(t, modeConnect, model.mode)
-	require.Equal(t, source, model.connectSource)
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Equal(t, source, model.interaction.session.connection.source)
 	anchors := make(map[layout.Point]struct{})
 	for portID := range model.geo.NodePorts(left) {
 		if !model.geo.PortUsable(portID) {
@@ -1567,7 +1647,7 @@ func TestModelConnectsSelectedPorts(t *testing.T) {
 
 	selectHit(t, model, layout.Hit{ID: destination, Kind: layout.HitPort})
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Len(t, model.geo.Edges, 1)
 	require.True(t, model.geo.EdgeExists(0))
 	require.NotEmpty(t, model.geo.Edges[0].Points)
@@ -1587,14 +1667,14 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 	destination := model.geo.Ports[destinationID]
 
 	updateModel(t, model, keyPress('l', "l"))
-	require.Equal(t, modeConnect, model.mode)
+	require.Equal(t, modeConnect, model.interaction.mode())
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      int(source.Anchor.X),
 		Y:      int(source.Anchor.Y),
 		Button: tea.MouseLeft,
 	})
-	require.True(t, model.connectDragging)
-	require.Equal(t, sourceID, model.connectSource)
+	require.Equal(t, gestureConnection, model.interaction.gesture.kind)
+	require.Equal(t, sourceID, model.interaction.session.connection.source)
 
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      int(destination.Anchor.X),
@@ -1634,8 +1714,37 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 		Y:      int(destination.Anchor.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.True(t, model.geo.EdgeExists(0))
+}
+
+func TestModelBlurDiscardsConnectionPreview(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 15})
+	source := model.geo.Ports[portExiting(t, model, left, 1)].Anchor
+	destination := model.geo.Ports[portExiting(t, model, right, -1)].Anchor
+
+	updateModel(t, model, keyPress('l', "l"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(source.X),
+		Y:      int(source.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(destination.X),
+		Y:      int(destination.Y),
+		Button: tea.MouseLeft,
+	})
+	require.NotEmpty(t, model.interaction.render.connectionPreview)
+
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Empty(t, model.interaction.render.connectionPreview)
+	require.Empty(t, model.interaction.render.connectionRaster)
+	require.Empty(t, model.geo.Edges)
 }
 
 func TestModelConnectionPreviewTargetsConnectedPort(t *testing.T) {
@@ -1665,18 +1774,19 @@ func TestModelConnectionPreviewTargetsConnectedPort(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 
-	require.NotEmpty(t, model.connectPreview)
-	require.Equal(t, model.geo.Ports[source].Anchor, model.connectPreview[0])
+	preview := model.interaction.render.connectionPreview
+	require.NotEmpty(t, preview)
+	require.Equal(t, model.geo.Ports[source].Anchor, preview[0])
 	require.Equal(
 		t,
 		model.geo.Ports[destination].Anchor,
-		model.connectPreview[len(model.connectPreview)-1],
+		preview[len(preview)-1],
 	)
 	var (
 		join   layout.Point
 		merged layout.Connections
 	)
-	for _, cell := range model.connectRaster {
+	for _, cell := range model.interaction.render.connectionRaster {
 		if bits.OnesCount8(uint8(cell.Connections)) == 3 {
 			join = cell.Point
 			merged = cell.Connections
@@ -1710,18 +1820,19 @@ func TestModelConnectionPreviewRoutesAroundNodes(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 
-	require.Equal(t, source.Anchor, model.connectPreview[0])
-	require.Equal(t, cursor, model.connectPreview[len(model.connectPreview)-1])
-	for i := 1; i < len(model.connectPreview); i++ {
-		point := model.connectPreview[i-1]
-		for point != model.connectPreview[i] {
-			point = stepToward(point, model.connectPreview[i])
+	preview := model.interaction.render.connectionPreview
+	require.Equal(t, source.Anchor, preview[0])
+	require.Equal(t, cursor, preview[len(preview)-1])
+	for i := 1; i < len(preview); i++ {
+		point := preview[i-1]
+		for point != preview[i] {
+			point = stepToward(point, preview[i])
 			require.False(
 				t,
 				model.geo.Nodes[obstacle].Rect.Contains(point),
 				"preview crosses node at %+v: %+v",
 				point,
-				model.connectPreview,
+				preview,
 			)
 		}
 	}
@@ -1742,12 +1853,12 @@ func TestModelReconnectsNearestEdgeEndpoint(t *testing.T) {
 
 	selectHit(t, model, layout.Hit{ID: edgeID, Kind: layout.HitEdge})
 	updateModel(t, model, keyPress('l', "l"))
-	require.True(t, model.reconnecting)
-	oldPort := model.connectOldPort
+	require.True(t, model.interaction.session.connection.reconnect)
+	oldPort := model.interaction.session.connection.oldPort
 	selectHit(t, model, layout.Hit{ID: replacement, Kind: layout.HitPort})
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.True(t, model.geo.EdgeExists(edgeID))
 	gotA, gotB, err := model.geo.EdgePorts(edgeID)
 	require.NoError(t, err)
@@ -1779,17 +1890,17 @@ func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {
 		Y:      int(near.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeNavigate, model.mode)
-	require.True(t, model.edgeDragPending)
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, gestureConnectionPending, model.interaction.gesture.kind)
 	require.True(t, selectionContains(model, layout.HitEdge, edgeID))
 	updateModel(t, model, tea.MouseReleaseMsg{
 		X:      int(near.X),
 		Y:      int(near.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeNavigate, model.mode)
-	require.False(t, model.edgeDragPending)
-	require.Empty(t, model.connectPreview)
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.NotEqual(t, gestureConnectionPending, model.interaction.gesture.kind)
+	require.Empty(t, model.interaction.render.connectionPreview)
 
 	blank := near.Add(0, 3)
 	updateModel(t, model, tea.MouseClickMsg{
@@ -1802,7 +1913,7 @@ func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {
 		Y:      int(blank.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeConnect, model.mode)
+	require.Equal(t, modeConnect, model.interaction.mode())
 	require.NotEqual(
 		t,
 		' ',
@@ -1818,8 +1929,8 @@ func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {
 		Y:      int(blank.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeNavigate, model.mode)
-	require.False(t, model.connectStarted)
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.NotEqual(t, sessionConnection, model.interaction.session.kind)
 
 	updateModel(t, model, tea.MouseClickMsg{
 		X:      int(near.X),
@@ -1833,17 +1944,17 @@ func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {
 		Y:      int(destination.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeConnect, model.mode)
-	require.True(t, model.reconnecting)
-	require.True(t, model.connectDragging)
-	oldPort := model.connectOldPort
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.True(t, model.interaction.session.connection.reconnect)
+	require.Equal(t, gestureConnection, model.interaction.gesture.kind)
+	oldPort := model.interaction.session.connection.oldPort
 	updateModel(t, model, tea.MouseReleaseMsg{
 		X:      int(destination.X),
 		Y:      int(destination.Y),
 		Button: tea.MouseLeft,
 	})
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	gotA, gotB, err := model.geo.EdgePorts(edgeID)
 	require.NoError(t, err)
 	require.Contains(t, []uint32{gotA, gotB}, replacement)
@@ -1877,8 +1988,7 @@ func TestModelMousePrioritizesSelectedEdgeAtPort(t *testing.T) {
 	hit, ok := model.activeHit()
 	require.True(t, ok)
 	require.Equal(t, layout.Hit{ID: edgeID, Kind: layout.HitEdge}, hit)
-	require.True(t, model.edgeDragPending)
-	require.False(t, model.dragging)
+	require.Equal(t, gestureConnectionPending, model.interaction.gesture.kind)
 }
 
 func TestModelDeletesNode(t *testing.T) {
@@ -1936,7 +2046,7 @@ func TestToolbarFloatsOverCanvasAndCentersTools(t *testing.T) {
 	require.Same(t, model, got)
 	require.NotNil(t, command)
 	updateModel(t, model, command())
-	require.Equal(t, modeRectangle, model.mode)
+	require.Equal(t, modeRectangle, model.interaction.mode())
 }
 
 func TestToolbarHighlightsHoveredTool(t *testing.T) {
@@ -2078,7 +2188,7 @@ func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 		ID: saveConfirmAction,
 	}))
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.Equal(t, path, model.path)
 	require.Equal(t, "saved "+path, model.status)
@@ -2088,7 +2198,7 @@ func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
 	require.NoError(t, model.rebuild())
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	requireSavedLabel(t, path, "updated")
 }
 
@@ -2172,7 +2282,8 @@ func TestModelMouseSelectsAndDragsNode(t *testing.T) {
 		Y:      click.Y,
 		Button: tea.MouseLeft,
 	})
-	require.True(t, model.dragging)
+	require.Equal(t, gestureMove, model.interaction.gesture.kind)
+	require.Equal(t, transactionPointerMove, model.interaction.transaction.owner)
 
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      click.X + 2,
@@ -2181,7 +2292,36 @@ func TestModelMouseSelectsAndDragsNode(t *testing.T) {
 	})
 	require.Equal(t, before.Add(2, 1), model.geo.Nodes[nodeID].Rect.Min)
 	updateModel(t, model, tea.MouseReleaseMsg{Button: tea.MouseLeft})
-	require.False(t, model.dragging)
+	require.NotEqual(t, gestureMove, model.interaction.gesture.kind)
+}
+
+func TestModelBlurCommitsPointerMove(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	before := model.geo.Nodes[nodeID].Rect.Min
+	click := tea.Mouse{
+		X: int(model.cursor.X - model.viewport.X),
+		Y: int(model.cursor.Y - model.viewport.Y),
+	}
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      click.X,
+		Y:      click.Y,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      click.X + 2,
+		Y:      click.Y + 1,
+		Button: tea.MouseLeft,
+	})
+
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, gestureNone, model.interaction.gesture.kind)
+	require.Equal(t, before.Add(2, 1), model.geo.Nodes[nodeID].Rect.Min)
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
 }
 
 func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
@@ -2194,7 +2334,7 @@ func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
 		Y:      0,
 		Button: tea.MouseLeft,
 	})
-	require.True(t, model.selecting)
+	require.Equal(t, gestureAreaSelection, model.interaction.gesture.kind)
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      12,
 		Y:      6,
@@ -2210,7 +2350,7 @@ func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
 		Y:      6,
 		Button: tea.MouseLeft,
 	})
-	require.False(t, model.selecting)
+	require.NotEqual(t, gestureAreaSelection, model.interaction.gesture.kind)
 	require.True(t, selectionContains(model, layout.HitNode, left))
 	require.False(t, selectionContains(model, layout.HitNode, right))
 	require.True(t, model.highlightedPoint(model.geo.Nodes[left].Rect.Min))
@@ -2252,7 +2392,7 @@ func TestModelControlClickTogglesObjects(t *testing.T) {
 	}
 	require.True(t, selectionContains(model, layout.HitNode, left))
 	require.True(t, selectionContains(model, layout.HitNode, right))
-	require.False(t, model.dragging)
+	require.NotEqual(t, gestureMove, model.interaction.gesture.kind)
 
 	point := model.geo.Nodes[left].LabelPoint
 	updateModel(t, model, tea.MouseClickMsg{
@@ -2355,10 +2495,10 @@ func TestModelMouseDragCommitsNewNodeLabel(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 
-	require.Equal(t, modeNavigate, model.mode)
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, "New", model.geo.Label(nodeID))
 	require.Equal(t, before.Add(2, 1), model.geo.Nodes[nodeID].Rect.Min)
-	require.True(t, model.dragging)
+	require.Equal(t, gestureMove, model.interaction.gesture.kind)
 }
 
 func TestModelMouseCyclesHitsAndScrolls(t *testing.T) {
@@ -2496,7 +2636,8 @@ func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
 	}
 
 	updateModel(t, model, tea.MouseClickMsg(mouse))
-	require.True(t, model.resizing)
+	require.Equal(t, gestureResize, model.interaction.gesture.kind)
+	require.Equal(t, transactionResize, model.interaction.transaction.owner)
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      mouse.X + 4,
 		Y:      mouse.Y + 2,
@@ -2508,7 +2649,7 @@ func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
 		Button: tea.MouseRight,
 	})
 
-	require.False(t, model.resizing)
+	require.NotEqual(t, gestureResize, model.interaction.gesture.kind)
 	require.Equal(t, before.Width+4, model.geo.Nodes[nodeID].Rect.Size.Width)
 	require.Equal(t, before.Height+2, model.geo.Nodes[nodeID].Rect.Size.Height)
 	_, explicit := model.geo.ExplicitNodeSize(nodeID)
@@ -2518,6 +2659,36 @@ func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
 	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Size)
 	_, explicit = model.geo.ExplicitNodeSize(nodeID)
 	require.False(t, explicit)
+}
+
+func TestModelBlurCommitsResize(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(2, 8)))
+	require.NoError(t, model.rebuild())
+	before := model.geo.Nodes[nodeID].Rect.Size
+	handle := resizeCornerPoint(model.geo.Nodes[nodeID].Rect, resizeEast|resizeSouth)
+	mouse := tea.Mouse{
+		X:      int(handle.X - model.viewport.X),
+		Y:      int(handle.Y - model.viewport.Y),
+		Button: tea.MouseRight,
+	}
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      mouse.X + 4,
+		Y:      mouse.Y + 2,
+		Button: tea.MouseRight,
+	})
+
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Equal(t, gestureNone, model.interaction.gesture.kind)
+	require.Equal(t, before.Width+4, model.geo.Nodes[nodeID].Rect.Size.Width)
+	require.Equal(t, before.Height+2, model.geo.Nodes[nodeID].Rect.Size.Height)
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Size)
 }
 
 func TestModelMouseResizeUsesNearestCorner(t *testing.T) {
@@ -2533,11 +2704,11 @@ func TestModelMouseResizeUsesNearestCorner(t *testing.T) {
 	}
 
 	updateModel(t, model, tea.MouseClickMsg(mouse))
-	require.Equal(t, resizeCorner(0), model.resizeCorner)
+	require.Equal(t, resizeCorner(0), model.interaction.gesture.corner)
 	require.Equal(
 		t,
 		layout.NewPoint(before.Max().X-1, before.Max().Y-1),
-		model.resizeFixed,
+		model.interaction.gesture.fixed,
 	)
 	updateModel(t, model, tea.MouseMotionMsg{
 		X:      0,

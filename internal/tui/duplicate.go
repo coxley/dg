@@ -17,15 +17,18 @@ func (m *Model) beginDuplicateDrag(point layout.Point, hit layout.Hit) {
 		m.selectOnly(hit)
 	}
 	m.target = hit
-	m.duplicatePending = true
-	m.duplicateDragging = false
-	m.duplicateStart = point
-	m.duplicatePoint = point
+	m.interaction.gesture = pointerGesture{
+		kind:   gestureDuplicatePending,
+		target: hit,
+		start:  point,
+		point:  point,
+	}
 	m.status = ""
 }
 
 func (m *Model) updateDuplicateMotion(mouse tea.Mouse) bool {
-	if !m.duplicatePending && !m.duplicateDragging ||
+	kind := m.interaction.gesture.kind
+	if kind != gestureDuplicatePending && kind != gestureDuplicate ||
 		mouse.Button != tea.MouseLeft {
 		return false
 	}
@@ -36,10 +39,10 @@ func (m *Model) updateDuplicateMotion(mouse tea.Mouse) bool {
 }
 
 func (m *Model) updateDuplicateDrag(point layout.Point) {
-	if point == m.duplicatePoint {
+	if point == m.interaction.gesture.point {
 		return
 	}
-	if !m.duplicateDragging {
+	if m.interaction.gesture.kind == gestureDuplicatePending {
 		if !m.startDuplicatePreview(point) {
 			return
 		}
@@ -48,8 +51,11 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 			return
 		}
 	}
-	m.duplicatePoint = point
-	if err := m.canvas.Render(canvasview.DuplicateFrame, m.duplicateGeo); err != nil {
+	m.interaction.gesture.point = point
+	if err := m.canvas.Render(
+		canvasview.DuplicateFrame,
+		m.interaction.render.duplicateLayout,
+	); err != nil {
 		m.setError(err.Error())
 		return
 	}
@@ -62,7 +68,7 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 func (m *Model) startDuplicatePreview(point layout.Point) bool {
 	cloned, err := m.geo.Clone()
 	if err == nil {
-		dx, dy := pointDelta(m.duplicateStart, point)
+		dx, dy := pointDelta(m.interaction.gesture.start, point)
 		err = cloned.DuplicateSelection(dx, dy)
 	}
 	if err != nil {
@@ -70,36 +76,37 @@ func (m *Model) startDuplicatePreview(point layout.Point) bool {
 		m.setError(err.Error())
 		return false
 	}
-	m.duplicateGeo = cloned
-	m.duplicateDragging = true
+	m.interaction.render.duplicateLayout = cloned
+	m.interaction.gesture.kind = gestureDuplicate
 	return true
 }
 
 func (m *Model) moveDuplicatePreview(point layout.Point) bool {
-	dx, dy := pointDelta(m.duplicatePoint, point)
-	for nodeID := range m.duplicateGeo.Selection().Nodes() {
-		origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
+	duplicate := m.interaction.render.duplicateLayout
+	dx, dy := pointDelta(m.interaction.gesture.point, point)
+	for nodeID := range duplicate.Selection().Nodes() {
+		origin := duplicate.Nodes[nodeID].Rect.Min
 		if _, ok := movePoint64(origin, dx, dy); !ok {
 			return false
 		}
 	}
-	for edgeID := range m.duplicateGeo.Selection().Edges() {
-		for _, point := range m.duplicateGeo.Edges[edgeID].Points {
+	for edgeID := range duplicate.Selection().Edges() {
+		for _, point := range duplicate.Edges[edgeID].Points {
 			if _, ok := movePoint64(point, dx, dy); !ok {
 				return false
 			}
 		}
 	}
-	for nodeID := range m.duplicateGeo.Selection().Nodes() {
-		origin := m.duplicateGeo.Nodes[nodeID].Rect.Min
+	for nodeID := range duplicate.Selection().Nodes() {
+		origin := duplicate.Nodes[nodeID].Rect.Min
 		next, _ := movePoint64(origin, dx, dy)
-		if err := m.duplicateGeo.PlaceNode(nodeID, next); err != nil {
+		if err := duplicate.PlaceNode(nodeID, next); err != nil {
 			m.setError(err.Error())
 			return false
 		}
 	}
-	for edgeID := range m.duplicateGeo.Selection().Edges() {
-		points := m.duplicateGeo.Edges[edgeID].Points
+	for edgeID := range duplicate.Selection().Edges() {
+		points := duplicate.Edges[edgeID].Points
 		for i, point := range points {
 			next, ok := movePoint64(point, dx, dy)
 			if !ok {
@@ -112,13 +119,13 @@ func (m *Model) moveDuplicatePreview(point layout.Point) bool {
 }
 
 func (m *Model) finishDuplicateDrag(point layout.Point) {
-	if !m.duplicateDragging {
+	if m.interaction.gesture.kind != gestureDuplicate {
 		m.cancelDuplicateDrag()
 		return
 	}
-	dx, dy := pointDelta(m.duplicateStart, point)
+	dx, dy := pointDelta(m.interaction.gesture.start, point)
 	m.cancelDuplicateDrag()
-	m.beginTransaction()
+	m.beginTransaction(transactionDuplicate)
 	if err := m.geo.DuplicateSelection(dx, dy); err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
@@ -142,17 +149,17 @@ func (m *Model) finishDuplicateDrag(point layout.Point) {
 }
 
 func (m *Model) cancelDuplicateDrag() {
-	m.duplicatePending = false
-	m.duplicateDragging = false
-	m.duplicateGeo = nil
-	m.canvas.Clear(canvasview.DuplicateFrame)
-	m.duplicateHighlight = m.duplicateHighlight[:0]
+	if m.interaction.gesture.kind == gestureDuplicatePending ||
+		m.interaction.gesture.kind == gestureDuplicate {
+		m.interaction.resetGesture()
+	}
+	m.interaction.render.clearDuplicate(&m.canvas)
 }
 
 func (m *Model) refreshDuplicateHighlight() {
-	m.duplicateHighlight = appendSelectionHighlight(
-		m.duplicateHighlight,
-		m.duplicateGeo,
+	m.interaction.render.duplicateHighlight = appendSelectionHighlight(
+		m.interaction.render.duplicateHighlight,
+		m.interaction.render.duplicateLayout,
 		m.canvas.Frame(canvasview.DuplicateFrame),
 	)
 }

@@ -134,7 +134,7 @@ func (m *Model) startLabelEdit(hit layout.Hit) {
 	m.editBuffer = append(m.editBuffer[:0], label...)
 	m.editDraft = m.editDraft[:0]
 	m.editCaret = len(m.editBuffer)
-	m.mode = modeEditLabel
+	m.interaction.session = interactionSession{kind: sessionLabelEdit}
 	m.refreshEditLines()
 	m.moveCursorToCaret()
 	m.refreshHits()
@@ -157,7 +157,7 @@ func (m *Model) commitLabelEdit() {
 }
 
 func (m *Model) finishLabelEdit() {
-	m.mode = modeNavigate
+	m.interaction.session = interactionSession{}
 	m.editBuffer = m.editBuffer[:0]
 	m.editDraft = m.editDraft[:0]
 	m.editLines = m.editLines[:0]

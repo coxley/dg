@@ -219,7 +219,7 @@ func (b *saveDialogBody) sync() {
 }
 
 func (m *Model) requestSave() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}

@@ -215,7 +215,7 @@ func sidebarMotionTick(generation uint64) tea.Cmd {
 }
 
 func (m *Model) toggleSidebar() tea.Cmd {
-	if m.dialogs.ActiveID() != surfaceNone || m.mode != modeNavigate {
+	if m.dialogs.ActiveID() != surfaceNone || !m.interaction.idle() {
 		return nil
 	}
 	switch {

@@ -7,7 +7,7 @@ import (
 )
 
 func (m *Model) cycleBorder() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -19,7 +19,7 @@ func (m *Model) cycleBorder() {
 	inherited, _ := m.geo.NodeStyle(targets.primary.ID)
 	inherited.Border = inherited.Border.Next()
 
-	m.beginTransaction()
+	m.beginTransaction(transactionImmediate)
 	apply := func(nodeID uint32) error {
 		style, _ := m.geo.NodeStyle(nodeID)
 		style.Border = style.Border.Next()
@@ -58,7 +58,7 @@ func (m *Model) cycleBorder() {
 }
 
 func (m *Model) cycleTextAlignment(vertical bool) {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -74,7 +74,7 @@ func (m *Model) cycleTextAlignment(vertical bool) {
 		inherited.Horizontal = inherited.Horizontal.Next()
 	}
 
-	m.beginTransaction()
+	m.beginTransaction(transactionImmediate)
 	apply := func(nodeID uint32) error {
 		style, _ := m.geo.NodeStyle(nodeID)
 		if vertical {
@@ -116,7 +116,7 @@ func (m *Model) cycleTextAlignment(vertical bool) {
 }
 
 func (m *Model) toggleStroke() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -128,7 +128,7 @@ func (m *Model) toggleStroke() {
 		return
 	}
 
-	m.beginTransaction()
+	m.beginTransaction(transactionImmediate)
 	var err error
 	if selection.Empty() {
 		err = m.toggleHitStroke(hit)
@@ -194,7 +194,7 @@ func (m *Model) toggleSelectionStroke() error {
 }
 
 func (m *Model) cycleEdgeArrow(portA bool) {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -210,7 +210,7 @@ func (m *Model) cycleEdgeArrow(portA bool) {
 		inherited.PortBArrow = inherited.PortBArrow.Next()
 	}
 
-	m.beginTransaction()
+	m.beginTransaction(transactionImmediate)
 	apply := func(edgeID uint32) error {
 		style, _ := m.geo.EdgeStyle(edgeID)
 		if portA {

@@ -78,7 +78,7 @@ func (m *Model) View() tea.View {
 	view.KeyboardEnhancements.ReportAlternateKeys = true
 	switch {
 	case m.dialogs.ActiveID() != surfaceNone:
-	case m.mode == modeEditLabel:
+	case m.interaction.session.kind == sessionLabelEdit:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
 			cursor := &m.viewCursor[m.nextCursor]
 			m.nextCursor ^= 1
@@ -91,12 +91,12 @@ func (m *Model) View() tea.View {
 }
 
 func (m *Model) activeTool() nav.Tool {
-	switch m.mode {
-	case modeRectangle:
+	switch m.interaction.tool {
+	case toolRectangle:
 		return nav.Rectangle
-	case modeConnect:
+	case toolConnect:
 		return nav.Line
-	case modeNavigate, modeMove, modeEditLabel:
+	case toolNavigate:
 		return nav.Cursor
 	default:
 		return nav.Cursor
@@ -105,9 +105,11 @@ func (m *Model) activeTool() nav.Tool {
 
 func (m *Model) activeFrame() canvasview.FrameID {
 	switch {
-	case m.reconnecting && m.connectDragging:
+	case m.interaction.session.kind == sessionConnection &&
+		m.interaction.session.connection.reconnect &&
+		m.interaction.gesture.connectionActive():
 		return canvasview.ConnectionFrame
-	case m.duplicateDragging:
+	case m.interaction.gesture.duplicateActive():
 		return canvasview.DuplicateFrame
 	default:
 		return canvasview.BaseFrame
@@ -194,7 +196,7 @@ func (m *Model) appendStatusText(dst []byte) []byte {
 		}
 		return append(dst, m.status...)
 	}
-	if m.mode == modeEditLabel {
+	if m.interaction.session.kind == sessionLabelEdit {
 		dst = append(dst, "edit label  node "...)
 		dst = strconv.AppendUint(dst, uint64(m.target.ID), 10)
 		dst = append(dst, "  cell "...)
@@ -209,7 +211,7 @@ func (m *Model) appendStatusText(dst []byte) []byte {
 		return strconv.AppendInt(dst, int64(edges), 10)
 	}
 
-	dst = append(dst, m.mode.String()...)
+	dst = append(dst, m.interaction.mode().String()...)
 	dst = append(dst, "  ("...)
 	dst = strconv.AppendUint(dst, uint64(m.cursor.X), 10)
 	dst = append(dst, ',')
@@ -355,7 +357,7 @@ func (m *Model) appendStyledRun(dst, text []byte, selected bool) []byte {
 	if !selected {
 		return append(dst, text...)
 	}
-	port := m.mode == modeConnect
+	port := m.interaction.tool == toolConnect
 	key := styledRunKey{
 		text: string(text),
 		port: port,
@@ -505,29 +507,30 @@ func (m *Model) highlightedRange(y, start, end uint32) bool {
 }
 
 func (m *Model) highlightedPoint(point layout.Point) bool {
-	if m.duplicateDragging {
+	if m.interaction.gesture.duplicateActive() {
 		return highlightContains(
-			m.duplicateHighlight,
+			m.interaction.render.duplicateHighlight,
 			m.canvas.Frame(canvasview.DuplicateFrame),
 			point,
 		)
 	}
-	if m.rigidMoving {
+	if m.interaction.movingRigidly() {
 		return highlightContains(
-			m.moveHighlight,
+			m.interaction.render.moveHighlight,
 			m.canvas.Frame(canvasview.BaseFrame),
 			point,
 		)
 	}
-	if m.selecting && m.marqueeArea().contains(point) {
+	if m.interaction.gesture.kind == gestureAreaSelection &&
+		m.marqueeArea().contains(point) {
 		return true
 	}
-	if m.mode == modeConnect {
+	if m.interaction.tool == toolConnect {
 		return m.portAt(point)
 	}
 	geo := m.geo
-	if m.duplicateDragging {
-		geo = m.duplicateGeo
+	if m.interaction.gesture.duplicateActive() {
+		geo = m.interaction.render.duplicateLayout
 	}
 	if !geo.Selection().Empty() {
 		for nodeID := range geo.Selection().Nodes() {
@@ -557,8 +560,8 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 
 func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
 	geo := m.geo
-	if m.duplicateDragging {
-		geo = m.duplicateGeo
+	if m.interaction.gesture.duplicateActive() {
+		geo = m.interaction.render.duplicateLayout
 	}
 	switch hit.Kind {
 	case layout.HitNode:
@@ -592,7 +595,7 @@ func (m *Model) connectionPreviewConnections(
 	point layout.Point,
 ) (layout.Connections, bool) {
 	index, ok := slices.BinarySearchFunc(
-		m.connectRaster,
+		m.interaction.render.connectionRaster,
 		point,
 		func(cell layout.RasterCell, point layout.Point) int {
 			if order := cmp.Compare(cell.Point.Y, point.Y); order != 0 {
@@ -604,13 +607,19 @@ func (m *Model) connectionPreviewConnections(
 	if !ok {
 		return 0, false
 	}
-	return m.connectRaster[index].Connections, true
+	return m.interaction.render.connectionRaster[index].Connections, true
 }
 
 func (m *Model) refreshConnectionPreview() {
-	if !m.connectStarted || !m.geo.PortExists(m.connectSource) {
-		m.connectPreview = m.connectPreview[:0]
-		m.connectRaster = m.connectRaster[:0]
+	if m.interaction.session.kind != sessionConnection {
+		m.interaction.render.connectionPreview = m.interaction.render.connectionPreview[:0]
+		m.interaction.render.connectionRaster = m.interaction.render.connectionRaster[:0]
+		return
+	}
+	connection := m.interaction.session.connection
+	if !m.geo.PortExists(connection.source) {
+		m.interaction.render.connectionPreview = m.interaction.render.connectionPreview[:0]
+		m.interaction.render.connectionRaster = m.interaction.render.connectionRaster[:0]
 		return
 	}
 	var (
@@ -618,52 +627,52 @@ func (m *Model) refreshConnectionPreview() {
 		err     error
 	)
 	style := m.connectionPreviewStyle()
-	if m.reconnecting {
+	if connection.reconnect {
 		preview, err = m.geo.PreviewRouteWithoutEdgeStyled(
-			m.connectPreview[:0],
-			m.connectSource,
+			m.interaction.render.connectionPreview[:0],
+			connection.source,
 			m.cursor,
-			m.connectEdge,
+			connection.edge,
 			style,
 		)
 	} else {
 		preview, err = m.geo.PreviewRouteStyled(
-			m.connectPreview[:0],
-			m.connectSource,
+			m.interaction.render.connectionPreview[:0],
+			connection.source,
 			m.cursor,
 			style,
 		)
 	}
 	if err != nil {
-		m.connectPreview = m.connectPreview[:0]
-		m.connectRaster = m.connectRaster[:0]
+		m.interaction.render.connectionPreview = m.interaction.render.connectionPreview[:0]
+		m.interaction.render.connectionRaster = m.interaction.render.connectionRaster[:0]
 		return
 	}
-	m.connectPreview = preview
+	m.interaction.render.connectionPreview = preview
 	destination := layout.NoPortID
 	if portID, ok := m.usablePortAt(m.cursor); ok &&
-		portID != m.connectSource {
+		portID != connection.source {
 		destination = portID
 	}
-	m.connectRaster, err = m.canvas.RasterizeEdge(
-		m.connectRaster[:0],
+	m.interaction.render.connectionRaster, err = m.canvas.RasterizeEdge(
+		m.interaction.render.connectionRaster[:0],
 		m.geo,
 		layout.RasterEdge{
 			Points: preview,
-			PortA:  m.connectSource,
+			PortA:  connection.source,
 			PortB:  destination,
 		},
 	)
 	if err != nil {
-		m.connectPreview = m.connectPreview[:0]
-		m.connectRaster = m.connectRaster[:0]
+		m.interaction.render.connectionPreview = m.interaction.render.connectionPreview[:0]
+		m.interaction.render.connectionRaster = m.interaction.render.connectionRaster[:0]
 		return
 	}
 }
 
 func (m *Model) primaryHighlight() (layout.Hit, bool) {
-	switch m.mode {
-	case modeMove, modeEditLabel:
+	switch m.interaction.session.kind {
+	case sessionKeyboardMove, sessionLabelEdit:
 		return m.target, true
 	default:
 		return m.activeHit()
@@ -719,8 +728,8 @@ func appendHighlightedSpaces(
 	model *Model,
 ) []byte {
 	if model == nil ||
-		!model.selecting &&
-			(model.mode != modeConnect || !model.connectStarted) {
+		model.interaction.gesture.kind != gestureAreaSelection &&
+			model.interaction.session.kind != sessionConnection {
 		return appendSpaces(dst, count)
 	}
 	styledStart := -1
@@ -750,7 +759,7 @@ func appendHighlightedSpaces(
 }
 
 func (m *Model) highlightStyle() lipgloss.Style {
-	if m != nil && m.mode == modeConnect {
+	if m != nil && m.interaction.tool == toolConnect {
 		return m.canvas.PortStyle()
 	}
 	return m.canvas.SelectionStyle()
@@ -766,7 +775,7 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 		return 0, false
 	}
 	if glyph, ok := render.ArrowGlyphAt(
-		model.connectPreview,
+		model.interaction.render.connectionPreview,
 		model.connectionPreviewStyle(),
 		point,
 	); ok {
@@ -779,12 +788,13 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 }
 
 func (m *Model) connectionPreviewStyle() layout.EdgeStyle {
-	if !m.reconnecting {
+	connection := m.interaction.session.connection
+	if !connection.reconnect {
 		return m.edgeStyle
 	}
-	style, _ := m.geo.EdgeStyle(m.connectEdge)
-	portA, _, err := m.geo.EdgePorts(m.connectEdge)
-	if err == nil && m.connectSource != portA {
+	style, _ := m.geo.EdgeStyle(connection.edge)
+	portA, _, err := m.geo.EdgePorts(connection.edge)
+	if err == nil && connection.source != portA {
 		style.PortAArrow, style.PortBArrow = style.PortBArrow, style.PortAArrow
 	}
 	return style

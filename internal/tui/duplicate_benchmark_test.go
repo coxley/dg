@@ -36,7 +36,7 @@ func BenchmarkModelAltDrag(b *testing.B) {
 		Button: tea.MouseLeft,
 		Mod:    tea.ModAlt,
 	})
-	require.True(b, model.duplicateDragging)
+	require.Equal(b, gestureDuplicate, model.interaction.gesture.kind)
 
 	messages := [...]tea.MouseMotionMsg{
 		{
@@ -79,7 +79,7 @@ func BenchmarkModelMoveCommittedDuplicate(b *testing.B) {
 	require.NoError(b, model.rebuild())
 	updateModel(b, model, tea.WindowSizeMsg{Width: 120, Height: 40})
 	model.beginMove()
-	require.Equal(b, modeMove, model.mode)
+	require.Equal(b, modeMove, model.interaction.mode())
 
 	keys := [...]tea.KeyPressMsg{
 		keyPress(tea.KeyRight, ""),

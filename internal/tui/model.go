@@ -65,57 +65,28 @@ type Model struct {
 	history *layout.History
 	theme   Theme
 
-	cursor            layout.Point
-	viewport          layout.Point
-	hits              []layout.Hit
-	active            int
-	target            layout.Hit
-	connectSource     uint32
-	connectEdge       uint32
-	connectOldPort    uint32
-	reconnecting      bool
-	connectStarted    bool
-	connectDragging   bool
-	connectPreview    []layout.Point
-	connectRaster     []layout.RasterCell
-	edgeDragPending   bool
-	edgeDragHit       layout.Hit
-	edgeDragStart     layout.Point
-	creatingRectangle bool
-	duplicatePending  bool
-	duplicateDragging bool
-	duplicateStart    layout.Point
-	duplicatePoint    layout.Point
-	duplicateGeo      *layout.Layout
-	nav               nav.Model
-	dialogs           dialogController
-	canvas            canvasview.Model
-	bindings          *chrome.Resolver
-	workspace         chrome.Workspace
-	sidebar           sidebarState
+	cursor      layout.Point
+	viewport    layout.Point
+	hits        []layout.Hit
+	active      int
+	target      layout.Hit
+	interaction interactionState
+	nav         nav.Model
+	dialogs     dialogController
+	canvas      canvasview.Model
+	bindings    *chrome.Resolver
+	workspace   chrome.Workspace
+	sidebar     sidebarState
 
-	mode             mode
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
 	editCaret        int
 	editCaretVisible bool
 
-	dragging      bool
-	rigidMoving   bool
-	resizing      bool
-	resizeCorner  resizeCorner
-	resizeFixed   layout.Point
-	dragOffset    layout.Point
-	editMouseDown bool
-	lastClick     layout.Point
-	hasLastClick  bool
-
-	duplicateHighlight []bool
-	moveHighlight      []bool
-	viewBuffer         []byte
-	statusText         []byte
-	styledRuns         map[styledRunKey]string
+	viewBuffer []byte
+	statusText []byte
+	styledRuns map[styledRunKey]string
 
 	// Bubble Tea compares consecutive cursor pointers, so each View writes the
 	// cursor value that the previous View does not reference.
@@ -138,14 +109,8 @@ type Model struct {
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
 
-	transaction     layout.Transaction
-	transactionOpen bool
-
-	moveOrigins         []layout.Point
-	focusNodes          []layout.Hit
-	selecting           bool
-	selectionStartPoint layout.Point
-	selectionEndPoint   layout.Point
+	moveOrigins []layout.Point
+	focusNodes  []layout.Hit
 }
 
 // Option configures model construction.
@@ -384,7 +349,7 @@ func (m *Model) updatePaste(message tea.PasteMsg) tea.Cmd {
 	if m.dialogs.ActiveID() != surfaceNone {
 		return m.updateDialog(message)
 	}
-	if m.mode == modeEditLabel {
+	if m.interaction.session.kind == sessionLabelEdit {
 		m.insertLabelText(message.Content)
 	}
 	return nil
@@ -409,7 +374,7 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	if !copyKey && !isModifierKey(message) {
 		m.clipboard.CancelPending()
 	}
-	m.hasLastClick = false
+	m.interaction.click.valid = false
 	if command, ok := m.bindings.ResolveKey(
 		message,
 		m.activeBindingScopes(),
@@ -421,7 +386,7 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	case m.dialogs.ActiveID() != surfaceNone:
 		return m.updateDialog(message)
 	case m.sidebar.focused:
-	case m.mode == modeEditLabel:
+	case m.interaction.session.kind == sessionLabelEdit:
 		m.updateLabel(message)
 	}
 	return nil
@@ -444,7 +409,7 @@ func (m *Model) setError(text string) {
 }
 
 func (m *Model) activateTool(next mode) {
-	if m.mode == next {
+	if m.interaction.mode() == next {
 		return
 	}
 	m.cancelMode()
@@ -459,7 +424,7 @@ func (m *Model) activateTool(next mode) {
 }
 
 func (m *Model) reorderLayer(all, backward bool) {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -509,11 +474,11 @@ func (m *Model) selectedLayer() (layout.Hit, bool) {
 }
 
 func (m *Model) move(dx, dy int) {
-	if m.mode == modeMove {
+	if m.interaction.session.kind == sessionKeyboardMove {
 		m.moveNode(dx, dy)
 		return
 	}
-	if m.mode == modeNavigate {
+	if m.interaction.idle() {
 		nodes, edges := m.selectedCounts()
 		if nodes > 0 && nodes+edges > 1 {
 			m.shiftSelection(dx, dy)
@@ -530,7 +495,7 @@ func (m *Model) move(dx, dy int) {
 	}
 	m.cursor = point
 	m.refreshHits()
-	if m.mode == modeConnect {
+	if m.interaction.mode() == modeConnect {
 		m.refreshConnectionPreview()
 	}
 	m.ensureCursorVisible()
@@ -539,7 +504,7 @@ func (m *Model) move(dx, dy int) {
 
 func (m *Model) moveNode(dx, dy int) {
 	if m.target.Kind != layout.HitNode || !m.geo.NodeExists(m.target.ID) {
-		m.mode = modeNavigate
+		m.interaction.session = interactionSession{}
 		m.setError("selected node no longer exists")
 		return
 	}
@@ -559,8 +524,9 @@ func (m *Model) dragNode(nodeID uint32, cursor layout.Point) {
 		m.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 	}
 	previous := m.geo.Nodes[nodeID].Rect.Min
-	dx := int64(cursor.X) - int64(m.dragOffset.X) - int64(previous.X)
-	dy := int64(cursor.Y) - int64(m.dragOffset.Y) - int64(previous.Y)
+	offset := m.interaction.gesture.offset
+	dx := int64(cursor.X) - int64(offset.X) - int64(previous.X)
+	dy := int64(cursor.Y) - int64(offset.Y) - int64(previous.Y)
 	rebase, err := m.rebaseSelectionMove(dx, dy, cursor)
 	if err != nil {
 		m.setError(err.Error())
@@ -644,12 +610,12 @@ func (m *Model) moveSelectedNodes(
 	if err := m.geo.MoveSelection(dx, dy); err != nil {
 		return false, errors.Join(err, m.restoreMovedNodes())
 	}
-	if m.rigidMoving {
+	if m.interaction.movingRigidly() {
 		if err := m.render(); err != nil {
 			return false, errors.Join(err, m.restoreMovedNodes())
 		}
-		m.moveHighlight = appendSelectionHighlight(
-			m.moveHighlight,
+		m.interaction.render.moveHighlight = appendSelectionHighlight(
+			m.interaction.render.moveHighlight,
 			m.geo,
 			m.canvas.Frame(canvasview.BaseFrame),
 		)
@@ -676,11 +642,11 @@ func (m *Model) restoreMovedNodes() error {
 }
 
 func (m *Model) beginMove() {
-	if m.mode == modeMove {
+	if m.interaction.session.kind == sessionKeyboardMove {
 		m.finishMove()
 		return
 	}
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -698,14 +664,16 @@ func (m *Model) beginMove() {
 		return
 	}
 	m.target = target
-	m.beginTransaction()
-	m.rigidMoving = m.geo.SelectionMovesRigidly()
-	m.mode = modeMove
+	m.beginTransaction(transactionKeyboardMove)
+	m.interaction.session = interactionSession{
+		kind:  sessionKeyboardMove,
+		rigid: m.geo.SelectionMovesRigidly(),
+	}
 	m.status = ""
 }
 
 func (m *Model) beginLabelEdit() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -714,16 +682,16 @@ func (m *Model) beginLabelEdit() {
 		m.setError("select a node to edit")
 		return
 	}
-	m.beginTransaction()
+	m.beginTransaction(transactionLabelEdit)
 	m.startLabelEdit(hit)
 }
 
 func (m *Model) newNode() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
-	m.beginTransaction()
+	m.beginTransaction(transactionLabelEdit)
 	nodeID, err := m.geo.NewNodeAt("", m.cursor)
 	if err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())
@@ -741,22 +709,22 @@ func (m *Model) newNode() {
 }
 
 func (m *Model) beginRectangle() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
 	m.clearConnection()
-	m.mode = modeRectangle
+	m.interaction.tool = toolRectangle
 	m.status = "drag to create a rectangle"
 }
 
 func (m *Model) beginConnection() {
-	if m.mode != modeNavigate {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
 	m.clearConnection()
-	m.mode = modeConnect
+	m.interaction.tool = toolConnect
 	hit, ok := m.activeHit()
 	if !ok {
 		m.status = dragFromSource
@@ -770,10 +738,10 @@ func (m *Model) beginConnection() {
 }
 
 func (m *Model) startConnection(hit layout.Hit) error {
+	var connection connectionSession
 	switch hit.Kind {
 	case layout.HitPort:
-		m.connectSource = hit.ID
-		m.reconnecting = false
+		connection.source = hit.ID
 	case layout.HitEdge:
 		portA, portB, err := m.geo.EdgePorts(hit.ID)
 		if err != nil {
@@ -784,20 +752,23 @@ func (m *Model) startConnection(hit layout.Hit) error {
 			pointDistance(m.cursor, m.geo.Ports[portA].Anchor) {
 			moving, stationary = portB, portA
 		}
-		m.connectEdge = hit.ID
-		m.connectOldPort = moving
-		m.connectSource = stationary
-		m.reconnecting = true
+		connection.edge = hit.ID
+		connection.oldPort = moving
+		connection.source = stationary
+		connection.reconnect = true
 	default:
 		return errors.New(dragFromSource)
 	}
-	m.connectStarted = true
+	m.interaction.session = interactionSession{
+		kind:       sessionConnection,
+		connection: connection,
+	}
 	m.refreshConnectionPreview()
 	return nil
 }
 
 func (m *Model) completeConnection() {
-	if !m.connectStarted {
+	if m.interaction.session.kind != sessionConnection {
 		m.status = dragFromSource
 		return
 	}
@@ -810,20 +781,21 @@ func (m *Model) completeConnection() {
 }
 
 func (m *Model) completeConnectionTo(destination uint32) {
-	m.beginTransaction()
-	edgeID := m.connectEdge
+	connection := m.interaction.session.connection
+	m.beginTransaction(transactionConnection)
+	edgeID := connection.edge
 	var err error
-	if m.reconnecting {
-		err = m.geo.ReconnectEdge(edgeID, m.connectOldPort, destination)
+	if connection.reconnect {
+		err = m.geo.ReconnectEdge(edgeID, connection.oldPort, destination)
 	} else {
-		edgeID, err = m.geo.ConnectPorts(m.connectSource, destination)
+		edgeID, err = m.geo.ConnectPorts(connection.source, destination)
 	}
 	if err != nil {
 		_ = m.cancelTransaction()
 		m.setError(err.Error())
 		return
 	}
-	if !m.reconnecting {
+	if !connection.reconnect {
 		if err := m.geo.SetEdgeStyle(edgeID, m.edgeStyle); err != nil {
 			_ = m.cancelTransaction()
 			m.setError(err.Error())
@@ -842,7 +814,7 @@ func (m *Model) completeConnectionTo(destination uint32) {
 		m.setError(err.Error())
 		return
 	}
-	m.mode = modeNavigate
+	m.interaction.tool = toolNavigate
 	m.target = layout.Hit{ID: edgeID, Kind: layout.HitEdge}
 	m.selectOnly(m.target)
 	m.clearConnection()
@@ -852,17 +824,17 @@ func (m *Model) completeConnectionTo(destination uint32) {
 }
 
 func (m *Model) deleteActive() {
-	if m.mode != modeNavigate && m.mode != modeMove {
+	session := m.interaction.session.kind
+	if !m.interaction.idle() && session != sessionKeyboardMove {
 		m.setError(finishOperation)
 		return
 	}
-	if m.mode == modeMove {
+	if session == sessionKeyboardMove {
 		if err := m.commitTransaction(); err != nil {
 			m.setError(err.Error())
 			return
 		}
-		m.mode = modeNavigate
-		m.dragging = false
+		m.interaction.session = interactionSession{}
 	}
 	if !m.hasSelection() {
 		hit, ok := m.activeHit()
@@ -876,7 +848,7 @@ func (m *Model) deleteActive() {
 		}
 		m.selectOnly(hit)
 	}
-	m.beginTransaction()
+	m.beginTransaction(transactionImmediate)
 	var err error
 	for nodeID := range m.geo.Selection().Nodes() {
 		err = m.geo.DeleteNode(nodeID)
@@ -909,22 +881,23 @@ func (m *Model) deleteActive() {
 		m.setError(err.Error())
 		return
 	}
-	m.mode = modeNavigate
+	m.interaction.tool = toolNavigate
+	m.interaction.session = interactionSession{}
 	m.target = layout.Hit{}
-	m.dragging = false
+	m.interaction.resetGesture()
 	m.clearSelection()
 	m.refreshHits()
 	m.status = ""
 }
 
 func (m *Model) cancelMode() {
-	if m.mode == modeMove {
+	if m.interaction.session.kind == sessionKeyboardMove {
 		m.finishMove()
 		return
 	}
-	if m.mode == modeRectangle && m.creatingRectangle {
-		m.creatingRectangle = false
-		m.mode = modeNavigate
+	if m.interaction.gesture.kind == gestureRectangle {
+		m.interaction.resetGesture()
+		m.interaction.tool = toolNavigate
 		err := errors.Join(
 			m.cancelTransaction(),
 			m.render(),
@@ -937,49 +910,55 @@ func (m *Model) cancelMode() {
 		m.refreshHits()
 		return
 	}
-	m.mode = modeNavigate
+	m.interaction.tool = toolNavigate
+	if m.interaction.session.kind == sessionLabelEdit {
+		m.commitLabelEdit()
+	} else {
+		m.interaction.session = interactionSession{}
+	}
 	m.clearConnection()
 	m.cancelDuplicateDrag()
-	m.dragging = false
-	m.selecting = false
-	m.creatingRectangle = false
+	m.interaction.resetGesture()
 	m.status = ""
 }
 
-func (m *Model) beginTransaction() {
+func (m *Model) beginTransaction(owner transactionOwner) {
 	if m.history == nil {
 		return
 	}
-	m.transaction = m.history.Begin()
-	m.transactionOpen = true
+	m.interaction.transaction = interactionTransaction{
+		value: m.history.Begin(),
+		owner: owner,
+	}
 }
 
 func (m *Model) commitTransaction() error {
-	if !m.transactionOpen {
+	if !m.interaction.transaction.open() {
 		return nil
 	}
-	m.transactionOpen = false
-	return m.transaction.Commit()
+	transaction := m.interaction.transaction.value
+	m.interaction.transaction = interactionTransaction{}
+	return transaction.Commit()
 }
 
 func (m *Model) cancelTransaction() error {
-	if !m.transactionOpen {
+	if !m.interaction.transaction.open() {
 		return nil
 	}
-	m.transactionOpen = false
-	return m.transaction.Cancel()
+	transaction := m.interaction.transaction.value
+	m.interaction.transaction = interactionTransaction{}
+	return transaction.Cancel()
 }
 
 func (m *Model) finishMove() {
 	var routeErr error
-	if m.rigidMoving {
+	if m.interaction.movingRigidly() {
 		routeErr = m.rebuildSelection()
 	}
 	err := errors.Join(routeErr, m.commitTransaction())
-	m.mode = modeNavigate
-	m.dragging = false
-	m.rigidMoving = false
-	m.moveHighlight = m.moveHighlight[:0]
+	m.interaction.session = interactionSession{}
+	m.interaction.resetGesture()
+	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 	if err != nil {
 		m.setError(err.Error())
 	} else {
@@ -995,21 +974,17 @@ func (m *Model) interruptInteraction() {
 	if m.history != nil {
 		m.history.Interrupt()
 	}
-	m.transactionOpen = false
-	if m.mode == modeEditLabel {
+	m.interaction.transaction = interactionTransaction{}
+	if m.interaction.session.kind == sessionLabelEdit {
 		m.finishLabelEdit()
 	} else {
-		m.mode = modeNavigate
+		m.interaction.session = interactionSession{}
 	}
+	m.interaction.tool = toolNavigate
 	m.clearConnection()
 	m.cancelDuplicateDrag()
-	m.dragging = false
-	m.rigidMoving = false
-	m.moveHighlight = m.moveHighlight[:0]
-	m.resizing = false
-	m.creatingRectangle = false
-	m.editMouseDown = false
-	m.selecting = false
+	m.interaction.resetGesture()
+	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 }
 
 func (m *Model) undo() {
@@ -1031,9 +1006,10 @@ func (m *Model) redo() {
 }
 
 func (m *Model) afterHistoryChange(changed bool, err error, unchanged string) {
-	m.mode = modeNavigate
-	m.dragging = false
-	m.transactionOpen = false
+	m.interaction.tool = toolNavigate
+	m.interaction.session = interactionSession{}
+	m.interaction.resetGesture()
+	m.interaction.transaction = interactionTransaction{}
 	m.clearConnection()
 	m.clearSelection()
 	if err != nil {
@@ -1053,17 +1029,15 @@ func (m *Model) afterHistoryChange(changed bool, err error, unchanged string) {
 }
 
 func (m *Model) clearConnection() {
-	m.connectSource = 0
-	m.connectEdge = 0
-	m.connectOldPort = 0
-	m.reconnecting = false
-	m.connectStarted = false
-	m.connectDragging = false
-	m.connectPreview = m.connectPreview[:0]
-	m.connectRaster = m.connectRaster[:0]
-	m.edgeDragPending = false
-	m.edgeDragHit = layout.Hit{}
-	m.edgeDragStart = layout.Point{}
+	if m.interaction.session.kind == sessionConnection {
+		m.interaction.session = interactionSession{}
+	}
+	if m.interaction.gesture.kind == gestureConnection ||
+		m.interaction.gesture.kind == gestureConnectionPending {
+		m.interaction.resetGesture()
+	}
+	m.interaction.render.connectionPreview = m.interaction.render.connectionPreview[:0]
+	m.interaction.render.connectionRaster = m.interaction.render.connectionRaster[:0]
 }
 
 func (m *Model) rebuild() error {
@@ -1095,7 +1069,7 @@ func (m *Model) renderConnectionBase() error {
 	err := m.canvas.RenderWithoutEdge(
 		canvasview.ConnectionFrame,
 		m.geo,
-		m.connectEdge,
+		m.interaction.session.connection.edge,
 	)
 	if err != nil {
 		return fmt.Errorf("render connection base: %w", err)

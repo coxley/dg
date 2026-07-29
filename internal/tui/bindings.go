@@ -112,7 +112,7 @@ func (m *Model) activeBindingScopes() []chrome.ScopeID {
 	if m.sidebar.focused {
 		return sidebarBindingScopes[:]
 	}
-	if m.mode == modeEditLabel {
+	if m.interaction.session.kind == sessionLabelEdit {
 		return labelBindingScopes[:]
 	}
 	return canvasBindingScopes[:]
@@ -172,7 +172,7 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 func (m *Model) updateMovementCommand(command chrome.CommandID) {
 	switch command {
 	case commandActivate:
-		if m.mode == modeConnect {
+		if m.interaction.mode() == modeConnect {
 			m.completeConnection()
 		} else {
 			m.beginMove()
@@ -238,7 +238,7 @@ func (m *Model) updateAppearanceCommand(command chrome.CommandID) {
 func (m *Model) updateEditCommand(command chrome.CommandID) tea.Cmd {
 	switch command {
 	case commandCopy:
-		if m.dialogs.ActiveID() == surfaceNone && m.mode == modeNavigate {
+		if m.dialogs.ActiveID() == surfaceNone && m.interaction.idle() {
 			return m.copySelection()
 		}
 	case commandDelete:

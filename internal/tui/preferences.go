@@ -232,7 +232,7 @@ func (m *Model) openPreferences() {
 	if m.dialogs.ActiveID() == surfacePreferences {
 		return
 	}
-	if m.dialogs.ActiveID() != surfaceNone || m.mode != modeNavigate {
+	if m.dialogs.ActiveID() != surfaceNone || !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
 	}
@@ -256,13 +256,13 @@ func (m *Model) beginPreferenceEdit() {
 	m.preferences.baseline.Router = m.geo.Router()
 	m.preferences.draft = m.preferences.baseline
 	m.preferences.baselineApplyToFuture = m.preferences.applyToFuture
-	m.beginTransaction()
+	m.beginTransaction(transactionPreferences)
 }
 
 func (m *Model) cancelPreferences() {
 	var err error
 	if m.preferenceEdit {
-		hadTransaction := m.transactionOpen
+		hadTransaction := m.interaction.transaction.open()
 		err = m.cancelTransaction()
 		if !hadTransaction {
 			m.geo.SetRouter(m.preferences.baseline.Router)
