@@ -14,7 +14,8 @@ const (
 	sidebarMinimumWidth   = 24
 	sidebarCanvasMinimum  = 48
 	compactWidthThreshold = 81
-	sidebarMotionInterval = 16 * time.Millisecond
+	sidebarMotionFPS      = 60
+	sidebarMotionInterval = time.Second / sidebarMotionFPS
 )
 
 type sidebarPlacement uint8
@@ -49,6 +50,7 @@ type sidebarState struct {
 
 type sidebarMotionMsg struct {
 	generation uint64
+	delta      time.Duration
 }
 
 func newSidebar(declaration sidebarDeclaration, styles sidebarStyles) sidebarState {
@@ -210,7 +212,10 @@ func (s *sidebarState) registerTargets() {
 
 func sidebarMotionTick(generation uint64) tea.Cmd {
 	return tea.Tick(sidebarMotionInterval, func(time.Time) tea.Msg {
-		return sidebarMotionMsg{generation: generation}
+		return sidebarMotionMsg{
+			generation: generation,
+			delta:      sidebarMotionInterval,
+		}
 	})
 }
 
@@ -281,7 +286,7 @@ func (m *Model) updateSidebarMotion(message sidebarMotionMsg) tea.Cmd {
 	if message.generation != m.sidebar.generation {
 		return nil
 	}
-	m.workspace.AdvanceSurface(surfaceSidebar)
+	m.workspace.AdvanceSurface(surfaceSidebar, message.delta)
 	if !m.workspace.SurfaceMoving(surfaceSidebar) {
 		return nil
 	}

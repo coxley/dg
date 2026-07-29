@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 )
 
 // SurfaceID identifies one workspace surface.
@@ -112,7 +113,7 @@ type Workspace struct {
 	capture  SurfaceID
 	opened   SurfaceID
 	plan     WorkspacePlan
-	motions  map[SurfaceID]*cellTransition
+	motions  map[SurfaceID]*scalarTransition
 	noMotion bool
 }
 
@@ -157,22 +158,28 @@ func (w *Workspace) SetSurfaces(surfaces []Surface) error {
 // RetargetSurface moves an animated surface toward extent cells.
 func (w *Workspace) RetargetSurface(id SurfaceID, extent int) bool {
 	if w.motions == nil {
-		w.motions = make(map[SurfaceID]*cellTransition)
+		w.motions = make(map[SurfaceID]*scalarTransition)
 	}
 	transition := w.motions[id]
 	if transition == nil {
-		transition = &cellTransition{}
+		transition = newScalarTransition()
 		w.motions[id] = transition
 	}
-	moving := transition.retarget(extent, w.noMotion)
-	w.arrange()
-	return moving
+	previous := transition.extent()
+	transition.retarget(extent)
+	if w.noMotion {
+		transition.snap()
+	}
+	if transition.extent() != previous {
+		w.arrange()
+	}
+	return transition.moving()
 }
 
-// AdvanceSurface advances an animated surface to its next distinct cell.
-func (w *Workspace) AdvanceSurface(id SurfaceID) bool {
+// AdvanceSurface advances an animated surface by delta.
+func (w *Workspace) AdvanceSurface(id SurfaceID, delta time.Duration) bool {
 	transition := w.motions[id]
-	if transition == nil || !transition.advance() {
+	if transition == nil || !transition.advance(delta) {
 		return false
 	}
 	w.arrange()
@@ -182,7 +189,7 @@ func (w *Workspace) AdvanceSurface(id SurfaceID) bool {
 // SurfacePosition returns an animated surface's current visible extent.
 func (w *Workspace) SurfacePosition(id SurfaceID) int {
 	if transition := w.motions[id]; transition != nil {
-		return transition.position
+		return transition.extent()
 	}
 	return 0
 }
@@ -190,7 +197,7 @@ func (w *Workspace) SurfacePosition(id SurfaceID) int {
 // SurfaceMoving reports whether an animated surface has reached its target.
 func (w *Workspace) SurfaceMoving(id SurfaceID) bool {
 	if transition := w.motions[id]; transition != nil {
-		return transition.position != transition.target
+		return transition.moving()
 	}
 	return false
 }
@@ -201,13 +208,15 @@ func (w *Workspace) SetMotionEnabled(enabled bool) {
 	if enabled {
 		return
 	}
+	changed := false
 	for _, transition := range w.motions {
-		transition.position = transition.target
-		transition.start = transition.target
-		transition.frame = 0
-		transition.frames = 0
+		previous := transition.extent()
+		transition.snap()
+		changed = changed || transition.extent() != previous
 	}
-	w.arrange()
+	if changed {
+		w.arrange()
+	}
 }
 
 // PointerBlocked reports whether a modal prevents the canvas from receiving p.

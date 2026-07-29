@@ -2,9 +2,12 @@ package chrome
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+const workspaceMotionDelta = time.Second / 60
 
 func TestWorkspaceRoutesZOrderModalAndCapture(t *testing.T) {
 	t.Parallel()
@@ -106,9 +109,14 @@ func TestWorkspaceCoordinatesAnimatedDockAndCanvasBoundary(t *testing.T) {
 	}}))
 
 	var boundaries []int
-	for workspace.AdvanceSurface("sidebar") {
+	for workspace.SurfaceMoving("sidebar") {
+		if !workspace.AdvanceSurface("sidebar", workspaceMotionDelta) {
+			continue
+		}
 		plan := workspace.Plan()
 		extent := workspace.SurfacePosition("sidebar")
+		require.GreaterOrEqual(t, extent, 0)
+		require.LessOrEqual(t, extent, sidebarWidth)
 		sidebar, ok := workspace.Surface("sidebar")
 		require.True(t, ok)
 		require.Equal(t, Rect{
@@ -135,7 +143,7 @@ func TestWorkspaceCoordinatesAnimatedDockAndCanvasBoundary(t *testing.T) {
 
 	require.True(t, workspace.RetargetSurface("sidebar", 0))
 	for workspace.SurfaceMoving("sidebar") {
-		require.True(t, workspace.AdvanceSurface("sidebar"))
+		workspace.AdvanceSurface("sidebar", workspaceMotionDelta)
 	}
 	plan := workspace.Plan()
 	sidebar, ok := workspace.Surface("sidebar")
@@ -159,7 +167,7 @@ func TestWorkspaceDrawerMovesContentAndKeepsCanvasFixed(t *testing.T) {
 		Visible:   true, Animated: true, DismissOutside: true,
 	}}))
 
-	require.True(t, workspace.AdvanceSurface("sidebar"))
+	require.True(t, workspace.AdvanceSurface("sidebar", workspaceMotionDelta))
 	plan := workspace.Plan()
 	require.Equal(t, Rect{Width: 40, Height: 12}, plan.Canvas)
 	sidebar, ok := workspace.Surface("sidebar")
@@ -179,16 +187,30 @@ func TestWorkspaceAnimatedSurfaceRetargetsReversesAndDisablesMotion(t *testing.T
 
 	var workspace Workspace
 	require.True(t, workspace.RetargetSurface("sidebar", 24))
-	require.True(t, workspace.AdvanceSurface("sidebar"))
+	plan := workspace.Plan()
+	require.False(t, workspace.AdvanceSurface("sidebar", workspaceMotionDelta/2))
+	require.Equal(t, plan, workspace.Plan())
+	require.True(t, workspace.SurfaceMoving("sidebar"))
+	require.True(t, workspace.AdvanceSurface(
+		"sidebar",
+		workspaceMotionDelta-workspaceMotionDelta/2,
+	))
 	current := workspace.SurfacePosition("sidebar")
 	require.True(t, workspace.RetargetSurface("sidebar", 16))
 	require.Equal(t, current, workspace.SurfacePosition("sidebar"))
 	require.True(t, workspace.RetargetSurface("sidebar", 0))
 	require.Equal(t, current, workspace.SurfacePosition("sidebar"))
-	require.True(t, workspace.AdvanceSurface("sidebar"))
+	for range 240 {
+		workspace.AdvanceSurface("sidebar", workspaceMotionDelta)
+		if workspace.SurfacePosition("sidebar") != current {
+			break
+		}
+	}
 	require.Less(t, workspace.SurfacePosition("sidebar"), current)
 
 	workspace.SetMotionEnabled(false)
+	require.Zero(t, workspace.SurfacePosition("sidebar"))
+	require.False(t, workspace.SurfaceMoving("sidebar"))
 	require.False(t, workspace.RetargetSurface("sidebar", 20))
 	require.Equal(t, 20, workspace.SurfacePosition("sidebar"))
 	require.False(t, workspace.SurfaceMoving("sidebar"))

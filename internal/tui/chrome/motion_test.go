@@ -6,60 +6,79 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCellTransitionOpensEaseOutAndClosesEaseIn(t *testing.T) {
+func TestScalarTransitionRetargetsWithoutLosingContinuousState(t *testing.T) {
 	t.Parallel()
 
-	var transition cellTransition
-	require.True(t, transition.retarget(12, false))
-	open := transitionPositions(&transition)
-	require.Equal(t, 12, open[len(open)-1])
-	require.Greater(t, open[0], 0)
-	require.GreaterOrEqual(t, open[1]-open[0], open[len(open)-1]-open[len(open)-2])
+	transition := newScalarTransition()
+	require.True(t, transition.retarget(26))
+	require.False(t, transition.advance(transitionStep/2))
+	require.Zero(t, transition.extent())
+	require.True(t, transition.moving())
+	require.True(t, transition.advance(transitionStep-transitionStep/2))
 
-	require.True(t, transition.retarget(0, false))
-	closePositions := transitionPositions(&transition)
-	require.Zero(t, closePositions[len(closePositions)-1])
-	require.GreaterOrEqual(
-		t,
-		closePositions[0]-closePositions[1],
-		12-closePositions[0],
-	)
+	position := transition.position
+	velocity := transition.velocity
+	extent := transition.extent()
+	require.Positive(t, position)
+	require.Positive(t, velocity)
+
+	require.True(t, transition.retarget(30))
+	require.Equal(t, position, transition.position)
+	require.Equal(t, velocity, transition.velocity)
+	require.Equal(t, extent, transition.extent())
+
+	require.True(t, transition.retarget(0))
+	require.Equal(t, position, transition.position)
+	require.Zero(t, transition.velocity)
+	require.Equal(t, extent, transition.extent())
 }
 
-func TestCellTransitionRetargetsAndReversesWithoutJumping(t *testing.T) {
+func TestScalarTransitionPublishesMonotonicCellsAndExactEndpoints(t *testing.T) {
 	t.Parallel()
 
-	var transition cellTransition
-	transition.retarget(20, false)
-	require.True(t, transition.advance())
-	require.True(t, transition.advance())
-	current := transition.position
+	transition := newScalarTransition()
+	require.True(t, transition.retarget(26))
+	open := transitionExtents(t, transition)
+	require.NotEmpty(t, open)
+	require.Equal(t, 26, open[len(open)-1])
+	require.IsNonDecreasing(t, open)
+	require.False(t, transition.moving())
+	require.Equal(t, 26.0, transition.position)
+	require.Zero(t, transition.velocity)
 
-	require.True(t, transition.retarget(0, false))
-	require.Equal(t, current, transition.position)
-	require.True(t, transition.advance())
-	require.Less(t, transition.position, current)
-
-	current = transition.position
-	require.True(t, transition.retarget(14, false))
-	require.Equal(t, current, transition.position)
-	require.True(t, transition.advance())
-	require.Greater(t, transition.position, current)
+	require.True(t, transition.retarget(0))
+	closeExtents := transitionExtents(t, transition)
+	require.NotEmpty(t, closeExtents)
+	require.Zero(t, closeExtents[len(closeExtents)-1])
+	require.IsNonIncreasing(t, closeExtents)
+	require.False(t, transition.moving())
+	require.Zero(t, transition.position)
+	require.Zero(t, transition.velocity)
 }
 
-func TestCellTransitionDisabledMotionSnapsToTarget(t *testing.T) {
+func TestScalarTransitionSnapUsesCurrentTarget(t *testing.T) {
 	t.Parallel()
 
-	var transition cellTransition
-	require.False(t, transition.retarget(18, true))
-	require.Equal(t, 18, transition.position)
-	require.False(t, transition.advance())
+	transition := newScalarTransition()
+	require.True(t, transition.retarget(18))
+	transition.snap()
+	require.Equal(t, 18, transition.extent())
+	require.False(t, transition.moving())
+	require.False(t, transition.advance(transitionStep))
 }
 
-func transitionPositions(transition *cellTransition) []int {
-	var positions []int
-	for transition.advance() {
-		positions = append(positions, transition.position)
+func transitionExtents(t testing.TB, transition *scalarTransition) []int {
+	t.Helper()
+
+	var extents []int
+	for range 240 {
+		if transition.advance(transitionStep) {
+			extents = append(extents, transition.extent())
+		}
+		if !transition.moving() {
+			return extents
+		}
 	}
-	return positions
+	t.Fatal("transition did not settle")
+	return nil
 }

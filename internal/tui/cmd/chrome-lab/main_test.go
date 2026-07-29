@@ -190,7 +190,7 @@ func TestLabSidebarExercisesPlacementMotionAndFocus(t *testing.T) {
 	require.NotNil(t, command)
 	require.True(t, model.sidebarFocused)
 
-	updateLabCommand(t, model, labMotionMsg{generation: model.motionGeneration})
+	updateLabCommand(t, model, labMotionMessage(model))
 	current := model.workspace.SurfacePosition(labSidebar)
 	require.Positive(t, current)
 	updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Text: "r"}))
@@ -222,7 +222,14 @@ func TestLabSidebarExercisesPlacementMotionAndFocus(t *testing.T) {
 func advanceLabSidebar(t testing.TB, model *labModel) {
 	t.Helper()
 	for model.workspace.SurfaceMoving(labSidebar) {
-		updateLabCommand(t, model, labMotionMsg{generation: model.motionGeneration})
+		updateLabCommand(t, model, labMotionMessage(model))
+	}
+}
+
+func labMotionMessage(model *labModel) labMotionMsg {
+	return labMotionMsg{
+		generation: model.motionGeneration,
+		delta:      labMotionInterval,
 	}
 }
 

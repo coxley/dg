@@ -16,29 +16,31 @@ import (
 )
 
 const (
-	scenarioLayout   = "layout"
-	scenarioPane     = "pane"
-	scenarioViewport = "viewport"
-	scenarioMenu     = "menu"
-	scenarioDensity  = "density"
-	scenarioOverflow = "overflow"
-	scenarioFocus    = "focus"
-	scenarioSurfaces = "surfaces"
-	scenarioForms    = "forms"
-	scenarioDialogs  = "dialogs"
-	scenarioSidebar  = "sidebar"
-	labSurfaceHelp   = chrome.SurfaceID("help")
-	labSurfaceModal  = chrome.SurfaceID("modal")
-	labDialogSave    = chrome.SurfaceID("dialog.save")
-	labDialogExport  = chrome.SurfaceID("dialog.export")
-	labDialogNotice  = chrome.SurfaceID("dialog.notice")
-	labDialogConfirm = chrome.SurfaceID("dialog.confirm")
-	labSidebar       = chrome.SurfaceID("sidebar")
-	labFormNumber    = chrome.ID("form-number")
-	labFormProfile   = chrome.ID("form-profile")
-	labFormDirectory = chrome.ID("form-directory")
-	labFormName      = chrome.ID("form-name")
-	labKeyBack       = "esc"
+	scenarioLayout    = "layout"
+	scenarioPane      = "pane"
+	scenarioViewport  = "viewport"
+	scenarioMenu      = "menu"
+	scenarioDensity   = "density"
+	scenarioOverflow  = "overflow"
+	scenarioFocus     = "focus"
+	scenarioSurfaces  = "surfaces"
+	scenarioForms     = "forms"
+	scenarioDialogs   = "dialogs"
+	scenarioSidebar   = "sidebar"
+	labSurfaceHelp    = chrome.SurfaceID("help")
+	labSurfaceModal   = chrome.SurfaceID("modal")
+	labDialogSave     = chrome.SurfaceID("dialog.save")
+	labDialogExport   = chrome.SurfaceID("dialog.export")
+	labDialogNotice   = chrome.SurfaceID("dialog.notice")
+	labDialogConfirm  = chrome.SurfaceID("dialog.confirm")
+	labSidebar        = chrome.SurfaceID("sidebar")
+	labFormNumber     = chrome.ID("form-number")
+	labFormProfile    = chrome.ID("form-profile")
+	labFormDirectory  = chrome.ID("form-directory")
+	labFormName       = chrome.ID("form-name")
+	labKeyBack        = "esc"
+	labMotionFPS      = 60
+	labMotionInterval = time.Second / labMotionFPS
 )
 
 var scenarioNames = [...]string{
@@ -94,6 +96,7 @@ type labModel struct {
 
 type labMotionMsg struct {
 	generation uint64
+	delta      time.Duration
 }
 
 func newLabModel(scenario string) *labModel {
@@ -282,7 +285,7 @@ func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.generation != m.motionGeneration {
 			return m, nil
 		}
-		m.workspace.AdvanceSurface(labSidebar)
+		m.workspace.AdvanceSurface(labSidebar, message.delta)
 		m.reflow()
 		if m.workspace.SurfaceMoving(labSidebar) {
 			return m, labMotionTick(message.generation)
@@ -402,8 +405,11 @@ func (m *labModel) retargetLabSidebar() tea.Cmd {
 }
 
 func labMotionTick(generation uint64) tea.Cmd {
-	return tea.Tick(16*time.Millisecond, func(time.Time) tea.Msg {
-		return labMotionMsg{generation: generation}
+	return tea.Tick(labMotionInterval, func(time.Time) tea.Msg {
+		return labMotionMsg{
+			generation: generation,
+			delta:      labMotionInterval,
+		}
 	})
 }
 

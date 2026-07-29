@@ -93,7 +93,7 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 
 	var boundaries []int
 	for model.workspace.SurfaceMoving(surfaceSidebar) {
-		updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
+		updateModelCommand(t, model, sidebarMotionMessage(model))
 		geometry := model.workspace.Geometry()
 		position := model.workspace.SurfacePosition(surfaceSidebar)
 		sidebar, ok := model.surfacePlan(surfaceSidebar)
@@ -157,7 +157,7 @@ func TestDockedSidebarKeepsNavigationWorkspaceAnchoredAtMinimumWidth(t *testing.
 	updateModelCommand(t, model, sidebarKey())
 
 	for model.workspace.SurfaceMoving(surfaceSidebar) {
-		updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
+		updateModelCommand(t, model, sidebarMotionMessage(model))
 		navigation, ok := model.surfacePlan(surfaceNavigation)
 		require.True(t, ok)
 		require.Equal(t, want, navigation.Rect)
@@ -180,7 +180,7 @@ func TestSidebarRetargetsAcrossResizeAndReversesFromCurrentCell(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	updateModelCommand(t, model, sidebarKey())
-	updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
+	updateModelCommand(t, model, sidebarMotionMessage(model))
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	_, focused := model.sidebar.focus.Current()
 	current := model.workspace.SurfacePosition(surfaceSidebar)
@@ -206,13 +206,12 @@ func TestSidebarRetargetsAcrossResizeAndReversesFromCurrentCell(t *testing.T) {
 	require.Equal(t, current, dock.Rect.Width)
 
 	updateModelCommand(t, model, sidebarKey())
-	updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
-	closing := model.workspace.SurfacePosition(surfaceSidebar)
+	closing := advanceSidebarUntilExtentChanges(t, model, current)
 	require.Less(t, closing, current)
 	updateModelCommand(t, model, sidebarKey())
 	require.Equal(t, closing, model.workspace.SurfacePosition(surfaceSidebar))
-	updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
-	require.Greater(t, model.workspace.SurfacePosition(surfaceSidebar), closing)
+	opening := advanceSidebarUntilExtentChanges(t, model, closing)
+	require.Greater(t, opening, closing)
 }
 
 func TestSidebarDisabledMotionSnapsWithoutChangingPlacementPolicy(t *testing.T) {
@@ -267,6 +266,29 @@ func sidebarKey() tea.KeyPressMsg {
 func advanceSidebar(t testing.TB, model *Model) {
 	t.Helper()
 	for model.workspace.SurfaceMoving(surfaceSidebar) {
-		updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
+		updateModelCommand(t, model, sidebarMotionMessage(model))
 	}
+}
+
+func sidebarMotionMessage(model *Model) sidebarMotionMsg {
+	return sidebarMotionMsg{
+		generation: model.sidebar.generation,
+		delta:      sidebarMotionInterval,
+	}
+}
+
+func advanceSidebarUntilExtentChanges(
+	t testing.TB,
+	model *Model,
+	previous int,
+) int {
+	t.Helper()
+	for range 120 {
+		updateModelCommand(t, model, sidebarMotionMessage(model))
+		if extent := model.workspace.SurfacePosition(surfaceSidebar); extent != previous {
+			return extent
+		}
+	}
+	t.Fatal("sidebar extent did not change")
+	return previous
 }
