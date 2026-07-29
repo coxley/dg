@@ -2,7 +2,7 @@
 
 - Status: active
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 7 complete; Phase 8 not started
+- Current phase: Phase 8 complete; Phase 9 not started
 - Last updated: 2026-07-28
 
 This document is the execution record for making the TUI chrome declarative.
@@ -523,7 +523,7 @@ review, and integration gate before beginning the next phase.
 | 5. Commands and focus | Complete | Effective binding matrix matches dispatch |
 | 6. Surfaces and contextual Help | Complete | One z-order/input router owns active surfaces |
 | 7. Declarative Preferences | Complete | No rendered-text geometry recovery remains |
-| 8. Existing modal migration | Not started | Root modal-type input switches are removed |
+| 8. Existing modal migration | Complete | Root modal-type input switches are removed |
 | 9. Adaptive sidebar and motion | Not started | Dock/drawer transition invariants pass |
 | 10. Remaining forms and cleanup | Not started | Superseded paths are audited and minimized |
 
@@ -667,16 +667,16 @@ Do not add scrolling, forms, surfaces, or animation in this phase.
 
 ### Phase 8: existing modal migration
 
-- [ ] Express the current Save, Export, and Notice surfaces through the surface
+- [x] Express the current Save, Export, and Notice surfaces through the surface
   manager.
-- [ ] Provide a reusable confirmation-dialog shell without adding unsaved-close
+- [x] Provide a reusable confirmation-dialog shell without adding unsaved-close
   business behavior in this phase.
-- [ ] Make floating/full-screen selection fit-driven.
-- [ ] Preserve movable and resizable modal behavior.
-- [ ] Route pointer and keyboard messages through active surface scopes.
-- [ ] Remove the root modal enum branches that duplicate surface behavior.
-- [ ] Keep application transactions and persistence in `internal/tui`.
-- [ ] Extend the chrome lab and `ht` smoke with current dialog lifecycle
+- [x] Make floating/full-screen selection fit-driven.
+- [x] Preserve movable and resizable modal behavior.
+- [x] Route pointer and keyboard messages through active surface scopes.
+- [x] Remove the root modal enum branches that duplicate surface behavior.
+- [x] Keep application transactions and persistence in `internal/tui`.
+- [x] Extend the chrome lab and `ht` smoke with current dialog lifecycle
   scenarios.
 
 ### Phase 9: adaptive sidebar and coordinated motion
@@ -813,6 +813,9 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Represent forms as application declarations backed by one retained `chrome.FormPlan`. | Semantic field, spacer, action-bar, and action IDs now drive rendering, input, focus, accessibility, and diagnostics without recovering geometry from rendered text. |
 | 2026-07-28 | Keep Huh only as a bounded Preferences directory-picker adapter through Phase 7. | Replacing filesystem navigation would materially enlarge the preference migration; all ordinary fields, actions, sizing, and traversal now use chrome controls. |
 | 2026-07-28 | Persist Auto, Mac, and Standard key profiles and apply edits live. | The resolver updates with the form value, Cancel restores the original projection, and Save writes the selected profile. |
+| 2026-07-28 | Use one application-owned dialog-spec table keyed by distinct workspace surface IDs. | Preferences, Save, Export, and Notice now declare context, scopes, sizing, dismissal, content routing, and close behavior once; root no longer maintains a parallel modal enum or type switches. |
+| 2026-07-28 | Select floating versus fullscreen placement solely from available fit. | Content floats when its shell fits below avoided rows and fills the terminal otherwise; the same rule covers every current dialog. |
+| 2026-07-28 | Build confirmation as a semantic modal body without close policy. | The reusable body owns prompt layout, accessible text, and confirm/cancel action IDs while future unsaved-document decisions remain application behavior. |
 
 ## Changed-File Ledger
 
@@ -828,6 +831,7 @@ Update this table after each completed phase or reviewable slice.
 | 5 | `internal/tui/chrome/{command,focus}.go`, matching tests, `internal/tui/bindings.go`, `internal/tui/model.go`, chrome-lab files, `internal/tui/CHROME_PLAN.md` | Add semantic command/profile resolution, focus scopes and restoration, root declarations, and focus/profile/paste lab scenarios. |
 | 6 | `internal/tui/chrome/{surface.go,surface_test.go}`, `internal/tui/{bindings,help,modal,model,model_test,mouse,preferences,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add one surface/workspace router, transparent canvas host and footer, contextual passive Help, legacy Preferences adaptation, and surface lab scenarios. |
 | 7 | `internal/tui/chrome/{AGENTS.md,form.go,form_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, deleted `internal/tui/preferences/{actions.go,row.go}`, `internal/tui/{modal.go,model_test.go,preferences.go,theme.go}`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add retained declarative forms, migrate Preferences and persisted key profiles, bound the remaining Huh picker, remove rendered-text geometry recovery, and add form/picker lab coverage. |
+| 8 | `internal/tui/modal/{AGENTS.md,confirmation.go,confirmation_test.go,modal.go,modal_test.go}`, `internal/tui/{bindings,clipboard_test,modal,model,model_test,preferences,save,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Replace the modal enum with declarative dialog specs and distinct surfaces, add fit-driven placement and a reusable confirmation body, preserve application transactions, and cover current dialog lifecycles. |
 
 ## Verification Ledger
 
@@ -906,3 +910,12 @@ passing command without preserving the investigated failure.
 | 2026-07-28 | 7 | `dd-gopls check <all changed Phase 7 Go files>` | Passed with no diagnostics. |
 | 2026-07-28 | 7 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues after the lint fixes. |
 | 2026-07-28 | 7 | Post-fix `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed all three terminal sizes after extracting lab key handling. |
+| 2026-07-28 | 8 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/modal ./internal/tui/cmd/chrome-lab ./internal/tui` | Passed confirmation, fit selection, distinct surface, scope, movement, resizing, lifecycle, and root integration tests. |
+| 2026-07-28 | 8 | First dialog-lifecycle `./internal/tui/cmd/chrome-lab/smoke.sh` | Reached the notice state correctly; the harness then expected Notice to remain open after Escape. Corrected the wait target to distinguish outside-click preservation from Back dismissal. |
+| 2026-07-28 | 8 | Final `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed Save, Export, Notice, confirmation, outside-click policy, Back, forms, surfaces, and all prior scenarios at all three sizes. |
+| 2026-07-28 | 8 | First root Save/Export `ht` sweep | Save opened correctly, but the harness expected `File name` while the active bounded file picker intentionally showed only `Directory`. Removed the stale assertion. |
+| 2026-07-28 | 8 | Final root `ht` Save/Export sweep at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, Save open/Back, selected-node double-copy Export open/Back, option content, fit, and hidden cursor; all sessions stopped and removed. |
+| 2026-07-28 | 8 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: AltDrag 45,959 ns/op, 10,920 B/op, 9 allocs/op; MoveCommittedDuplicate 46,094 ns/op, 10,985 B/op, 13 allocs/op; MoveAndView 4,774 ns/op, 4,728 B/op, 10 allocs/op. |
+| 2026-07-28 | 8 | First full test, race, vet, and lint gate | Tests, race, and vet passed. Lint reported repeated semantic strings, two preallocations, and one switch simplification. Reused typed IDs, preallocated retained slices, and simplified the command branch. |
+| 2026-07-28 | 8 | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-28 | 8 | `dd-gopls check <all changed Phase 8 Go files>` | Passed with no diagnostics. |

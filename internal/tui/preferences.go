@@ -106,16 +106,16 @@ func (m *Model) openHelp() {
 }
 
 func (m *Model) openPreferences() {
-	if m.modal == modalPreferences {
+	if m.activeDialog == surfacePreferences {
 		return
 	}
-	if m.modal != modalNone || m.mode != modeNavigate {
+	if m.activeDialog != surfaceNone || m.mode != modeNavigate {
 		m.setError(finishOperation)
 		return
 	}
 	m.resetPreferenceForm()
 	m.beginPreferenceEdit()
-	m.openModal(modalPreferences)
+	m.openDialog(surfacePreferences)
 	m.syncWorkspace()
 }
 
@@ -131,42 +131,6 @@ func (m *Model) beginPreferenceEdit() {
 	m.preferences.originalCommentPrefix = m.preferences.commentPrefix
 	m.preferences.originalKeyProfile = m.preferences.keyProfile
 	m.beginTransaction()
-}
-
-func (m *Model) updateModal(message tea.KeyPressMsg) tea.Cmd {
-	key := message.Key()
-	switch m.modal {
-	case modalNone:
-		return nil
-	case modalPreferences:
-		if key.Code == tea.KeyEscape || key.Code == 'q' && key.Mod == 0 {
-			if m.preferenceForm.DirectoryOpen() {
-				return m.updateSettingsTabs(message)
-			}
-			m.closeSettingsModal()
-			return nil
-		}
-	case modalExport:
-		if key.Code == tea.KeyEscape {
-			m.modal = modalNone
-			m.clipboard.CancelExport()
-			return nil
-		}
-		return m.updateClipboard(message)
-	case modalSave:
-		if key.Code == tea.KeyEscape {
-			m.closeSaveForm()
-			return nil
-		}
-		if key.Code == 's' && key.Mod == tea.ModCtrl {
-			m.commitSaveForm()
-			return nil
-		}
-		return m.updateSaveForm(message)
-	case modalNotice:
-		return nil
-	}
-	return m.updateSettingsTabs(message)
 }
 
 func (m *Model) closeSettingsModal() {
@@ -187,7 +151,7 @@ func (m *Model) closeSettingsModal() {
 		err = errors.Join(err, m.render())
 	}
 	m.preferenceEdit = false
-	m.modal = modalNone
+	m.activeDialog = surfaceNone
 	if err != nil {
 		m.setError(err.Error())
 	}
@@ -223,11 +187,11 @@ func (m *Model) applyPreferences(saveDefaults bool) tea.Cmd {
 	}
 	if err != nil {
 		m.setError("save preferences: " + err.Error())
-		m.modal = modalNone
+		m.activeDialog = surfaceNone
 		return nil
 	}
 	m.status = ""
-	return m.showNotice("Preferences saved", modalNone)
+	return m.showNotice("Preferences saved", surfaceNone)
 }
 
 func (m *Model) resetPreferenceForm() {
@@ -247,7 +211,7 @@ func (m *Model) resetPreferenceForm() {
 }
 
 func (m *Model) updateSettingsTabs(message tea.Msg) tea.Cmd {
-	if m.modal != modalPreferences {
+	if m.activeDialog != surfacePreferences {
 		return nil
 	}
 	form, command := m.preferenceForm.Update(message)

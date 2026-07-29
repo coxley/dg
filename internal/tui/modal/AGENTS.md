@@ -2,14 +2,16 @@
 
 ## Responsibility
 
-`modal` owns the movable and resizable modal shell, container and tab styles,
-cell geometry, positioning, pointer state, outside-click detection, and
-optional tabs.
+`modal` owns the movable and resizable dialog shell, container and tab styles,
+cell geometry, positioning, pointer state, outside-click detection, optional
+tabs, and the reusable declarative confirmation body.
 
 ## Boundaries
 
 - Parent models provide body content and preferred dimensions through
   `Configure`.
+- Root dialog specs and workspace surfaces own application identity, scope,
+  dismissal policy, and body routing.
 - Tab IDs carry identity only; this package has no knowledge of help,
   preferences, save, or export semantics.
 - State transitions cross component boundaries through `tea.Msg` and
@@ -20,6 +22,10 @@ optional tabs.
 - Resize preserves the pointer-to-corner offset and clamps to the terminal.
 - Resized content must fit the reported body dimensions so the outer border
   remains present in the composed terminal frame.
+- Natural content floats whenever it fits below avoided rows; otherwise the
+  shell fills the terminal.
+- `Confirmation` emits semantic chrome action IDs and contains no close or
+  unsaved-document policy.
 
 ## Verification
 

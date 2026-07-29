@@ -242,6 +242,11 @@ func (m Model) Resizing() bool {
 	return m.resize.active
 }
 
+// Fullscreen reports whether content fit selected terminal-filling placement.
+func (m Model) Fullscreen() bool {
+	return m.fullscreen
+}
+
 // CapturesPointer reports whether the modal owns the current pointer gesture.
 func (m Model) CapturesPointer() bool {
 	return m.dragPending || m.dragging ||
@@ -344,8 +349,7 @@ func (m *Model) layout() {
 		MaxHeight(height)
 	rendered := style.Render(content)
 	width, height := lipgloss.Width(rendered), lipgloss.Height(rendered)
-	m.fullscreen = !m.resized && lipgloss.Height(content) > 3 &&
-		height+m.avoidTop > m.screenHeight
+	m.fullscreen = !m.resized && height+m.avoidTop > m.screenHeight
 	if m.fullscreen {
 		style = style.
 			Width(m.screenWidth).

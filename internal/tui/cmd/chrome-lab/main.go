@@ -24,8 +24,13 @@ const (
 	scenarioFocus    = "focus"
 	scenarioSurfaces = "surfaces"
 	scenarioForms    = "forms"
+	scenarioDialogs  = "dialogs"
 	labSurfaceHelp   = chrome.SurfaceID("help")
 	labSurfaceModal  = chrome.SurfaceID("modal")
+	labDialogSave    = chrome.SurfaceID("dialog.save")
+	labDialogExport  = chrome.SurfaceID("dialog.export")
+	labDialogNotice  = chrome.SurfaceID("dialog.notice")
+	labDialogConfirm = chrome.SurfaceID("dialog.confirm")
 	labFormNumber    = chrome.ID("form-number")
 	labFormProfile   = chrome.ID("form-profile")
 	labFormDirectory = chrome.ID("form-directory")
@@ -41,6 +46,7 @@ var scenarioNames = [...]string{
 	scenarioFocus,
 	scenarioSurfaces,
 	scenarioForms,
+	scenarioDialogs,
 }
 
 type labModel struct {
@@ -70,6 +76,7 @@ type labModel struct {
 	formAction      string
 	formStep        uint64
 	formProfile     string
+	activeDialog    chrome.SurfaceID
 }
 
 func newLabModel(scenario string) *labModel {
@@ -174,6 +181,8 @@ func abbreviatedScenario(name string) string {
 		return "Surf"
 	case scenarioForms:
 		return "Form"
+	case scenarioDialogs:
+		return "Dialogs"
 	default:
 		return strings.ToUpper(name[:1]) + name[1:]
 	}
@@ -186,6 +195,9 @@ func (m *labModel) Init() tea.Cmd {
 func (m *labModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, command := m.updateFormScenario(message); handled {
 		return m, command
+	}
+	if m.updateDialogScenario(message) {
+		return m, nil
 	}
 	if m.updateSurfaceScenario(message) {
 		return m, nil
@@ -271,6 +283,8 @@ func (m *labModel) updateKey(message tea.KeyPressMsg) tea.Cmd {
 			m.density = chrome.Regular
 		}
 		m.reflow()
+	case "0":
+		m.selectScenario(len(scenarioNames) - 1)
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		index, err := strconv.Atoi(message.String())
 		if err == nil {
@@ -307,7 +321,7 @@ func (m *labModel) updateFormScenario(message tea.Msg) (bool, tea.Cmd) {
 			}
 			return true, nil
 		}
-		if strings.Contains("123456789", message.String()) ||
+		if strings.Contains("0123456789", message.String()) ||
 			message.String() == "d" || message.String() == "q" ||
 			message.String() == "ctrl+c" {
 			return false, nil
@@ -325,6 +339,43 @@ func (m *labModel) updateFormScenario(message tea.Msg) (bool, tea.Cmd) {
 func (m *labModel) syncFormContext() {
 	m.formStep, _ = m.form.Number(labFormNumber)
 	m.formProfile, _ = m.form.Selected(labFormProfile)
+}
+
+func (m *labModel) updateDialogScenario(message tea.Msg) bool {
+	if scenarioNames[m.scenario] != scenarioDialogs {
+		return false
+	}
+	switch message := message.(type) {
+	case tea.KeyPressMsg:
+		switch message.String() {
+		case "s":
+			m.activeDialog = labDialogSave
+		case "e":
+			m.activeDialog = labDialogExport
+		case "n":
+			m.activeDialog = labDialogNotice
+		case "c":
+			m.activeDialog = labDialogConfirm
+		case "esc":
+			id, ok := m.workspace.Back()
+			if ok && id == m.activeDialog {
+				m.activeDialog = ""
+			}
+		default:
+			return false
+		}
+		m.reflow()
+		return true
+	case tea.MouseClickMsg:
+		point := chrome.Point{X: message.X, Y: message.Y}
+		if id, ok := m.workspace.DismissAt(point); ok && id == m.activeDialog {
+			m.activeDialog = ""
+			m.reflow()
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *labModel) updateSurfaceScenario(message tea.Msg) bool {
@@ -447,6 +498,10 @@ func (m *labModel) reflow() {
 			Priority: 2, Visible: m.modalVisible,
 			DismissOutside: true, DismissBack: true, FocusOnOpen: true,
 		},
+		m.labDialogSurface(labDialogSave, true),
+		m.labDialogSurface(labDialogExport, true),
+		m.labDialogSurface(labDialogNotice, false),
+		m.labDialogSurface(labDialogConfirm, true),
 	}); err != nil {
 		panic(err)
 	}
@@ -492,6 +547,32 @@ func (m *labModel) reflow() {
 	m.refreshDiagnostics()
 }
 
+func (m *labModel) labDialogSurface(
+	id chrome.SurfaceID,
+	dismissOutside bool,
+) chrome.Surface {
+	size := chrome.Size{Width: 40, Height: 6}
+	switch id {
+	case labDialogSave:
+		size = chrome.Size{Width: 64, Height: 14}
+	case labDialogExport:
+		size = chrome.Size{Width: 50, Height: 7}
+	case labDialogNotice:
+		size = chrome.Size{Width: 28, Height: 3}
+	case labDialogConfirm:
+	}
+	width, height := min(size.Width, m.width), min(size.Height, m.height)
+	return chrome.Surface{
+		ID: id, Role: chrome.SurfaceModal, Anchor: chrome.AnchorTerminal,
+		Requested: chrome.Rect{
+			X: (m.width - width) / 2, Y: (m.height - height) / 2,
+			Width: width, Height: height,
+		},
+		Priority: 3, Visible: m.activeDialog == id,
+		DismissOutside: dismissOutside, DismissBack: true, FocusOnOpen: true,
+	}
+}
+
 func (m *labModel) refreshDiagnostics() {
 	density := "regular"
 	if m.density == chrome.Compact {
@@ -522,6 +603,17 @@ func (m *labModel) refreshDiagnostics() {
 			lines = append(lines, "form-action: "+m.formAction)
 		}
 	}
+	if scenarioNames[m.scenario] == scenarioDialogs {
+		dialog := "none"
+		if m.activeDialog != "" {
+			dialog = string(m.activeDialog)
+		}
+		lines = append(
+			lines,
+			"active-dialog: "+dialog,
+			"dialog-scope: modal/global",
+		)
+	}
 	lines = append(
 		lines,
 		"pointer-capture: "+capture,
@@ -534,7 +626,7 @@ func (m *labModel) refreshDiagnostics() {
 		formatRect("rect.canvas", workspacePlan.Canvas),
 		formatRect("rect.body", contentPlan.Content),
 		"animation: unavailable (phase 9)",
-		"bindings: 1-9/tab scenario",
+		"bindings: 1-9/0/tab scenario",
 		"bindings: d density; q quit",
 	)
 	m.diagnostics.SetContent(lines)
@@ -651,6 +743,21 @@ func (m *labModel) scenarioContent() []string {
 			}
 		}
 		return strings.Split(m.form.View().Content, "\n")
+	case scenarioDialogs:
+		dialog := "closed"
+		if m.activeDialog != "" {
+			dialog = string(m.activeDialog)
+		}
+		lines := []string{
+			"Declarative dialog lifecycle",
+			"dialog: " + dialog,
+			"s save; e export; n notice; c confirm",
+			"esc Back; outside click when allowed",
+		}
+		if surface, ok := m.workspace.Surface(m.activeDialog); ok {
+			lines = append(lines, formatRect("dialog.rect", surface.Rect))
+		}
+		return lines
 	default:
 		return nil
 	}

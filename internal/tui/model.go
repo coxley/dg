@@ -21,10 +21,7 @@ import (
 
 type mode uint8
 
-type (
-	resizeCorner uint8
-	modal        uint8
-)
+type resizeCorner uint8
 
 const (
 	modeNavigate mode = iota
@@ -32,14 +29,6 @@ const (
 	modeEditLabel
 	modeConnect
 	modeRectangle
-)
-
-const (
-	modalNone modal = iota
-	modalPreferences
-	modalSave
-	modalExport
-	modalNotice
 )
 
 const (
@@ -105,7 +94,7 @@ type Model struct {
 	workspace         chrome.Workspace
 
 	mode             mode
-	modal            modal
+	activeDialog     chrome.SurfaceID
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
@@ -145,7 +134,7 @@ type Model struct {
 	saveName      string
 	notice        string
 	noticeID      uint64
-	noticeReturn  modal
+	noticeReturn  chrome.SurfaceID
 
 	preferences    preferenceState
 	preferenceEdit bool
@@ -242,9 +231,9 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	syncWorkspace := m.helpInspector.visible || m.modal != modalNone
+	syncWorkspace := m.helpInspector.visible || m.activeDialog != surfaceNone
 	defer func() {
-		if syncWorkspace || m.helpInspector.visible || m.modal != modalNone {
+		if syncWorkspace || m.helpInspector.visible || m.activeDialog != surfaceNone {
 			m.syncWorkspace()
 		}
 	}()
@@ -291,14 +280,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.updateKey(message)
 	case tea.PasteMsg:
-		switch {
-		case m.modal == modalSave:
-			return m, m.updateSaveForm(message)
-		case m.modal == modalPreferences:
-			return m, m.updateSettingsTabs(message)
-		case m.mode == modeEditLabel:
+		if m.activeDialog != surfaceNone {
+			return m, m.updateDialog(message)
+		}
+		if m.mode == modeEditLabel {
 			m.insertLabelText(message.Content)
-		default:
 		}
 	case tea.MouseClickMsg:
 		m.clipboard.CancelPending()
@@ -320,9 +306,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case clipboardview.UpdateMsg:
 		return m, m.updateClipboard(message)
 	case noticeExpiredMsg:
-		if m.modal == modalNotice && message.id == m.noticeID {
-			m.modal = m.noticeReturn
-			m.dismissNotice()
+		if m.activeDialog == surfaceNotice && message.id == m.noticeID {
+			closeNoticeDialog(m)
 		}
 	}
 	return m, nil
@@ -342,17 +327,17 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 		}
 		return nil, true
 	case modalview.CloseMsg:
-		m.closeModal()
+		m.closeDialog()
 		return nil, true
 	case clipboardview.OpenExportMsg:
-		m.openModal(modalExport)
+		m.openDialog(surfaceExport)
 		m.status = ""
 		return nil, true
 	case clipboardview.CloseExportMsg:
-		m.modal = modalNone
+		closeExportDialog(m)
 		return nil, true
 	case clipboardview.CopiedMsg:
-		return m.showNotice("Copied to clipboard", modalNone), true
+		return m.showNotice("Copied to clipboard", surfaceNone), true
 	case clipboardview.ErrorMsg:
 		m.setError("copy selection: " + message.Err.Error())
 		return nil, true
@@ -363,7 +348,7 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 
 func (m *Model) updateComponent(message componentMsg) tea.Cmd {
 	switch {
-	case message.kind == saveComponent && m.modal == modalSave:
+	case message.kind == saveComponent && m.activeDialog == surfaceSave:
 		return m.updateSaveForm(message.message)
 	default:
 		return nil
@@ -377,24 +362,23 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	key := message.Key()
 	copyKey := isCopyKey(message)
-	if m.modal == modalNotice {
+	if spec, ok := m.activeDialogSpec(); ok && spec.DismissAnyKey {
 		returnModal := m.noticeReturn
-		m.dismissNotice()
-		m.modal = returnModal
-		if !copyKey || returnModal != modalNone {
+		closeNoticeDialog(m)
+		if !copyKey || returnModal != surfaceNone {
 			return nil
 		}
 	}
 	if !copyKey && !isModifierKey(message) {
 		m.clipboard.CancelPending()
 	}
-	if copyKey && m.modal == modalNone && m.mode == modeNavigate {
+	if copyKey && m.activeDialog == surfaceNone && m.mode == modeNavigate {
 		return m.copySelection()
 	}
 	m.hasLastClick = false
 	switch {
-	case m.modal != modalNone:
-		return m.updateModal(message)
+	case m.activeDialog != surfaceNone:
+		return m.updateDialog(message)
 	case key.Code == 's' && key.Mod == tea.ModCtrl:
 		m.requestSave()
 	case m.mode == modeEditLabel:
@@ -412,12 +396,12 @@ type noticeExpiredMsg struct {
 	id uint64
 }
 
-func (m *Model) showNotice(text string, returnTo modal) tea.Cmd {
+func (m *Model) showNotice(text string, returnTo chrome.SurfaceID) tea.Cmd {
 	m.noticeID++
 	id := m.noticeID
 	m.notice = text
 	m.noticeReturn = returnTo
-	m.openModal(modalNotice)
+	m.openDialog(surfaceNotice)
 	return tea.Tick(noticeDuration, func(time.Time) tea.Msg {
 		return noticeExpiredMsg{id: id}
 	})
@@ -425,7 +409,7 @@ func (m *Model) showNotice(text string, returnTo modal) tea.Cmd {
 
 func (m *Model) dismissNotice() {
 	m.notice = ""
-	m.noticeReturn = modalNone
+	m.noticeReturn = surfaceNone
 }
 
 func (m *Model) setError(text string) {

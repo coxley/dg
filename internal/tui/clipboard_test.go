@@ -60,7 +60,7 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 		"│ node │",
 		"└──────┘",
 	}, "\n"), copied)
-	require.Equal(t, modalNotice, model.modal)
+	require.Equal(t, surfaceNotice, model.activeDialog)
 	require.Equal(t, "Copied to clipboard", model.notice)
 }
 
@@ -114,7 +114,7 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 					require.NotNil(t, command)
 					updateModel(t, model, command())
 
-					require.Equal(t, modalExport, model.modal)
+					require.Equal(t, surfaceExport, model.activeDialog)
 					require.Equal(
 						t,
 						clipboardview.LineSlash,
@@ -132,7 +132,7 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 						t,
 						updateModelCommand(t, model, stale),
 					)
-					require.Equal(t, modalExport, model.modal)
+					require.Equal(t, surfaceExport, model.activeDialog)
 				})
 			})
 		}

@@ -115,6 +115,36 @@ func TestLabFormsExposeLiveContextAndNestedPicker(t *testing.T) {
 	require.Contains(t, model.View().Content, "Save directory")
 }
 
+func TestLabDialogsExerciseLifecycleAndDismissalPolicy(t *testing.T) {
+	t.Parallel()
+
+	model := newLabModel(scenarioDialogs)
+	updateLab(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Text: "s"}))
+	require.Equal(t, labDialogSave, model.activeDialog)
+	require.Contains(t, model.View().Content, "dialog.save")
+
+	updateLab(t, model, tea.MouseClickMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseLeft,
+	})
+	require.Empty(t, model.activeDialog)
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Text: "n"}))
+	updateLab(t, model, tea.MouseClickMsg{
+		X:      0,
+		Y:      0,
+		Button: tea.MouseLeft,
+	})
+	require.Equal(t, labDialogNotice, model.activeDialog)
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}))
+	require.Empty(t, model.activeDialog)
+
+	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: 'c', Text: "c"}))
+	require.Equal(t, labDialogConfirm, model.activeDialog)
+}
+
 func updateLab(t testing.TB, model *labModel, message tea.Msg) {
 	t.Helper()
 	next, _ := model.Update(message)

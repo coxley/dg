@@ -69,13 +69,21 @@ for size in 100x30 80x16 80x12; do
   ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
   ht send --wait-text "NESTED DIRECTORY PICKER" --timeout 5s "$session" "<Enter>" >/dev/null
   ht send --wait-text "Save directory" --timeout 5s "$session" "q" >/dev/null
+  ht send --wait-text "scenario: dialogs" --timeout 5s "$session" "0" >/dev/null
+  ht send --wait-text "dialog: dialog.save" --timeout 5s "$session" "s" >/dev/null
+  ht send --wait-text "dialog: closed" --timeout 5s "$session" "<Esc>" >/dev/null
+  ht send --wait-text "dialog: dialog.notice" --timeout 5s "$session" "n" >/dev/null
+  ht send --raw --wait-text "dialog: dialog.notice" --timeout 5s \
+    "$session" "$outside_press" >/dev/null
+  ht send --wait-text "dialog: closed" --timeout 5s "$session" "<Esc>" >/dev/null
+  ht send --wait-text "dialog: dialog.confirm" --timeout 5s "$session" "c" >/dev/null
 
   snapshot="$(ht view --json "$session")"
   grep -q "\"cols\": ${size%x*}" <<<"$snapshot"
   grep -q "\"rows\": ${size#*x}" <<<"$snapshot"
-  grep -q "scenario: forms" <<<"$snapshot"
+  grep -q "scenario: dialogs" <<<"$snapshot"
   grep -q "density: compact" <<<"$snapshot"
-  grep -q "preference-context: live" <<<"$snapshot"
+  grep -q "dialog: dialog.confirm" <<<"$snapshot"
 
   ht stop "$session" >/dev/null
   ht remove "$session" >/dev/null

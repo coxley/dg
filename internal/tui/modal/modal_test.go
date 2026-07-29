@@ -63,10 +63,22 @@ func TestModelUsesFullScreenWhenLongContentCannotFit(t *testing.T) {
 		0,
 	)
 	overlay := model.Overlay()
+	require.True(t, model.Fullscreen())
 	require.Equal(t, 0, overlay.Left)
 	require.Equal(t, 0, overlay.Top)
 	require.Equal(t, 40, overlay.Width)
 	require.Equal(t, 8, overlay.Height)
+}
+
+func TestModelFloatsWheneverContentFitsBelowAvoidedRows(t *testing.T) {
+	t.Parallel()
+
+	model := New(testStyles())
+	model.Configure(40, 8, 4, 30, "one", Standard, nil, 0)
+
+	require.False(t, model.Fullscreen())
+	require.GreaterOrEqual(t, model.Overlay().Top, 4)
+	require.LessOrEqual(t, model.Overlay().Top+model.Overlay().Height, 8)
 }
 
 func TestModelDragsFromEmptyCellsAfterPointerMotion(t *testing.T) {

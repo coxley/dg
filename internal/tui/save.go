@@ -62,7 +62,7 @@ func (m *Model) openSaveForm() {
 		WithShowHelp(true).
 		WithTheme(m.theme.formTheme())
 	_ = m.saveForm.Init()
-	m.openModal(modalSave)
+	m.openDialog(surfaceSave)
 	m.status = ""
 }
 
@@ -96,7 +96,7 @@ func (m *Model) commitSaveForm() {
 }
 
 func (m *Model) closeSaveForm() {
-	m.modal = modalNone
+	m.activeDialog = surfaceNone
 	m.saveForm = nil
 	m.saveDirectory = ""
 	m.saveName = ""

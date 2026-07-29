@@ -7,10 +7,14 @@ import (
 )
 
 const (
-	surfaceCanvas     chrome.SurfaceID = "canvas"
-	surfaceNavigation chrome.SurfaceID = "navigation"
-	surfaceHelp       chrome.SurfaceID = "help"
-	surfaceModal      chrome.SurfaceID = "modal"
+	surfaceCanvas      chrome.SurfaceID = "canvas"
+	surfaceNavigation  chrome.SurfaceID = "navigation"
+	surfaceHelp        chrome.SurfaceID = "help"
+	surfaceNone        chrome.SurfaceID = ""
+	surfacePreferences chrome.SurfaceID = "preferences-dialog"
+	surfaceSave        chrome.SurfaceID = "save-dialog"
+	surfaceExport      chrome.SurfaceID = "export-dialog"
+	surfaceNotice      chrome.SurfaceID = "notice-dialog"
 )
 
 const (
@@ -23,9 +27,11 @@ const (
 func (m *Model) syncWorkspace() {
 	plan := m.workspace.Plan()
 	m.nav.SetWidth(plan.Canvas.Width)
-	overlay := m.currentModalOverlay()
-	surfaces := []chrome.Surface{
-		{
+	overlay := m.currentDialogOverlay()
+	surfaces := make([]chrome.Surface, 0, 3+len(dialogSpecs))
+	surfaces = append(
+		surfaces,
+		chrome.Surface{
 			ID:        surfaceCanvas,
 			Role:      chrome.SurfacePassive,
 			Anchor:    chrome.AnchorCanvas,
@@ -33,7 +39,7 @@ func (m *Model) syncWorkspace() {
 			Priority:  surfacePriorityCanvas,
 			Visible:   plan.Canvas.Width != 0 && plan.Canvas.Height != 0,
 		},
-		{
+		chrome.Surface{
 			ID:        surfaceNavigation,
 			Role:      chrome.SurfaceFloating,
 			Anchor:    chrome.AnchorCanvas,
@@ -42,17 +48,19 @@ func (m *Model) syncWorkspace() {
 			Visible:   m.nav.Bounds().Width != 0,
 		},
 		m.helpInspector.declaration(plan.Main),
-		{
-			ID:             surfaceModal,
+	)
+	for _, spec := range dialogSpecs {
+		surfaces = append(surfaces, chrome.Surface{
+			ID:             spec.ID,
 			Role:           chrome.SurfaceModal,
 			Anchor:         chrome.AnchorTerminal,
 			Requested:      overlayRect(overlay),
 			Priority:       surfacePriorityModal,
-			Visible:        m.modal != modalNone && overlay.Width != 0,
-			DismissOutside: m.modal != modalNotice,
+			Visible:        m.activeDialog == spec.ID && overlay.Width != 0,
+			DismissOutside: spec.DismissOutside,
 			DismissBack:    true,
 			FocusOnOpen:    true,
-		},
+		})
 	}
 	if err := m.workspace.SetSurfaces(surfaces); err != nil {
 		m.setError("arrange workspace: " + err.Error())
@@ -72,36 +80,35 @@ func (m *Model) surfacePlan(id chrome.SurfaceID) (chrome.SurfacePlan, bool) {
 }
 
 func (m *Model) helpContext() string {
-	switch {
-	case m.modal == modalPreferences &&
+	if m.activeDialog == surfacePreferences &&
 		m.preferenceForm != nil &&
-		m.preferenceForm.DirectoryOpen():
+		m.preferenceForm.DirectoryOpen() {
 		return "directory picker"
-	case m.modal == modalPreferences:
-		return "preferences"
-	case m.modal == modalSave:
-		return "save"
-	case m.modal == modalExport:
-		return "export"
-	case m.modal == modalNotice:
-		return "notice"
-	case m.mode == modeEditLabel:
-		return "label editor"
-	default:
-		return "canvas"
 	}
+	if spec, ok := m.activeDialogSpec(); ok {
+		return spec.Context
+	}
+	if m.mode == modeEditLabel {
+		return "label editor"
+	}
+	return "canvas"
 }
 
 func (m *Model) textEntryActive() bool {
-	return m.mode == modeEditLabel || m.modal == modalSave
+	if spec, ok := m.activeDialogSpec(); ok {
+		return spec.TextEntry
+	}
+	return m.mode == modeEditLabel
 }
 
 func (m *Model) dismissSurface(id chrome.SurfaceID) {
 	switch id {
 	case surfaceHelp:
 		m.helpInspector.hide()
-	case surfaceModal:
-		m.closeModal()
+	default:
+		if id == m.activeDialog {
+			m.closeDialog()
+		}
 	}
 }
 
@@ -132,10 +139,13 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 		if m.helpInspector.capturesPointer() {
 			m.workspace.Capture(surfaceHelp)
 		}
-	case surfaceModal:
-		command := m.updateModalMouseClick(message.Mouse())
+	default:
+		if id != m.activeDialog {
+			return nil
+		}
+		command := m.updateDialogMouseClick(message.Mouse())
 		if m.dialog.CapturesPointer() {
-			m.workspace.Capture(surfaceModal)
+			m.workspace.Capture(id)
 		}
 		return command
 	}
@@ -153,8 +163,10 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 		case surfaceHelp:
 			plan, _ := m.surfacePlan(surfaceHelp)
 			m.helpInspector.update(message, plan.Rect)
-		case surfaceModal:
-			return m.updateModalMouseMotion(message.Mouse())
+		default:
+			if id == m.activeDialog {
+				return m.updateDialogMouseMotion(message.Mouse())
+			}
 		}
 		return nil
 	}
@@ -173,10 +185,12 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
 	case surfaceHelp:
 		plan, _ := m.surfacePlan(surfaceHelp)
 		m.helpInspector.update(message, plan.Rect)
-	case surfaceModal:
-		m.dialog, _ = m.dialog.Update(message)
 	default:
-		m.updateMouseRelease(message.Mouse())
+		if id != m.activeDialog {
+			m.updateMouseRelease(message.Mouse())
+			break
+		}
+		m.dialog, _ = m.dialog.Update(message)
 	}
 	m.workspace.Release()
 }
@@ -191,12 +205,9 @@ func (m *Model) updateSurfaceMouseWheel(message tea.MouseWheelMsg) tea.Cmd {
 		case surfaceHelp:
 			plan, _ := m.surfacePlan(surfaceHelp)
 			m.helpInspector.update(message, plan.Rect)
-		case surfaceModal:
-			if m.modal == modalPreferences {
-				return m.updateSettingsWheel(message)
-			}
-			if m.modal == modalExport {
-				return m.updateClipboard(message)
+		default:
+			if id == m.activeDialog {
+				return m.updateDialogWheel(message)
 			}
 		}
 		return nil
