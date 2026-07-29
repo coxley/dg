@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Follow-up Phase B complete; Phase C not started
+- Current phase: Follow-up Phase C complete; Phase D not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -394,7 +394,7 @@ bindings := chrome.Bindings{
     },
     {
         Scope:   scopeGlobal,
-        Chords:  chrome.Primary(","),
+        Chords:  chrome.Primary("p"),
         Command: commandOpenPreferences,
         Label:   "preferences",
     },
@@ -807,7 +807,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 | --- | --- | --- |
 | A. Control navigation and ButtonList | Complete | Forms traverse every control and wrap |
 | B. Settings and construction | Complete | One injected snapshot configures startup |
-| C. Command resolver and shortcut presentation | Not started | Dispatch and Help share one effective binding set |
+| C. Command resolver and shortcut presentation | Complete | Dispatch and Help share one effective binding set |
 | D. Dialog ownership | Not started | Root owns no body-local form state |
 | E. Preference previews and semantic tints | Not started | Preview, rollback, and persistence agree |
 | F. Interaction-state regions | Not started | Root interaction states are explicit and exhaustively dispatched |
@@ -856,20 +856,20 @@ headless-terminal sizes remain defined under Verification Strategy.
 
 ### Follow-up Phase C: command resolver and shortcut presentation
 
-- [ ] Make the application binding declarations the sole source for dispatch,
+- [x] Make the application binding declarations the sole source for dispatch,
   collision checks, and contextual Help.
-- [ ] Remove manual physical-key conditions and the superseded key map after
+- [x] Remove manual physical-key conditions and the superseded key map after
   every current command has a semantic binding.
-- [ ] Present the preference as `Shortcut style`: Auto, Mac, or Standard.
-- [ ] Keep `super` as the normalized Bubble Tea chord and render it as `cmd`
+- [x] Present the preference as `Shortcut style`: Auto, Mac, or Standard.
+- [x] Keep `super` as the normalized Bubble Tea chord and render it as `cmd`
   under the Mac shortcut style.
-- [ ] Resolve `Primary` to Command in Mac mode and Control in Standard mode.
+- [x] Resolve `Primary` to Command in Mac mode and Control in Standard mode.
   Auto chooses the platform default while remaining explicitly overridable for
   remote terminals.
-- [ ] Use Primary+S, Primary+A, Primary+B, and Primary+P where terminal
+- [x] Use Primary+S, Primary+A, Primary+B, and Primary+P where terminal
   conventions permit. Do not use Command+Comma because terminals commonly
   reserve it.
-- [ ] Keep shortcut profile, terminal keyboard capability, and displayed chord
+- [x] Keep shortcut profile, terminal keyboard capability, and displayed chord
   vocabulary as separate inputs.
 
 ### Follow-up Phase D: dialog ownership
@@ -1107,6 +1107,10 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Store one typed settings snapshot at the XDG config path and atomically replace it from a same-directory temporary file. | Startup and preference persistence now share one schema and store; same-directory rename prevents readers from observing partial JSON. |
 | 2026-07-29 | Represent shortcut style as persisted strings and reserve independent dark and light tint IDs in the settings schema. | Settings remain independent of chrome's numeric profile type and can support Phases C and E without another file-format change. |
 | 2026-07-29 | Retain the single `teatest/v2` pilot. | The fixed-size program test covers Bubble Tea startup sizing, ordered message delivery, explicit quit, final-model recovery, and rendered program output that direct `Update` tests do not exercise. |
+| 2026-07-29 | Route every editor key through application binding declarations and one exhaustive category switch with isolated handlers. | A complete chord-to-command table preserves legacy behavior while deleting the parallel key map and scattered physical-key conditions. |
+| 2026-07-29 | Resolve an observed Super chord independently from capability-filtered Help bindings. | Capability reports control advertisement, but an input the terminal already delivered must still execute; this preserves mixed Control/Super copy behavior. |
+| 2026-07-29 | Canonicalize shifted question-mark and brace aliases before resolution and collision checks. | Terminals can report the same physical punctuation as text or as Shift plus its base key; one canonical chord prevents terminal-dependent dispatch and duplicate Help entries. |
+| 2026-07-29 | Derive contextual Help and the sidebar footer from profile-projected bindings plus a separate display vocabulary. | Mac surfaces render `cmd` while Bubble Tea input remains normalized as `super`, and shortcut text updates during preview and rollback. |
 
 ## Changed-File Ledger
 
@@ -1128,6 +1132,7 @@ Update this table after each completed phase or reviewable slice.
 | Follow-up planning | `internal/tui/CHROME_PLAN.md` | Record post-migration ownership, settings, input, dialog, interaction, sidebar, motion, dependency, and verification decisions. |
 | Follow-up A | `internal/tui/CHROME_PLAN.md`, `internal/tui/chrome/{AGENTS.md,buttonlist.go,buttonlist_test.go,command.go,command_test.go,form.go,form_test.go,textinput.go}`, `internal/tui/clipboard/{clipboard.go,clipboard_test.go}`, `internal/tui/cmd/chrome-lab/main.go`, `internal/tui/modal/{confirmation.go,confirmation_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/{save.go,theme.go}` | Resolve physical control keys once into semantic intents, replace ActionBar with one retained horizontal ButtonList, traverse every form button as a stable focus target, and migrate existing form declarations and styles. |
 | Follow-up B | `go.mod`, `go.sum`, `cmd/dg/{main.go,main_test.go}`, `internal/settings/{settings.go,settings_test.go}`, `internal/tui/{model.go,model_test.go,preferences.go,save.go}`, `internal/tui/cmd/chrome-lab/main_test.go`, `internal/tui/CHROME_PLAN.md` | Add typed XDG settings with atomic persistence, inject one loaded snapshot into layout and TUI construction, retain allocated dialog bodies, and add one fixed-size program-level smoke. |
+| Follow-up C | `internal/tui/CHROME_PLAN.md`, `internal/tui/{bindings.go,bindings_test.go,help.go,model.go,model_test.go,preferences.go,sidebar.go,sidebar_test.go,workspace.go}`, deleted `internal/tui/keymap.go`, `internal/tui/chrome/{command.go,command_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}` | Make binding declarations the sole key-dispatch and Help source, project Primary chords by shortcut style, separate capability from execution and vocabulary, delete the legacy key map, and update live shortcut presentation. |
 
 ## Verification Ledger
 
@@ -1268,3 +1273,10 @@ passing command without preserving the investigated failure.
 | 2026-07-29 | Follow-up B recovery | `go test ./internal/settings ./cmd/dg ./internal/tui ./internal/tui/cmd/chrome-lab`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Independently passed in the main checkout; lint reported 0 issues. |
 | 2026-07-29 | Follow-up B recovery | `dd-gopls check <all changed Phase B Go files>`; `./internal/tui/cmd/chrome-lab/smoke.sh` | Diagnostics passed with no findings; chrome-lab passed all three terminal sizes. |
 | 2026-07-29 | Follow-up B recovery | Root `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed exact dimensions, startup diagram and toolbar composition, status row, and hidden cursor assertions; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up C recovery | Initial `go test ./internal/tui/chrome ./internal/tui ./internal/tui/preferences` | The partial source state did not compile because one obsolete test still referenced the deleted key map. Replaced it with resolver, capability, and Mac-vocabulary assertions. |
+| 2026-07-29 | Follow-up C recovery | Narrow chrome, Preferences, chrome-lab, and root tests plus an independent legacy-command audit | Found and fixed capability-gated observed Super input, a hard-coded Control sidebar label, zero-value capability handling, shifted punctuation aliases, stale Command-Comma examples, and missing shortcut-style presentation coverage. |
+| 2026-07-29 | Follow-up C recovery | Initial full test, race, vet, and lint gate | Tests, race, and vet passed. Lint reported repeated semantic strings and complexity 51 in the exhaustive command switch; consolidated strings and split the switch into small exhaustive categories with isolated handlers. |
+| 2026-07-29 | Follow-up C recovery | Final `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-29 | Follow-up C recovery | `dd-gopls check <all changed Phase C Go files>` | Passed with no diagnostics. |
+| 2026-07-29 | Follow-up C recovery | `./internal/tui/cmd/chrome-lab/smoke.sh` | Passed resolver profile, shortcut-style form, text capture, dialogs, sidebar, and all prior scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
+| 2026-07-29 | Follow-up C recovery | Root raw Command-P probe and Command-P/Command-B `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed Preferences open with `Shortcut style`, sidebar open with `cmd+b close`, exact dimensions, and hidden cursor assertions; all sessions stopped and removed. |

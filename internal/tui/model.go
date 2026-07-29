@@ -54,7 +54,7 @@ func (m mode) String() string {
 	case modeConnect:
 		return "connect"
 	case modeRectangle:
-		return "rectangle"
+		return string(commandRectangle)
 	default:
 		return "unknown"
 	}
@@ -144,7 +144,6 @@ type Model struct {
 	preferenceEdit bool
 	preferenceForm *preferencesview.Model
 	helpInspector  helpInspector
-	keys           keyMap
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -194,7 +193,6 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 		path:          path,
 		theme:         DefaultTheme(true),
 		helpInspector: newHelpInspector(),
-		keys:          newKeyMap(),
 		styledRuns:    make(map[styledRunKey]string),
 		settingsStore: configured.store,
 	}
@@ -203,7 +201,6 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 		return nil, fmt.Errorf("configure bindings: %w", err)
 	}
 	m.bindings = resolver
-	m.applySettingsSnapshot(configured.settings)
 	m.workspace.SetFooter(1)
 	m.sidebar = newSidebar(sidebarDeclaration{
 		Header: "SIDEBAR",
@@ -212,8 +209,9 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 			{ID: "selection", Label: "Selection"},
 			{ID: "document", Label: "Document"},
 		},
-		Footer: "Esc canvas  Ctrl+B close",
+		Footer: "Esc canvas",
 	}, m.theme.sidebarStyles())
+	m.applySettingsSnapshot(configured.settings)
 	m.clipboard = clipboardview.New(m.theme.formStyles())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
@@ -293,8 +291,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clipboard.SetStyles(m.theme.formStyles())
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
-		m.keys.setKeyboardEnhancements(true)
-		m.bindings.SetSuperAvailable(true)
+		m.bindings.SetSuperAvailable(message.SupportsKeyDisambiguation())
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:
@@ -307,17 +304,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureCursorVisible()
 		return m, m.retargetSidebar()
 	case tea.KeyPressMsg:
-		keystroke := message.Keystroke()
-		if message.Text == "?" && message.Mod == tea.ModShift {
-			keystroke = "?"
-		}
-		if command, ok := m.bindings.Resolve(
-			keystroke,
-			m.activeBindingScopes(),
-			m.textEntryActive(),
-		); ok {
-			return m, m.updateSemanticCommand(command)
-		}
 		return m, m.updateKey(message)
 	case tea.PasteMsg:
 		return m, m.updatePaste(message)
@@ -419,8 +405,7 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 }
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
-	key := message.Key()
-	copyKey := isCopyKey(message)
+	copyKey := m.bindings.MatchesKey(message, commandCopy)
 	if spec, ok := m.activeDialogSpec(); ok && spec.DismissAnyKey {
 		returnModal := m.noticeReturn
 		closeNoticeDialog(m)
@@ -431,24 +416,20 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	if !copyKey && !isModifierKey(message) {
 		m.clipboard.CancelPending()
 	}
-	if copyKey && m.activeDialog == surfaceNone && m.mode == modeNavigate {
-		return m.copySelection()
-	}
 	m.hasLastClick = false
+	if command, ok := m.bindings.ResolveKey(
+		message,
+		m.activeBindingScopes(),
+		m.textEntryActive(),
+	); ok {
+		return m.updateSemanticCommand(command)
+	}
 	switch {
 	case m.activeDialog != surfaceNone:
 		return m.updateDialog(message)
 	case m.sidebar.focused:
-		m.updateSidebarKey(message)
-	case key.Code == 's' && key.Mod == tea.ModCtrl:
-		m.requestSave()
 	case m.mode == modeEditLabel:
 		m.updateLabel(message)
-	case key.Code == 'q' && key.Mod == 0:
-		m.interruptInteraction()
-		return tea.Quit
-	default:
-		m.updateCommand(key)
 	}
 	return nil
 }
@@ -476,108 +457,6 @@ func (m *Model) dismissNotice() {
 func (m *Model) setError(text string) {
 	m.status = text
 	m.statusError = text
-}
-
-func (m *Model) updateCommand(key tea.Key) {
-	if key.Code == 'u' && key.Mod == 0 ||
-		key.Code == 'z' && key.Mod == tea.ModCtrl {
-		m.undo()
-		return
-	}
-	if key.Code == 'r' && key.Mod == tea.ModCtrl ||
-		key.Code == 'y' && key.Mod == tea.ModCtrl ||
-		key.Code == 'z' && key.Mod == tea.ModCtrl|tea.ModShift {
-		m.redo()
-		return
-	}
-	if key.Code == 'a' && key.Mod == tea.ModCtrl {
-		m.expandSelection()
-		return
-	}
-	if key.Code == tea.KeyTab && key.Mod == tea.ModCtrl {
-		m.cycleHit(1)
-		return
-	}
-	if key.Code == tea.KeyTab && key.Mod == tea.ModCtrl|tea.ModShift {
-		m.cycleHit(-1)
-		return
-	}
-	if key.Code == tea.KeyTab && key.Mod == tea.ModShift {
-		m.focusNode(-1)
-		return
-	}
-	if key.Mod == tea.ModShift {
-		switch key.Code {
-		case '[', '{':
-			m.reorderLayer(true, true)
-		case ']', '}':
-			m.reorderLayer(true, false)
-		case 'a', 'A':
-			m.cycleEdgeArrow(true)
-		case 't', 'T':
-			m.cycleTextAlignment(true)
-		}
-		return
-	}
-	if key.Mod != 0 {
-		return
-	}
-	m.updateNavigationCommand(key.Code)
-}
-
-func (m *Model) updateNavigationCommand(code rune) {
-	switch code {
-	case '?':
-		m.openHelp()
-	case tea.KeyUp:
-		m.move(0, -1)
-	case tea.KeyRight:
-		m.move(1, 0)
-	case tea.KeyDown:
-		m.move(0, 1)
-	case tea.KeyLeft:
-		m.move(-1, 0)
-	case tea.KeyTab:
-		m.focusNode(1)
-	case '[':
-		m.reorderLayer(false, true)
-	case ']':
-		m.reorderLayer(false, false)
-	case '{':
-		m.reorderLayer(true, true)
-	case '}':
-		m.reorderLayer(true, false)
-	case tea.KeyEnter:
-		if m.mode == modeConnect {
-			m.completeConnection()
-		} else {
-			m.beginMove()
-		}
-	case 'm':
-		m.beginMove()
-	case 'e':
-		m.beginLabelEdit()
-	case 'n':
-		m.newNode()
-	case 'r':
-		m.activateTool(modeRectangle)
-	case 'b':
-		m.cycleBorder()
-	case '-':
-		m.toggleStroke()
-	case 'a':
-		m.cycleEdgeArrow(false)
-	case 't':
-		m.cycleTextAlignment(false)
-	case 'l':
-		m.activateTool(modeConnect)
-	case 'd':
-		m.duplicateSelectionDefault()
-	case tea.KeyBackspace, tea.KeyDelete:
-		m.deleteActive()
-	case tea.KeyEscape:
-		m.cancelMode()
-	}
 }
 
 func (m *Model) activateTool(next mode) {

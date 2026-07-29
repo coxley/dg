@@ -93,6 +93,11 @@ func (s *sidebarState) setStyles(styles sidebarStyles) {
 	s.render()
 }
 
+func (s *sidebarState) setFooter(footer string) {
+	s.declaration.Footer = footer
+	s.render()
+}
+
 func (s *sidebarState) setBounds(bounds chrome.Rect) {
 	s.pane.SetBounds(chrome.Rect{Width: bounds.Width, Height: bounds.Height})
 	s.registerTargets()
@@ -224,6 +229,19 @@ func (m *Model) toggleSidebar() tea.Cmd {
 	return m.retargetSidebar()
 }
 
+func (m *Model) syncSidebarShortcut() {
+	chord, ok := m.bindings.ChordFor(scopeGlobal, commandSidebar)
+	if !ok {
+		m.sidebar.setFooter("Esc canvas")
+		return
+	}
+	display := chrome.DisplayChord(
+		chord,
+		chrome.VocabularyForProfile(m.preferences.keyProfile),
+	)
+	m.sidebar.setFooter("Esc canvas  " + display + " close")
+}
+
 func (m *Model) dismissSidebar() tea.Cmd {
 	m.sidebar.hide()
 	return m.retargetSidebar()
@@ -268,15 +286,6 @@ func (m *Model) updateSidebarMotion(message sidebarMotionMsg) tea.Cmd {
 		return nil
 	}
 	return sidebarMotionTick(message.generation)
-}
-
-func (m *Model) updateSidebarKey(message tea.KeyPressMsg) {
-	switch message.String() {
-	case "tab", "down", "j":
-		m.sidebar.moveFocus(1)
-	case "shift+tab", "up", "k":
-		m.sidebar.moveFocus(-1)
-	}
 }
 
 func (m *Model) setMotionEnabled(enabled bool) {

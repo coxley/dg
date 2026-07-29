@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -68,6 +69,16 @@ const (
 	ProfileStandard
 )
 
+// ChordVocabulary controls presentation without changing executable chords.
+type ChordVocabulary uint8
+
+const (
+	// VocabularyStandard preserves normalized Bubble Tea modifier names.
+	VocabularyStandard ChordVocabulary = iota
+	// VocabularyMac presents Super as Command.
+	VocabularyMac
+)
+
 // Chord is a normalized physical key chord.
 type Chord string
 
@@ -83,6 +94,27 @@ func Keys(chords ...string) []Chord {
 // Primary returns one profile-aware chord declaration.
 func Primary(key string) Chord {
 	return Chord("primary+" + strings.ToLower(strings.TrimSpace(key)))
+}
+
+// VocabularyForProfile returns the display vocabulary for a key profile.
+func VocabularyForProfile(profile KeyProfile) ChordVocabulary {
+	if effectiveProfile(profile) == ProfileMac {
+		return VocabularyMac
+	}
+	return VocabularyStandard
+}
+
+// DisplayChord renders a normalized chord in the requested vocabulary.
+func DisplayChord(chord Chord, vocabulary ChordVocabulary) string {
+	parts := strings.Split(string(chord), "+")
+	if vocabulary == VocabularyMac {
+		for i, part := range parts {
+			if part == "super" {
+				parts[i] = "cmd"
+			}
+		}
+	}
+	return strings.Join(parts, "+")
 }
 
 // Binding declares an application command.
@@ -158,13 +190,29 @@ func (r *Resolver) SetSuperAvailable(available bool) {
 	r.super = available
 }
 
+// ResolveKey returns the first command matching a key in active scope order.
+func (r *Resolver) ResolveKey(
+	message tea.KeyPressMsg,
+	scopes []ScopeID,
+	textEntry bool,
+) (CommandMsg, bool) {
+	return r.resolve(keyChord(message), scopes, textEntry)
+}
+
 // Resolve returns the first command in active scope order.
 func (r *Resolver) Resolve(
 	keystroke string,
 	scopes []ScopeID,
 	textEntry bool,
 ) (CommandMsg, bool) {
-	chord := normalizeChord(keystroke)
+	return r.resolve(normalizeChord(keystroke), scopes, textEntry)
+}
+
+func (r *Resolver) resolve(
+	chord Chord,
+	scopes []ScopeID,
+	textEntry bool,
+) (CommandMsg, bool) {
 	if textEntry && typableChord(chord) {
 		return CommandMsg{}, false
 	}
@@ -174,7 +222,7 @@ func (r *Resolver) Resolve(
 				continue
 			}
 			for _, declared := range binding.Chords {
-				projected, ok := r.project(declared)
+				projected, ok := projectChord(declared, r.profile, true)
 				if ok && projected == chord {
 					return CommandMsg{Command: binding.Command}, true
 				}
@@ -182,6 +230,38 @@ func (r *Resolver) Resolve(
 		}
 	}
 	return CommandMsg{}, false
+}
+
+// MatchesKey reports whether a key projects to any declaration for command.
+func (r *Resolver) MatchesKey(message tea.KeyPressMsg, command CommandID) bool {
+	chord := keyChord(message)
+	for _, binding := range r.bindings {
+		if binding.Command != command {
+			continue
+		}
+		for _, declared := range binding.Chords {
+			projected, ok := projectChord(declared, r.profile, true)
+			if ok && projected == chord {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ChordFor returns the first profile-projected chord for a scoped command.
+func (r *Resolver) ChordFor(scope ScopeID, command CommandID) (Chord, bool) {
+	for _, binding := range r.bindings {
+		if binding.Scope != scope || binding.Command != command {
+			continue
+		}
+		for _, declared := range binding.Chords {
+			if chord, ok := projectChord(declared, r.profile, true); ok {
+				return chord, true
+			}
+		}
+	}
+	return "", false
 }
 
 // Effective returns the merged executable binding list in active precedence.
@@ -209,48 +289,69 @@ func (r *Resolver) Effective(scopes []ScopeID) []EffectiveBinding {
 }
 
 func (r *Resolver) validate() error {
-	seen := make(map[[2]string]CommandID)
-	for _, binding := range r.bindings {
-		for _, chord := range binding.Chords {
-			key := [2]string{string(binding.Scope), string(chord)}
-			if first, ok := seen[key]; ok && first != binding.Command {
-				return CollisionError{
-					Scope: binding.Scope,
-					Chord: chord,
-					First: first,
-					Next:  binding.Command,
+	for _, profile := range [...]KeyProfile{ProfileMac, ProfileStandard} {
+		seen := make(map[[2]string]CommandID)
+		for _, binding := range r.bindings {
+			for _, declared := range binding.Chords {
+				chord, ok := projectChord(declared, profile, true)
+				if !ok {
+					continue
 				}
+				key := [2]string{string(binding.Scope), string(chord)}
+				if first, exists := seen[key]; exists && first != binding.Command {
+					return CollisionError{
+						Scope: binding.Scope,
+						Chord: chord,
+						First: first,
+						Next:  binding.Command,
+					}
+				}
+				seen[key] = binding.Command
 			}
-			seen[key] = binding.Command
 		}
 	}
 	return nil
 }
 
 func (r *Resolver) project(chord Chord) (Chord, bool) {
+	return projectChord(chord, r.profile, r.super)
+}
+
+func projectChord(chord Chord, profile KeyProfile, super bool) (Chord, bool) {
 	value := string(chord)
 	if !strings.HasPrefix(value, "primary+") {
-		if strings.HasPrefix(value, "super+") && !r.super {
+		if strings.HasPrefix(value, "super+") && !super {
 			return "", false
 		}
 		return chord, true
 	}
 	key := strings.TrimPrefix(value, "primary+")
-	profile := r.profile
-	if profile == ProfileAuto {
-		if runtime.GOOS == "darwin" {
-			profile = ProfileMac
-		} else {
-			profile = ProfileStandard
-		}
-	}
+	profile = effectiveProfile(profile)
 	if profile == ProfileMac {
-		if !r.super {
+		if !super {
 			return "", false
 		}
 		return Chord("super+" + key), true
 	}
 	return Chord("ctrl+" + key), true
+}
+
+func effectiveProfile(profile KeyProfile) KeyProfile {
+	if profile != ProfileAuto {
+		return profile
+	}
+	if runtime.GOOS == "darwin" {
+		return ProfileMac
+	}
+	return ProfileStandard
+}
+
+func keyChord(message tea.KeyPressMsg) Chord {
+	key := message.Key()
+	if key.Mod == tea.ModShift && key.Text != "" && !unicode.IsLetter(key.Code) {
+		return normalizeChord(key.Text)
+	}
+	return normalizeChord(message.Keystroke())
 }
 
 func normalizeChord(chord string) Chord {
@@ -269,6 +370,16 @@ func normalizeChord(chord string) Chord {
 	if len(parts) > 1 {
 		modifiers := parts[:len(parts)-1]
 		slices.Sort(modifiers)
+	}
+	if len(parts) == 2 && parts[0] == "shift" {
+		switch parts[1] {
+		case "/":
+			return "?"
+		case "[":
+			return "{"
+		case "]":
+			return "}"
+		}
 	}
 	return Chord(strings.Join(parts, "+"))
 }

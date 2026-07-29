@@ -36,6 +36,7 @@ func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {
 	m.preferences.darkTint = snapshot.DarkTint
 	m.preferences.lightTint = snapshot.LightTint
 	m.bindings.SetProfile(m.preferences.keyProfile)
+	m.syncSidebarShortcut()
 }
 
 func keyProfile(style settings.ShortcutStyle) chrome.KeyProfile {
@@ -113,6 +114,7 @@ func (m *Model) closeSettingsModal() {
 		m.preferences.commentPrefix = m.preferences.originalCommentPrefix
 		m.preferences.keyProfile = m.preferences.originalKeyProfile
 		m.bindings.SetProfile(m.preferences.originalKeyProfile)
+		m.syncSidebarShortcut()
 		err = errors.Join(err, m.render())
 	}
 	m.preferenceEdit = false
@@ -208,6 +210,7 @@ func (m *Model) syncPreferenceForm() {
 	m.preferences.commentPrefix = value.CommentPrefix
 	m.preferences.keyProfile = value.KeyProfile
 	m.bindings.SetProfile(value.KeyProfile)
+	m.syncSidebarShortcut()
 	if router == m.preferences.router {
 		return
 	}

@@ -130,7 +130,7 @@ func TestLabFormsExposeLiveContextAndNestedPicker(t *testing.T) {
 
 	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
-	require.Contains(t, model.View().Content, "key-profile: mac")
+	require.Contains(t, model.View().Content, "shortcut-style: mac")
 
 	updateLab(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	command = updateLabCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))

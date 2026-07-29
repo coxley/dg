@@ -65,7 +65,7 @@ for size in 100x30 80x16 80x12; do
   ht send --wait-text "scenario: forms" --timeout 5s "$session" "9" >/dev/null
   ht send --wait-text "router-step: 11" --timeout 5s "$session" "<Right>" >/dev/null
   ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
-  ht send --wait-text "key-profile: mac" --timeout 5s "$session" "<Right>" >/dev/null
+  ht send --wait-text "shortcut-style: mac" --timeout 5s "$session" "<Right>" >/dev/null
   ht send --wait-idle 100ms --timeout 5s "$session" "<Down>" >/dev/null
   ht send --wait-text "NESTED DIRECTORY PICKER" --timeout 5s "$session" "<Enter>" >/dev/null
   ht send --wait-text "Save directory" --timeout 5s "$session" "q" >/dev/null

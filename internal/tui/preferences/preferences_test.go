@@ -108,7 +108,7 @@ func TestFieldsJustifyLabelsAndValuesAcrossWidth(t *testing.T) {
 	requireRow("Shared-step cost", "2  ")
 	requireRow("Default save directory", "[ browse ]")
 	requireRow("Preferred comments", "//  ")
-	requireRow("Key profile", "Auto  ")
+	requireRow("Shortcut style", "Auto  ")
 }
 
 func TestFieldsFollowFormWidthChanges(t *testing.T) {

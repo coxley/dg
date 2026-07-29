@@ -10,7 +10,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
@@ -537,6 +536,7 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.preferences.keyProfile = chrome.ProfileStandard
 	model.bindings.SetProfile(chrome.ProfileStandard)
 	updateModel(t, model, keyPress('?', "?"))
 	require.True(t, model.helpInspector.visible)
@@ -544,12 +544,17 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	view := ansi.Strip(model.View().Content)
 	require.Contains(t, view, "HELP · canvas")
 	require.Contains(t, view, "?")
-	require.Contains(t, view, "toggle help")
-	require.Contains(t, view, "preferences")
+	effective := model.bindings.Effective(model.activeBindingScopes())
+	require.True(t, slices.ContainsFunc(effective, func(binding chrome.EffectiveBinding) bool {
+		return binding.Command == commandHelp && binding.Chord == "?"
+	}))
+	require.True(t, slices.ContainsFunc(effective, func(binding chrome.EffectiveBinding) bool {
+		return binding.Command == commandPreferences && binding.Chord == "ctrl+p"
+	}))
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{
-		Code: ',',
-		Text: ",",
+		Code: 'p',
+		Text: "p",
 		Mod:  tea.ModCtrl,
 	}))
 	require.Equal(t, surfacePreferences, model.activeDialog)
@@ -1001,7 +1006,7 @@ func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
 	require.Equal(t, before.Costs.Step, model.preferenceForm.Value().Router.Costs.Step)
 }
 
-func TestPreferenceKeyProfileUpdatesLiveRestoresAndPersists(t *testing.T) {
+func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
@@ -1011,17 +1016,25 @@ func TestPreferenceKeyProfileUpdatesLiveRestoresAndPersists(t *testing.T) {
 	for range 8 {
 		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
 	}
-	model.updateSettingsTabs(keyPress(tea.KeyRight, ""))
+	model.updateSettingsTabs(keyPress(tea.KeyLeft, ""))
 	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
+	chord, ok := model.bindings.ChordFor(scopeGlobal, commandSave)
+	require.True(t, ok)
+	require.Equal(t, chrome.Chord("super+s"), chord)
+	require.Contains(t, model.sidebar.declaration.Footer, "cmd+b")
 
 	model.closeSettingsModal()
-	require.Equal(t, chrome.ProfileAuto, model.preferences.keyProfile)
+	require.Equal(t, chrome.ProfileStandard, model.preferences.keyProfile)
+	chord, ok = model.bindings.ChordFor(scopeGlobal, commandSave)
+	require.True(t, ok)
+	require.Equal(t, chrome.Chord("ctrl+s"), chord)
+	require.Contains(t, model.sidebar.declaration.Footer, "ctrl+b")
 
 	model.openPreferences()
 	for range 8 {
 		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
 	}
-	model.updateSettingsTabs(keyPress(tea.KeyRight, ""))
+	model.updateSettingsTabs(keyPress(tea.KeyLeft, ""))
 	require.NotNil(t, model.applyPreferences(true))
 
 	snapshot, err := model.settingsStore.Load()
@@ -1815,17 +1828,54 @@ func TestCanvasHostOffsetsRenderingPointerAndCursor(t *testing.T) {
 	require.Contains(t, ansi.Cut(lines[2], host.X, host.Right()), "┌")
 }
 
-func TestKeyboardEnhancementsAdvertiseSuperCopy(t *testing.T) {
+func TestKeyboardEnhancementsAdvertiseMacVocabulary(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	require.Equal(t, "ctrl+c", model.keys.copy.Help().Key)
-	require.True(t, key.Matches(
-		tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModSuper}),
-		model.keys.copy,
+	model.preferences.keyProfile = chrome.ProfileMac
+	model.bindings.SetProfile(chrome.ProfileMac)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.openHelp()
+	require.False(t, slices.ContainsFunc(
+		model.bindings.Effective(model.activeBindingScopes()),
+		func(binding chrome.EffectiveBinding) bool {
+			return binding.Command == commandCopy && binding.Chord == "super+c"
+		},
 	))
+
 	updateModel(t, model, tea.KeyboardEnhancementsMsg{})
-	require.Equal(t, "super+c / ctrl+c", model.keys.copy.Help().Key)
+	require.False(t, slices.ContainsFunc(
+		model.bindings.Effective(model.activeBindingScopes()),
+		func(binding chrome.EffectiveBinding) bool {
+			return binding.Command == commandCopy && binding.Chord == "super+c"
+		},
+	))
+	updateModel(t, model, tea.KeyboardEnhancementsMsg{
+		Flags: ansi.KittyDisambiguateEscapeCodes,
+	})
+
+	copyBinding, ok := findEffectiveBinding(
+		model.bindings.Effective(model.activeBindingScopes()),
+		commandCopy,
+		"super+c",
+	)
+	require.True(t, ok)
+	require.Equal(
+		t,
+		"cmd+c",
+		chrome.DisplayChord(copyBinding.Chord, chrome.VocabularyMac),
+	)
+	model.helpInspector.viewport.Scroll(0, 100)
+	help := ansi.Strip(strings.Join(model.helpInspector.lines(), "\n"))
+	require.Contains(t, help, "cmd+c")
+	require.NotContains(t, help, "super+c")
+	resolved, ok := model.bindings.ResolveKey(
+		tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModSuper}),
+		model.activeBindingScopes(),
+		false,
+	)
+	require.True(t, ok)
+	require.Equal(t, commandCopy, resolved.Command)
 }
 
 func TestModelViewShowsCursorWhileEditing(t *testing.T) {
@@ -2361,9 +2411,28 @@ func newTestModel(t testing.TB) (*Model, uint32) {
 	nodeID, err := geo.NewNodeAt("node", layout.NewPoint(2, 2))
 	require.NoError(t, err)
 	history.Clear()
-	model, err := New(geo)
+	model, err := New(geo, testModelSettings())
 	require.NoError(t, err)
 	return model, nodeID
+}
+
+func testModelSettings() Option {
+	return WithSettings(settings.Snapshot{
+		ShortcutStyle: settings.ShortcutStandard,
+	}, nil)
+}
+
+func findEffectiveBinding(
+	bindings []chrome.EffectiveBinding,
+	command chrome.CommandID,
+	chord chrome.Chord,
+) (chrome.EffectiveBinding, bool) {
+	for _, binding := range bindings {
+		if binding.Command == command && binding.Chord == chord {
+			return binding, true
+		}
+	}
+	return chrome.EffectiveBinding{}, false
 }
 
 func mustNodeStyle(t testing.TB, model *Model, nodeID uint32) layout.NodeStyle {
@@ -2404,7 +2473,7 @@ func newTwoNodeModel(t testing.TB) (*Model, uint32, uint32) {
 	right, err := geo.NewNodeAt("right", layout.NewPoint(20, 2))
 	require.NoError(t, err)
 	history.Clear()
-	model, err := New(geo)
+	model, err := New(geo, testModelSettings())
 	require.NoError(t, err)
 	return model, left, right
 }
@@ -2425,7 +2494,7 @@ func newComponentModel(t testing.TB) (*Model, uint32, uint32, uint32, uint32) {
 	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, connected)
 	require.NoError(t, geo.Build())
 	history.Clear()
-	model, err := New(geo)
+	model, err := New(geo, testModelSettings())
 	require.NoError(t, err)
 	return model, left, connected, isolated, edgeID
 }

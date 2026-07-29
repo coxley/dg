@@ -324,7 +324,7 @@ func preferenceDeclaration(value Value) chrome.FormDeclaration {
 				Kind: chrome.DirectoryField, Directory: value.SaveDirectory,
 			},
 			{
-				ID: fieldKeyProfile, Label: "Key profile", Kind: chrome.SelectField,
+				ID: fieldKeyProfile, Label: "Shortcut style", Kind: chrome.SelectField,
 				Options: []chrome.FormOption{
 					{Label: "Auto", Value: "auto"},
 					{Label: "Mac", Value: "mac"},

@@ -68,11 +68,20 @@ func (h *helpInspector) declaration(bounds chrome.Rect) chrome.Surface {
 	}
 }
 
-func (h *helpInspector) setPlan(rect chrome.Rect, context string, bindings []chrome.EffectiveBinding) {
+func (h *helpInspector) setPlan(
+	rect chrome.Rect,
+	context string,
+	bindings []chrome.EffectiveBinding,
+	vocabulary chrome.ChordVocabulary,
+) {
 	h.pane.SetHeader([]string{"HELP · " + context})
 	lines := make([]string, 0, len(bindings)+1)
 	for _, binding := range bindings {
-		lines = append(lines, fmt.Sprintf("%-14s %s", binding.Chord, binding.Label))
+		lines = append(lines, fmt.Sprintf(
+			"%-14s %s",
+			chrome.DisplayChord(binding.Chord, vocabulary),
+			binding.Label,
+		))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, "No active bindings")

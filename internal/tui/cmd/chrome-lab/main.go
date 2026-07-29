@@ -125,7 +125,7 @@ func newLabModel(scenario string) *labModel {
 	diagnosticsPane.SetHeader([]string{"DIAGNOSTICS"})
 	resolver, err := chrome.NewResolver([]chrome.Binding{
 		{Scope: "field", Chords: chrome.Keys("q"), Command: "field-q", Label: "type q"},
-		{Scope: "global", Chords: []chrome.Chord{chrome.Primary(",")}, Command: "preferences", Label: "preferences"},
+		{Scope: "global", Chords: []chrome.Chord{chrome.Primary("p")}, Command: "preferences", Label: "preferences"},
 	})
 	if err != nil {
 		panic(err)
@@ -141,7 +141,7 @@ func newLabModel(scenario string) *labModel {
 				Number: 10, Maximum: 100,
 			},
 			{
-				ID: labFormProfile, Label: "Key profile", Kind: chrome.SelectField,
+				ID: labFormProfile, Label: "Shortcut style", Kind: chrome.SelectField,
 				Options: []chrome.FormOption{
 					{Label: "Auto", Value: "auto"},
 					{Label: "Mac", Value: "mac"},
@@ -735,7 +735,7 @@ func (m *labModel) refreshDiagnostics() {
 		lines = append(
 			lines,
 			fmt.Sprintf("router-step: %d", m.formStep),
-			"key-profile: "+m.formProfile,
+			"shortcut-style: "+m.formProfile,
 			"file-name: "+m.formName,
 			"preference-context: live",
 		)
