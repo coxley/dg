@@ -96,21 +96,34 @@ func TestWorkspaceAnchorsLifecycleAndDuplicateIDs(t *testing.T) {
 func TestWorkspaceCoordinatesAnimatedDockAndCanvasBoundary(t *testing.T) {
 	t.Parallel()
 
+	const sidebarWidth = 24
 	var workspace Workspace
 	workspace.SetTerminal(Size{Width: 80, Height: 20})
-	require.True(t, workspace.RetargetSurface("sidebar", 24))
+	require.True(t, workspace.RetargetSurface("sidebar", sidebarWidth))
 	require.NoError(t, workspace.SetSurfaces([]Surface{{
 		ID: "sidebar", Role: SurfaceDock, Dock: DockLeft,
-		Requested: Rect{Width: 24}, Visible: true, Animated: true,
+		Requested: Rect{Width: sidebarWidth}, Visible: true, Animated: true,
 	}}))
 
 	var boundaries []int
 	for workspace.AdvanceSurface("sidebar") {
 		plan := workspace.Plan()
+		extent := workspace.SurfacePosition("sidebar")
 		sidebar, ok := workspace.Surface("sidebar")
 		require.True(t, ok)
+		require.Equal(t, Rect{
+			X:     -sidebarWidth + extent,
+			Width: sidebarWidth, Height: 20,
+		}, sidebar.Content)
+		require.Equal(t, Rect{Width: extent, Height: 20}, sidebar.Rect)
 		require.Equal(t, sidebar.Rect.Right(), plan.Canvas.X)
 		require.Equal(t, 80-sidebar.Rect.Width, plan.Canvas.Width)
+		require.Equal(t, plan.Main.Width, sidebar.Rect.Width+plan.Canvas.Width)
+		id, ok := workspace.SurfaceAt(Point{X: extent - 1, Y: 2})
+		require.True(t, ok)
+		require.Equal(t, SurfaceID("sidebar"), id)
+		_, ok = workspace.SurfaceAt(Point{X: extent, Y: 2})
+		require.False(t, ok)
 		canvas, ok := workspace.ScreenToCanvas(Point{X: plan.Canvas.X + 3, Y: 2})
 		require.True(t, ok)
 		screen, ok := workspace.CanvasToScreen(canvas)
@@ -118,7 +131,20 @@ func TestWorkspaceCoordinatesAnimatedDockAndCanvasBoundary(t *testing.T) {
 		require.Equal(t, Point{X: plan.Canvas.X + 3, Y: 2}, screen)
 		boundaries = append(boundaries, plan.Canvas.X)
 	}
-	require.Equal(t, 24, boundaries[len(boundaries)-1])
+	require.Equal(t, sidebarWidth, boundaries[len(boundaries)-1])
+
+	require.True(t, workspace.RetargetSurface("sidebar", 0))
+	for workspace.SurfaceMoving("sidebar") {
+		require.True(t, workspace.AdvanceSurface("sidebar"))
+	}
+	plan := workspace.Plan()
+	sidebar, ok := workspace.Surface("sidebar")
+	require.True(t, ok)
+	require.Equal(t, Rect{X: -sidebarWidth, Width: sidebarWidth, Height: 20}, sidebar.Content)
+	require.Equal(t, Rect{}, sidebar.Rect)
+	require.Equal(t, plan.Main, plan.Canvas)
+	_, ok = workspace.SurfaceAt(Point{Y: 2})
+	require.False(t, ok)
 }
 
 func TestWorkspaceDrawerMovesContentAndKeepsCanvasFixed(t *testing.T) {
@@ -138,6 +164,7 @@ func TestWorkspaceDrawerMovesContentAndKeepsCanvasFixed(t *testing.T) {
 	require.Equal(t, Rect{Width: 40, Height: 12}, plan.Canvas)
 	sidebar, ok := workspace.Surface("sidebar")
 	require.True(t, ok)
+	require.Equal(t, 18, sidebar.Content.Width)
 	require.Less(t, sidebar.Content.X, 0)
 	require.Equal(t, 0, sidebar.Rect.X)
 	require.Equal(t, sidebar.Content.Right(), sidebar.Rect.Right())

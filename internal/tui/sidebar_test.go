@@ -81,16 +81,44 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.sidebar.declaration.Items[0].Label = strings.Repeat("wrap ", 12)
+	model.sidebar.render()
 	viewport := model.viewport
 	updateModelCommand(t, model, sidebarKey())
+	navigation, ok := model.surfacePlan(surfaceNavigation)
+	require.True(t, ok)
+	navigationRect := navigation.Rect
+	sidebarLines := model.sidebar.pane.Lines()
+	sidebarExtent := model.sidebar.viewport.Plan().Extent
 
 	var boundaries []int
 	for model.workspace.SurfaceMoving(surfaceSidebar) {
 		updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
 		geometry := model.workspace.Geometry()
 		position := model.workspace.SurfacePosition(surfaceSidebar)
+		sidebar, ok := model.surfacePlan(surfaceSidebar)
+		require.True(t, ok)
 		require.Equal(t, position, geometry.Canvas.X)
 		require.Equal(t, 100-position, geometry.Canvas.Width)
+		require.Equal(t, chrome.Rect{
+			X:     -sidebarPreferredWidth + position,
+			Width: sidebarPreferredWidth, Height: geometry.Main.Height,
+		}, sidebar.Content)
+		require.Equal(t, chrome.Rect{
+			Width: position, Height: geometry.Main.Height,
+		}, sidebar.Rect)
+		require.Equal(t, sidebarPreferredWidth, model.sidebar.pane.Plan().Bounds.Width)
+		require.Equal(t, sidebarExtent, model.sidebar.viewport.Plan().Extent)
+		require.Equal(t, sidebarLines, model.sidebar.pane.Lines())
+		visibleLines := model.sidebar.lines(sidebar)
+		for i, line := range sidebarLines {
+			want := ansi.Cut(
+				line,
+				sidebarPreferredWidth-position,
+				sidebarPreferredWidth,
+			)
+			require.Equal(t, ansi.Strip(want), ansi.Strip(visibleLines[i]))
+		}
 		require.Equal(t, viewport, model.viewport)
 
 		canvasPoint := chrome.Point{X: min(3, geometry.Canvas.Width-1), Y: 2}
@@ -105,7 +133,7 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 		require.Equal(t, geometry.Canvas.X+int(model.cursor.X-model.viewport.X), x)
 		navigation, ok := model.surfacePlan(surfaceNavigation)
 		require.True(t, ok)
-		require.GreaterOrEqual(t, navigation.Rect.X, geometry.Canvas.X)
+		require.Equal(t, navigationRect, navigation.Rect)
 
 		lines := strings.Split(strings.TrimSuffix(ansi.Strip(model.View().Content), "\n"), "\n")
 		require.Len(t, lines, 20)
@@ -116,6 +144,34 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 	}
 	require.NotEmpty(t, boundaries)
 	require.Equal(t, sidebarPreferredWidth, boundaries[len(boundaries)-1])
+}
+
+func TestDockedSidebarKeepsNavigationWorkspaceAnchoredAtMinimumWidth(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: compactWidthThreshold, Height: 16})
+	navigation, ok := model.surfacePlan(surfaceNavigation)
+	require.True(t, ok)
+	want := navigation.Rect
+	updateModelCommand(t, model, sidebarKey())
+
+	for model.workspace.SurfaceMoving(surfaceSidebar) {
+		updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})
+		navigation, ok := model.surfacePlan(surfaceNavigation)
+		require.True(t, ok)
+		require.Equal(t, want, navigation.Rect)
+		lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+		for _, line := range lines {
+			require.LessOrEqual(t, ansi.StringWidth(line), compactWidthThreshold)
+		}
+		navigationLine := strings.Split(ansi.Strip(model.nav.View()), "\n")[0]
+		require.Equal(
+			t,
+			navigationLine,
+			ansi.Cut(lines[want.Y], want.X, want.Right()),
+		)
+	}
 }
 
 func TestSidebarRetargetsAcrossResizeAndReversesFromCurrentCell(t *testing.T) {
@@ -133,6 +189,10 @@ func TestSidebarRetargetsAcrossResizeAndReversesFromCurrentCell(t *testing.T) {
 	require.Equal(t, sidebarDrawer, model.sidebar.placement)
 	require.Equal(t, current, model.workspace.SurfacePosition(surfaceSidebar))
 	require.Zero(t, model.workspace.Geometry().Canvas.X)
+	drawer, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	require.Equal(t, sidebarPreferredWidth, drawer.Content.Width)
+	require.Equal(t, current, drawer.Rect.Width)
 	_, resizedFocus := model.sidebar.focus.Current()
 	require.Equal(t, focused, resizedFocus)
 
@@ -140,6 +200,10 @@ func TestSidebarRetargetsAcrossResizeAndReversesFromCurrentCell(t *testing.T) {
 	require.Equal(t, sidebarDocked, model.sidebar.placement)
 	require.Equal(t, current, model.workspace.SurfacePosition(surfaceSidebar))
 	require.Equal(t, current, model.workspace.Geometry().Canvas.X)
+	dock, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	require.Equal(t, sidebarPreferredWidth, dock.Content.Width)
+	require.Equal(t, current, dock.Rect.Width)
 
 	updateModelCommand(t, model, sidebarKey())
 	updateModelCommand(t, model, sidebarMotionMsg{generation: model.sidebar.generation})

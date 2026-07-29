@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Follow-up Phase F complete; Phase G not started
+- Current phase: Follow-up Phase G complete; Phase H not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -814,7 +814,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 | D. Dialog ownership | Complete | Root owns no body-local form state |
 | E. Preference previews and semantic tints | Complete | Preview, rollback, and persistence agree |
 | F. Interaction-state regions | Complete | Root interaction states are explicit and exhaustively dispatched |
-| G. Sidebar geometry | Not started | Full-width content slides without reflow and nav remains fixed |
+| G. Sidebar geometry | Complete | Full-width content slides without reflow and nav remains fixed |
 | H. Sidebar motion policy | Not started | Spring dynamics are isolated behind scalar transition mechanics |
 
 ### Follow-up Phase A: control navigation and ButtonList
@@ -946,17 +946,17 @@ Persistence failures keep the owning dialog and its current draft open.
 
 ### Follow-up Phase G: sidebar geometry
 
-- [ ] Keep the navigation anchored to terminal/workspace geometry so its screen
+- [x] Keep the navigation anchored to terminal/workspace geometry so its screen
   rectangle and width remain static while the sidebar moves.
-- [ ] Measure and render the sidebar at its full target width throughout a
+- [x] Measure and render the sidebar at its full target width throughout a
   transition.
-- [ ] Translate the full pane from outside the screen and clip it to the current
+- [x] Translate the full pane from outside the screen and clip it to the current
   visible extent. Never remeasure the pane to the visible extent.
-- [ ] In docked placement, move the canvas origin one cell for every revealed
+- [x] In docked placement, move the canvas origin one cell for every revealed
   sidebar cell. In drawer placement, keep the canvas fixed.
-- [ ] Derive sidebar content placement, visible hit rectangle, and canvas host
+- [x] Derive sidebar content placement, visible hit rectangle, and canvas host
   from the same integer visible extent.
-- [ ] Test constant content width and wrapping, fixed navigation bounds, exact
+- [x] Test constant content width and wrapping, fixed navigation bounds, exact
   sidebar/canvas tiling, visible-only pointer hits, resize, reversal, exact
   endpoints, and unchanged document viewport coordinates.
 
@@ -1102,7 +1102,7 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Load settings once before model construction and reserve `Model.Init` for runtime commands. | Durable configuration determines initial layout while runtime probes naturally execute as Bubble Tea commands. |
 | 2026-07-29 | Give dialog bodies ownership of local state and let root handle only semantic application effects. | Root callbacks force unrelated body state onto an already oversized Model. |
 | 2026-07-29 | Model editor interactions as concrete orthogonal state regions with one exhaustive gesture dispatch. | Tagged states make exclusivity and transaction ownership reviewable without hiding flow in a registry framework. |
-| 2026-07-29 | Translate and clip a full-width sidebar while keeping navigation screen-anchored. | Stable measurement prevents text reflow, while one visible extent coordinates docked canvas movement and hit testing. |
+| 2026-07-29 | Translate and clip a full-width sidebar while keeping navigation screen-anchored. | Published-cell tests keep pane lines and wrapped extent identical while one visible extent coordinates content clipping, pointer bounds, docked canvas movement, and exact endpoints; real-PTY checks keep the toolbar column fixed. |
 | 2026-07-29 | Isolate Harmonica behind a private scalar transition rather than a public animation framework. | Sidebar behavior depends on integer extent, not the interpolation algorithm, so a later easing replacement should remain local. |
 | 2026-07-29 | Pilot `teatest/v2` only for one program-level smoke and retain direct model plus real-PTY tests. | It exercises Bubble Tea program wiring but lacks PTY input decoding and uses real-time polling unsuitable for broad deterministic coverage. |
 | 2026-07-29 | Keep Left/Right button movement bounded while FocusNext/FocusPrevious wrap, and let Form own wrapping across its complete field-and-button order. | This preserves spatial navigation at horizontal edges while standalone and containing traversal both reach every stable button ID. |
@@ -1147,6 +1147,7 @@ Update this table after each completed phase or reviewable slice.
 | Follow-up D | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,view.go,workspace.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/modal/AGENTS.md`, `internal/tui/preferences/{preferences.go,preferences_test.go}` | Replace root callback specs and body-local fields with one retained dialog controller, typed stateful bodies and semantic effect messages; share one arranged plan across rendering and input; keep failed writes and drafts open; replace Huh with visible-directory-only navigation; preserve canvas hot-path allocations. |
 | Follow-up E | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,clipboard.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,sidebar_test.go,theme.go,theme_test.go,workspace.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}` | Add explicit preference baselines and drafts, live router/shortcut/tint previews, write-before-commit persistence, independent BubbleTint dark/light selectors, semantic theme roles that inherit terminal backgrounds, and constrained retained-dialog focus reveal. |
 | Follow-up F | `internal/tui/CHROME_PLAN.md`, `internal/tui/{bindings.go,duplicate.go,duplicate_benchmark_test.go,edit.go,focus.go,interaction.go,interaction_test.go,model.go,model_test.go,mouse.go,preferences.go,save.go,selection.go,sidebar.go,style.go,view.go,workspace.go}` | Replace root interaction booleans with orthogonal concrete regions, one tagged pointer gesture and exhaustive motion/release dispatch, semantic transaction ownership, isolated preview caches, and interruption coverage for committed layout state versus discarded previews. |
+| Follow-up G | `internal/tui/CHROME_PLAN.md`, `internal/tui/chrome/{surface.go,surface_test.go}`, `internal/tui/{sidebar_test.go,workspace.go}` | Retain full-width animated dock content separately from its clipped visible rectangle, derive docked canvas geometry and pointer bounds from one extent, keep navigation workspace-anchored, and cover reflow, tiling, resize, reversal, endpoints, and document coordinates. |
 
 ## Verification Ledger
 
@@ -1324,3 +1325,13 @@ passing command without preserving the investigated failure.
 | 2026-07-29 | Follow-up F | Initial sandboxed and final `./internal/tui/cmd/chrome-lab/smoke.sh` | The sandboxed run could not reach the local headless-terminal daemon. The daemon-enabled smoke passed all scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
 | 2026-07-29 | Follow-up F | Initial and diagnostic root `ht` interaction matrix attempts | The first harness waited for a `move` status hidden by the selected-object status. A traced `100x30` rerun confirmed Enter had entered move state; replaced that invisible-text wait with idle synchronization. |
 | 2026-07-29 | Follow-up F | Root keyboard-move, label-edit, and raw rectangle-drag `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed semantic input, exact dimensions, final selection composition, and hidden cursor assertions; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up G | Pre-change and final `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome ./internal/tui -count=1` | Passed workspace surface geometry and root sidebar tests. Final coverage verifies constant full-width content and wrapping, visible clipping and pointer hits, exact dock/canvas tiling, fixed navigation bounds, resize, reversal, endpoints, cursor placement, and unchanged document viewport coordinates. |
+| 2026-07-29 | Follow-up G | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg -count=1` | Passed every affected TUI component, chrome-lab, and command package. |
+| 2026-07-29 | Follow-up G | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/chrome -run '^$' -bench . -benchmem -count=1` | Apple M4 Max: Measure 5,222 ns/op, 3,952 B/op, 36 allocs/op; Arrange 6,994 ns/op, 4,448 B/op, 39 allocs/op; MenuRender 9,057 ns/op, 2,144 B/op, 89 allocs/op; ViewportArrange 2,745 ns/op, 1,068 B/op, 31 allocs/op. |
+| 2026-07-29 | Follow-up G | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | Apple M4 Max: AltDrag 50,472 ns/op, 12,457 B/op, 9 allocs/op; MoveCommittedDuplicate 54,398 ns/op, 12,505 B/op, 13 allocs/op; MoveAndView 5,717 ns/op, 4,712 B/op, 10 allocs/op. Allocation counts match Phase F. |
+| 2026-07-29 | Follow-up G | Initial sandboxed `dd-gopls check internal/tui/chrome/{surface.go,surface_test.go} internal/tui/{sidebar_test.go,workspace.go}` | Could not write the normal Go module, build, and imports caches. Re-ran with normal local cache access. |
+| 2026-07-29 | Follow-up G | `dd-gopls check internal/tui/chrome/surface.go internal/tui/chrome/surface_test.go internal/tui/sidebar_test.go internal/tui/workspace.go` | Passed with no diagnostics. |
+| 2026-07-29 | Follow-up G | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...`; `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...`; `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed all packages under normal and race execution; vet passed; lint reported 0 issues. |
+| 2026-07-29 | Follow-up G | Initial sandboxed `./internal/tui/cmd/chrome-lab/smoke.sh` | Failed because the local headless-terminal daemon socket was unreachable. The daemon-enabled rerun passed every scenario at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
+| 2026-07-29 | Follow-up G | First root sidebar `ht` matrix at `100x30`, `80x16`, and `80x12` | Screen geometry was correct, but the harness compared UTF-8 byte offsets from BSD `awk` instead of terminal-cell columns. Preserved JSON/PNG evidence, replaced the comparison with Unicode cell indexes, and reran. |
+| 2026-07-29 | Follow-up G | Final root raw Command-B sidebar `ht` matrix at `100x30`, `80x16`, and `80x12` with isolated XDG config roots | Passed fixed toolbar columns, exact 26-cell docked canvas movement, compact drawer composition, open/close restoration, exact dimensions, and hidden cursor assertions; all sessions stopped and removed. |

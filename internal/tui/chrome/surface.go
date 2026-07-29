@@ -69,7 +69,8 @@ type Surface struct {
 	FocusOnOpen    bool
 }
 
-// SurfacePlan records requested and terminal-clamped geometry.
+// SurfacePlan records full content placement and its terminal-clipped pointer
+// rectangle.
 type SurfacePlan struct {
 	Surface Surface
 	Anchor  Rect
@@ -364,9 +365,11 @@ func (w *Workspace) arrange() {
 			continue
 		}
 		anchor := plan.Canvas
-		rect := dockRect(surface, anchor)
+		content := dockRect(surface, anchor)
+		rect := content
 		if surface.Animated {
-			rect = dockRectAtExtent(surface, anchor, w.SurfacePosition(surface.ID))
+			content = translatedDockRect(surface, anchor, w.SurfacePosition(surface.ID))
+			rect = surfaceIntersection(content, anchor)
 		}
 		switch surface.Dock {
 		case DockRight:
@@ -384,7 +387,7 @@ func (w *Workspace) arrange() {
 		dockPlans = append(dockPlans, SurfacePlan{
 			Surface: surface,
 			Anchor:  anchor,
-			Content: rect,
+			Content: content,
 			Rect:    rect,
 		})
 	}
@@ -435,16 +438,19 @@ func (w *Workspace) arrange() {
 	w.plan = plan
 }
 
-func dockRectAtExtent(surface Surface, anchor Rect, extent int) Rect {
-	requested := surface.Requested
+func translatedDockRect(surface Surface, anchor Rect, extent int) Rect {
+	rect := dockRect(surface, anchor)
 	switch surface.Dock {
-	case DockLeft, DockRight:
-		requested.Width = min(max(extent, 0), requested.Width)
-	case DockTop, DockBottom:
-		requested.Height = min(max(extent, 0), requested.Height)
+	case DockRight:
+		rect.X = anchor.Right() - min(max(extent, 0), rect.Width)
+	case DockTop:
+		rect.Y = anchor.Y - rect.Height + min(max(extent, 0), rect.Height)
+	case DockBottom:
+		rect.Y = anchor.Bottom() - min(max(extent, 0), rect.Height)
+	case DockLeft:
+		rect.X = anchor.X - rect.Width + min(max(extent, 0), rect.Width)
 	}
-	surface.Requested = requested
-	return dockRect(surface, anchor)
+	return rect
 }
 
 func drawerRect(surface Surface, anchor Rect, extent int) Rect {

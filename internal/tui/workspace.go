@@ -29,11 +29,7 @@ const (
 
 func (m *Model) syncWorkspace() {
 	plan := m.workspace.Plan()
-	canvasWidth := plan.Main.Width
-	if m.sidebar.placement == sidebarDocked {
-		canvasWidth -= m.workspace.SurfacePosition(surfaceSidebar)
-	}
-	m.nav.SetWidth(max(canvasWidth, 0))
+	m.nav.SetWidth(plan.Main.Width)
 	overlay := m.dialogs.Arrange(
 		m.width,
 		m.height,
@@ -66,7 +62,7 @@ func (m *Model) syncWorkspace() {
 		chrome.Surface{
 			ID:        surfaceNavigation,
 			Role:      chrome.SurfaceFloating,
-			Anchor:    chrome.AnchorCanvas,
+			Anchor:    chrome.AnchorWorkspace,
 			Requested: m.nav.Bounds(),
 			Priority:  surfacePriorityNavigation,
 			Visible:   m.nav.Bounds().Width != 0,
