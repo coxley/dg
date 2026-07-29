@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
+	"github.com/coxley/dg/internal/settings"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
 	modalview "github.com/coxley/dg/internal/tui/modal"
@@ -26,6 +26,38 @@ import (
 )
 
 var benchmarkView tea.View
+
+func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative")
+	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	geo, err := layout.New(layout.WithHistory(history))
+	require.NoError(t, err)
+	store := settings.NewStore(filepath.Join(t.TempDir(), "config.json"))
+
+	model, err := New(geo, WithSettings(settings.Snapshot{
+		ApplyToFuture: true,
+		SaveDirectory: "/diagrams",
+		CommentPrefix: "# ",
+		ShortcutStyle: settings.ShortcutMac,
+		DarkTint:      "dark",
+		LightTint:     "light",
+	}, store))
+
+	require.NoError(t, err)
+	require.Same(t, store, model.settingsStore)
+	require.True(t, model.preferences.applyToFuture)
+	require.Equal(t, "/diagrams", model.preferences.saveDirectory)
+	require.Equal(t, "# ", model.preferences.commentPrefix)
+	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
+	require.Equal(t, "dark", model.preferences.darkTint)
+	require.Equal(t, "light", model.preferences.lightTint)
+	require.NotNil(t, model.preferenceForm)
+	require.NotNil(t, model.saveForm)
+	require.NotNil(t, model.savePicker)
+	require.NotNil(t, model.clipboard)
+	require.Equal(t, surfaceNone, model.activeDialog)
+}
 
 func TestModelNavigatesAndCyclesHits(t *testing.T) {
 	t.Parallel()
@@ -761,7 +793,8 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 	t.Run("save as defaults", func(t *testing.T) {
 		model, _ := newTestModel(t)
 		updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
-		model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
+		path := filepath.Join(t.TempDir(), "config.json")
+		model.settingsStore = settings.NewStore(path)
 		model.openPreferences()
 		x, y := modalTextPoint(
 			t,
@@ -776,7 +809,7 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 		})
 
 		require.NotNil(t, command)
-		data, err := os.ReadFile(model.preferences.path)
+		data, err := os.ReadFile(path)
 		require.NoError(t, err)
 		require.Contains(t, string(data), `"apply_to_future": true`)
 	})
@@ -972,7 +1005,8 @@ func TestPreferenceKeyProfileUpdatesLiveRestoresAndPersists(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
+	path := filepath.Join(t.TempDir(), "config.json")
+	model.settingsStore = settings.NewStore(path)
 	model.openPreferences()
 	for range 8 {
 		model.updateSettingsTabs(keyPress(tea.KeyDown, ""))
@@ -990,18 +1024,17 @@ func TestPreferenceKeyProfileUpdatesLiveRestoresAndPersists(t *testing.T) {
 	model.updateSettingsTabs(keyPress(tea.KeyRight, ""))
 	require.NotNil(t, model.applyPreferences(true))
 
-	data, err := os.ReadFile(model.preferences.path)
+	snapshot, err := model.settingsStore.Load()
 	require.NoError(t, err)
-	var saved preferencesFile
-	require.NoError(t, json.Unmarshal(data, &saved))
-	require.Equal(t, chrome.ProfileMac, saved.KeyProfile)
+	require.Equal(t, settings.ShortcutMac, snapshot.ShortcutStyle)
 }
 
 func TestPreferencesSaveShowsNotice(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.path = filepath.Join(t.TempDir(), "preferences.json")
+	path := filepath.Join(t.TempDir(), "config.json")
+	model.settingsStore = settings.NewStore(path)
 	model.openPreferences()
 
 	command := model.applyPreferences(true)
@@ -1009,7 +1042,7 @@ func TestPreferencesSaveShowsNotice(t *testing.T) {
 	require.NotNil(t, command)
 	require.Equal(t, surfaceNotice, model.activeDialog)
 	require.Equal(t, "Preferences saved", model.notice)
-	require.FileExists(t, model.preferences.path)
+	require.FileExists(t, path)
 }
 
 func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {

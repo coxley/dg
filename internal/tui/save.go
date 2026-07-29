@@ -39,15 +39,29 @@ func (m *Model) openSaveForm() {
 		m.saveDirectory = "."
 	}
 	m.saveName = defaultSaveName
+	m.resetSaveForm()
+	m.openDialog(surfaceSave)
+	m.status = ""
+}
+
+func (m *Model) resetSaveForm() {
+	directory := m.saveDirectory
+	if directory == "" {
+		directory = "."
+	}
+	name := m.saveName
+	if name == "" {
+		name = defaultSaveName
+	}
 	m.saveForm = chrome.NewForm(chrome.FormDeclaration{
 		Fields: []chrome.FormField{
 			{
 				ID: saveDirectoryField, Label: "Directory",
-				Kind: chrome.DirectoryField, Directory: m.saveDirectory,
+				Kind: chrome.DirectoryField, Directory: directory,
 			},
 			{
 				ID: saveNameField, Label: "File name", Kind: chrome.TextField,
-				Text: m.saveName, Placeholder: defaultSaveName,
+				Text: name, Placeholder: defaultSaveName,
 			},
 		},
 		Spacer: chrome.FormSpacer{ID: "save-spacer", Grow: 1},
@@ -61,12 +75,10 @@ func (m *Model) openSaveForm() {
 	}, m.theme.formStyles())
 	m.savePicker = directorypicker.New(directorypicker.Config{
 		Title:      "Directory",
-		Value:      m.saveDirectory,
+		Value:      directory,
 		AllowFiles: true,
 		ShowHidden: true,
 	}, directorypicker.Styles{Dark: m.theme.Dark})
-	m.openDialog(surfaceSave)
-	m.status = ""
 }
 
 func (m *Model) updateSaveForm(message tea.Msg) tea.Cmd {
@@ -127,8 +139,7 @@ func (m *Model) commitSaveForm() {
 
 func (m *Model) closeSaveForm() {
 	m.activeDialog = surfaceNone
-	m.saveForm = nil
-	m.savePicker = nil
+	m.savePicker.Close()
 	m.saveDirectory = ""
 	m.saveName = ""
 }

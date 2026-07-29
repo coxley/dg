@@ -1,25 +1,14 @@
 package tui
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui/chrome"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/layout"
 )
-
-type preferencesFile struct {
-	Router        layout.Router     `json:"router"`
-	ApplyToFuture bool              `json:"apply_to_future"`
-	SaveDirectory string            `json:"save_directory,omitempty"`
-	CommentPrefix string            `json:"comment_prefix,omitempty"`
-	KeyProfile    chrome.KeyProfile `json:"key_profile,omitempty"`
-}
 
 type preferenceState struct {
 	router                layout.Router
@@ -32,60 +21,47 @@ type preferenceState struct {
 	originalCommentPrefix string
 	keyProfile            chrome.KeyProfile
 	originalKeyProfile    chrome.KeyProfile
-	path                  string
+	darkTint              string
+	lightTint             string
 }
 
-func preferencesPath() (string, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	name := "dg"
-	if runtime.GOOS == "darwin" {
-		name = "org.coxley.dg"
-	}
-	return filepath.Join(cache, name, "preferences.json"), nil
-}
-
-func readPreferences() (preferencesFile, string, error) {
-	path, err := preferencesPath()
-	if err != nil {
-		return preferencesFile{}, "", err
-	}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return preferencesFile{}, path, nil
-	}
-	if err != nil {
-		return preferencesFile{}, path, err
-	}
-	var preferences preferencesFile
-	if err := json.Unmarshal(data, &preferences); err != nil {
-		return preferencesFile{}, path, err
-	}
-	return preferences, path, nil
-}
-
-func (m *Model) loadPreferences() {
-	preferences, path, err := readPreferences()
-	if err != nil {
-		m.setError("load preferences: " + err.Error())
-		return
-	}
-	m.preferences.path = path
-	m.preferences.applyToFuture = preferences.ApplyToFuture
-	m.preferences.saveDirectory = preferences.SaveDirectory
+func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {
+	m.preferences.router = m.geo.Router()
+	m.preferences.applyToFuture = snapshot.ApplyToFuture
+	m.preferences.saveDirectory = snapshot.SaveDirectory
 	m.preferences.commentPrefix = preferencesview.NormalizeCommentPrefix(
-		preferences.CommentPrefix,
+		snapshot.CommentPrefix,
 	)
-	m.preferences.keyProfile = preferencesview.NormalizeKeyProfile(preferences.KeyProfile)
+	m.preferences.keyProfile = keyProfile(snapshot.ShortcutStyle)
+	m.preferences.darkTint = snapshot.DarkTint
+	m.preferences.lightTint = snapshot.LightTint
 	m.bindings.SetProfile(m.preferences.keyProfile)
 }
 
-// PreferredRouter returns the persisted router for newly created diagrams.
-func PreferredRouter() (layout.Router, bool) {
-	preferences, _, err := readPreferences()
-	return preferences.Router, err == nil && preferences.ApplyToFuture
+func keyProfile(style settings.ShortcutStyle) chrome.KeyProfile {
+	switch style {
+	case settings.ShortcutMac:
+		return chrome.ProfileMac
+	case settings.ShortcutStandard:
+		return chrome.ProfileStandard
+	case settings.ShortcutAuto, "":
+		return chrome.ProfileAuto
+	default:
+		return chrome.ProfileAuto
+	}
+}
+
+func shortcutStyle(profile chrome.KeyProfile) settings.ShortcutStyle {
+	switch profile {
+	case chrome.ProfileMac:
+		return settings.ShortcutMac
+	case chrome.ProfileStandard:
+		return settings.ShortcutStandard
+	case chrome.ProfileAuto:
+		return settings.ShortcutAuto
+	default:
+		return settings.ShortcutAuto
+	}
 }
 
 func (m *Model) openHelp() {
@@ -153,27 +129,15 @@ func (m *Model) applyPreferences(saveDefaults bool) tea.Cmd {
 	}
 	m.preferences.applyToFuture = saveDefaults
 	m.preferenceEdit = false
-	if m.preferences.path == "" {
-		path, err := preferencesPath()
-		if err != nil {
-			m.setError(err.Error())
-			return nil
-		}
-		m.preferences.path = path
-	}
-	data, err := json.MarshalIndent(preferencesFile{
+	err := m.settingsStore.Save(settings.Snapshot{
 		Router:        m.preferences.router,
 		ApplyToFuture: m.preferences.applyToFuture,
 		SaveDirectory: m.preferences.saveDirectory,
 		CommentPrefix: m.preferences.commentPrefix,
-		KeyProfile:    m.preferences.keyProfile,
-	}, "", "  ")
-	if err == nil {
-		err = os.MkdirAll(filepath.Dir(m.preferences.path), 0o700)
-	}
-	if err == nil {
-		err = os.WriteFile(m.preferences.path, append(data, '\n'), 0o600)
-	}
+		ShortcutStyle: shortcutStyle(m.preferences.keyProfile),
+		DarkTint:      m.preferences.darkTint,
+		LightTint:     m.preferences.lightTint,
+	})
 	if err != nil {
 		m.setError("save preferences: " + err.Error())
 		m.activeDialog = surfaceNone

@@ -1,13 +1,42 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/exp/teatest/v2"
 	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLabProgramSmoke(t *testing.T) {
+	model := newLabModel(scenarioLayout)
+	program := teatest.NewTestModel(
+		t,
+		model,
+		teatest.WithInitialTermSize(80, 16),
+	)
+	program.Send(tea.KeyPressMsg(tea.Key{Code: '2', Text: "2"}))
+	program.Send(tea.KeyPressMsg(tea.Key{Code: 'q', Text: "q"}))
+
+	final := program.FinalModel(t, teatest.WithFinalTimeout(time.Second))
+	finalModel, ok := final.(*labModel)
+	require.True(t, ok)
+	require.Equal(t, scenarioPane, scenarioNames[finalModel.scenario])
+	require.Equal(t, 80, finalModel.width)
+	require.Equal(t, 16, finalModel.height)
+	require.Contains(t, finalModel.View().Content, "scenario: pane")
+
+	output, err := io.ReadAll(program.FinalOutput(t))
+	require.NoError(t, err)
+	plain := ansi.Strip(string(output))
+	require.Contains(t, plain, "SCENARIO")
+	require.Contains(t, plain, "DIAGNOSTICS")
+}
 
 func TestLabHandlesCompletedPhaseInteractions(t *testing.T) {
 	t.Parallel()

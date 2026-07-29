@@ -8,6 +8,7 @@ require (
 	charm.land/huh/v2 v2.0.4-0.20260706092022-e0035498085e
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260727090823-41c9e6be3365
 	github.com/orsinium-labs/enum v1.5.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.11.1
@@ -17,9 +18,11 @@ require (
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
+	github.com/aymanbagabas/go-udiff v0.4.1 // indirect
 	github.com/catppuccin/go v0.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
+	github.com/charmbracelet/x/exp/golden v0.0.0-20251109135125-8916d276318f // indirect
 	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
 	github.com/charmbracelet/x/exp/strings v0.1.0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect

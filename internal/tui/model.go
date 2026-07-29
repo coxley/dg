@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/settings"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
@@ -139,6 +140,7 @@ type Model struct {
 	noticeReturn  chrome.SurfaceID
 
 	preferences    preferenceState
+	settingsStore  *settings.Store
 	preferenceEdit bool
 	preferenceForm *preferencesview.Model
 	helpInspector  helpInspector
@@ -157,14 +159,34 @@ type Model struct {
 	selectionEndPoint   layout.Point
 }
 
-// New returns a TUI model for geo.
-func New(geo *layout.Layout) (*Model, error) {
-	return newModel(geo, "")
+// Option configures model construction.
+type Option func(*modelOptions)
+
+type modelOptions struct {
+	settings settings.Snapshot
+	store    *settings.Store
 }
 
-func newModel(geo *layout.Layout, path string) (*Model, error) {
+// WithSettings configures the initial settings snapshot and its durable store.
+func WithSettings(snapshot settings.Snapshot, store *settings.Store) Option {
+	return func(options *modelOptions) {
+		options.settings = snapshot
+		options.store = store
+	}
+}
+
+// New returns a TUI model for geo.
+func New(geo *layout.Layout, options ...Option) (*Model, error) {
+	return newModel(geo, "", options...)
+}
+
+func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error) {
 	if geo == nil {
 		return nil, errors.New("nil layout")
+	}
+	var configured modelOptions
+	for _, option := range options {
+		option(&configured)
 	}
 	m := &Model{
 		geo:           geo,
@@ -174,12 +196,14 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 		helpInspector: newHelpInspector(),
 		keys:          newKeyMap(),
 		styledRuns:    make(map[styledRunKey]string),
+		settingsStore: configured.store,
 	}
 	resolver, err := chrome.NewResolver(applicationBindings)
 	if err != nil {
 		return nil, fmt.Errorf("configure bindings: %w", err)
 	}
 	m.bindings = resolver
+	m.applySettingsSnapshot(configured.settings)
 	m.workspace.SetFooter(1)
 	m.sidebar = newSidebar(sidebarDeclaration{
 		Header: "SIDEBAR",
@@ -198,6 +222,8 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 	})
 	m.dialog = modalview.New(m.theme.Modal)
 	m.canvas = canvasview.New(m.theme.Canvas)
+	m.resetPreferenceForm()
+	m.resetSaveForm()
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
 	for i := range geo.Nodes {
@@ -224,21 +250,18 @@ func newModel(geo *layout.Layout, path string) (*Model, error) {
 }
 
 // Run starts an interactive terminal editor for geo and saves it to path.
-func Run(geo *layout.Layout, path string) error {
-	model, err := newModel(geo, path)
+func Run(geo *layout.Layout, path string, options ...Option) error {
+	model, err := newModel(geo, path, options...)
 	if err != nil {
 		return err
 	}
-	model.loadPreferences()
 	defer model.interruptInteraction()
 	_, err = tea.NewProgram(model).Run()
 	return err
 }
 
-func (m *Model) Init() tea.Cmd {
-	return func() tea.Msg {
-		return tea.RequestBackgroundColor()
-	}
+func (*Model) Init() tea.Cmd {
+	return tea.Batch(func() tea.Msg { return tea.RequestBackgroundColor() })
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {

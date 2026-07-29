@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Follow-up Phase A complete; Phase B not started
+- Current phase: Follow-up Phase B complete; Phase C not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -806,7 +806,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 | Phase | Status | Review gate |
 | --- | --- | --- |
 | A. Control navigation and ButtonList | Complete | Forms traverse every control and wrap |
-| B. Settings and construction | Not started | One injected snapshot configures startup |
+| B. Settings and construction | Complete | One injected snapshot configures startup |
 | C. Command resolver and shortcut presentation | Not started | Dispatch and Help share one effective binding set |
 | D. Dialog ownership | Not started | Root owns no body-local form state |
 | E. Preference previews and semantic tints | Not started | Preview, rollback, and persistence agree |
@@ -835,22 +835,22 @@ headless-terminal sizes remain defined under Verification Strategy.
 
 ### Follow-up Phase B: settings and construction
 
-- [ ] Add an `internal/settings` package that owns the schema, config path,
+- [x] Add an `internal/settings` package that owns the schema, config path,
   load, and atomic save.
-- [ ] Load one settings snapshot before constructing the initial layout and
+- [x] Load one settings snapshot before constructing the initial layout and
   pass that snapshot and store into the TUI through explicit construction
   options.
-- [ ] Keep all dialog bodies allocated on `Model`; loading values and showing a
+- [x] Keep all dialog bodies allocated on `Model`; loading values and showing a
   dialog are separate state changes.
-- [ ] Use `Model.Init` only for runtime commands such as terminal background
+- [x] Use `Model.Init` only for runtime commands such as terminal background
   and capability probes. Return independent startup commands through
   `tea.Batch` or ordered commands through `tea.Sequence`.
-- [ ] Make tests able to construct a model from an explicit initial settings
+- [x] Make tests able to construct a model from an explicit initial settings
   snapshot without touching global paths.
-- [ ] Pilot exactly one `teatest/v2` program-level chrome-lab smoke at a fixed
+- [x] Pilot exactly one `teatest/v2` program-level chrome-lab smoke at a fixed
   size. Send non-timed messages, quit explicitly, and assert final model state
   plus stable output fragments.
-- [ ] Do not use `teatest.WaitFor`, raw escape-stream goldens, animation, or
+- [x] Do not use `teatest.WaitFor`, raw escape-stream goldens, animation, or
   clipboard timers. Remove the dependency if the pilot catches no behavior
   distinct from direct model and `headless-terminal` tests.
 
@@ -1104,6 +1104,9 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Isolate Harmonica behind a private scalar transition rather than a public animation framework. | Sidebar behavior depends on integer extent, not the interpolation algorithm, so a later easing replacement should remain local. |
 | 2026-07-29 | Pilot `teatest/v2` only for one program-level smoke and retain direct model plus real-PTY tests. | It exercises Bubble Tea program wiring but lacks PTY input decoding and uses real-time polling unsuitable for broad deterministic coverage. |
 | 2026-07-29 | Keep Left/Right button movement bounded while FocusNext/FocusPrevious wrap, and let Form own wrapping across its complete field-and-button order. | This preserves spatial navigation at horizontal edges while standalone and containing traversal both reach every stable button ID. |
+| 2026-07-29 | Store one typed settings snapshot at the XDG config path and atomically replace it from a same-directory temporary file. | Startup and preference persistence now share one schema and store; same-directory rename prevents readers from observing partial JSON. |
+| 2026-07-29 | Represent shortcut style as persisted strings and reserve independent dark and light tint IDs in the settings schema. | Settings remain independent of chrome's numeric profile type and can support Phases C and E without another file-format change. |
+| 2026-07-29 | Retain the single `teatest/v2` pilot. | The fixed-size program test covers Bubble Tea startup sizing, ordered message delivery, explicit quit, final-model recovery, and rendered program output that direct `Update` tests do not exercise. |
 
 ## Changed-File Ledger
 
@@ -1124,6 +1127,7 @@ Update this table after each completed phase or reviewable slice.
 | 10 | `go.mod`, `internal/tui/{AGENTS.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,theme.go}`, `internal/tui/chrome/{AGENTS.md,command_test.go,form.go,form_test.go,textinput.go,textinput_test.go}`, `internal/tui/clipboard/{AGENTS.md,clipboard.go,clipboard_test.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, deleted `internal/tui/flex/*`, deleted `internal/tui/numinput/*`, `internal/tui/CHROME_PLAN.md` | Add grapheme- and cell-aware text input, migrate Save and Export to declarative forms, isolate Huh filesystem navigation, remove superseded helpers and theme adapters, and record the final chrome architecture. |
 | Follow-up planning | `internal/tui/CHROME_PLAN.md` | Record post-migration ownership, settings, input, dialog, interaction, sidebar, motion, dependency, and verification decisions. |
 | Follow-up A | `internal/tui/CHROME_PLAN.md`, `internal/tui/chrome/{AGENTS.md,buttonlist.go,buttonlist_test.go,command.go,command_test.go,form.go,form_test.go,textinput.go}`, `internal/tui/clipboard/{clipboard.go,clipboard_test.go}`, `internal/tui/cmd/chrome-lab/main.go`, `internal/tui/modal/{confirmation.go,confirmation_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/{save.go,theme.go}` | Resolve physical control keys once into semantic intents, replace ActionBar with one retained horizontal ButtonList, traverse every form button as a stable focus target, and migrate existing form declarations and styles. |
+| Follow-up B | `go.mod`, `go.sum`, `cmd/dg/{main.go,main_test.go}`, `internal/settings/{settings.go,settings_test.go}`, `internal/tui/{model.go,model_test.go,preferences.go,save.go}`, `internal/tui/cmd/chrome-lab/main_test.go`, `internal/tui/CHROME_PLAN.md` | Add typed XDG settings with atomic persistence, inject one loaded snapshot into layout and TUI construction, retain allocated dialog bodies, and add one fixed-size program-level smoke. |
 
 ## Verification Ledger
 
@@ -1253,3 +1257,14 @@ passing command without preserving the investigated failure.
 | 2026-07-29 | Follow-up A recovery | Initial sandboxed `dd-gopls check <all changed Phase A Go files>` and `./internal/tui/cmd/chrome-lab/smoke.sh` | Diagnostics could not write Go caches, and the headless-terminal daemon socket was unreachable. Re-ran both with local cache and daemon access. |
 | 2026-07-29 | Follow-up A recovery | `dd-gopls check <all changed Phase A Go files>`; `./internal/tui/cmd/chrome-lab/smoke.sh` | Diagnostics passed with no findings; chrome-lab passed all three terminal sizes. |
 | 2026-07-29 | Follow-up A recovery | Root `ht` matrix at `100x30`, `80x16`, and `80x12` | Passed exact dimensions, toolbar and status composition, and hidden cursor assertions; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up B | `GOCACHE=/private/tmp/dg-codex-go-build go get github.com/charmbracelet/x/exp/teatest/v2@latest` (sandboxed) | Failed before download because the sandbox could not resolve the configured module proxy. Re-ran with module-cache and network access. |
+| 2026-07-29 | Follow-up B | `GOCACHE=/private/tmp/dg-codex-go-build go get github.com/charmbracelet/x/exp/teatest/v2@latest`; `GOCACHE=/private/tmp/dg-codex-go-build go mod tidy` | Passed; added `teatest/v2` `v2.0.0-20260727090823-41c9e6be3365` and its test-only transitive dependencies. |
+| 2026-07-29 | Follow-up B | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/settings ./cmd/dg ./internal/tui ./internal/tui/cmd/chrome-lab -count=1` | Passed settings path/load/atomic-save tests, injected startup construction, allocated-body assertions, existing root behavior, and the single fixed-size `teatest/v2` lifecycle smoke. |
+| 2026-07-29 | Follow-up B | `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `GOCACHE=/private/tmp/dg-codex-go-build go test -race ./...`; `GOCACHE=/private/tmp/dg-codex-go-build go vet ./...`; `GOCACHE=/private/tmp/dg-codex-go-build GOLANGCI_LINT_CACHE=/private/tmp/dg-codex-golangci-cache golangci-lint run --path-mode abs` | Passed all packages with 0 lint issues. |
+| 2026-07-29 | Follow-up B | Sandboxed `dd-gopls check <all changed Go files>` | Exited successfully but reported that the Go imports cache was unavailable. Re-ran with normal cache access. |
+| 2026-07-29 | Follow-up B | `dd-gopls check <all changed Go files>` | Passed with no diagnostics. |
+| 2026-07-29 | Follow-up B | Sandboxed root `ht` startup matrix | Failed before launch because the local headless-terminal daemon socket did not become reachable. Re-ran with daemon-socket access. |
+| 2026-07-29 | Follow-up B | Root `ht run`, `ht wait --text navigate`, and `ht view --json` at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed exact dimensions, startup diagram and toolbar composition, status row, and hidden cursor; all sessions stopped and removed. |
+| 2026-07-29 | Follow-up B recovery | `go test ./internal/settings ./cmd/dg ./internal/tui ./internal/tui/cmd/chrome-lab`; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Independently passed in the main checkout; lint reported 0 issues. |
+| 2026-07-29 | Follow-up B recovery | `dd-gopls check <all changed Phase B Go files>`; `./internal/tui/cmd/chrome-lab/smoke.sh` | Diagnostics passed with no findings; chrome-lab passed all three terminal sizes. |
+| 2026-07-29 | Follow-up B recovery | Root `ht` matrix at `100x30`, `80x16`, and `80x12` with an isolated XDG config root | Passed exact dimensions, startup diagram and toolbar composition, status row, and hidden cursor assertions; all sessions stopped and removed. |

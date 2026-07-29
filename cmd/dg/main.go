@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/coxley/dg/document"
+	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui"
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
@@ -19,7 +20,15 @@ func main() {
 }
 
 func run(args []string) error {
-	geo, path, err := initialLayout(args)
+	store, err := settings.DefaultStore()
+	if err != nil {
+		return fmt.Errorf("configure settings: %w", err)
+	}
+	snapshot, err := store.Load()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+	geo, path, err := initialLayout(args, snapshot)
 	if err != nil {
 		return err
 	}
@@ -29,20 +38,23 @@ func run(args []string) error {
 			log.Printf("flush undo history: %v", err)
 		}
 	}()
-	if err := tui.Run(geo, path); err != nil {
+	if err := tui.Run(geo, path, tui.WithSettings(snapshot, store)); err != nil {
 		return fmt.Errorf("run editor: %w", err)
 	}
 	return nil
 }
 
-func initialLayout(args []string) (*layout.Layout, string, error) {
+func initialLayout(
+	args []string,
+	snapshot settings.Snapshot,
+) (*layout.Layout, string, error) {
 	history, err := layout.NewHistory()
 	if err != nil {
 		return nil, "", err
 	}
 	switch len(args) {
 	case 0:
-		geo, err := exampleLayoutWithHistory(history)
+		geo, err := exampleLayoutWithHistory(history, snapshot)
 		return geo, "", err
 	case 1:
 		data, err := os.ReadFile(args[0]) //nolint:gosec // The CLI argument intentionally selects an arbitrary diagram.
@@ -71,13 +83,16 @@ func exampleLayout() (*layout.Layout, error) {
 	if err != nil {
 		return nil, err
 	}
-	return exampleLayoutWithHistory(history)
+	return exampleLayoutWithHistory(history, settings.Snapshot{})
 }
 
-func exampleLayoutWithHistory(history *layout.History) (*layout.Layout, error) {
+func exampleLayoutWithHistory(
+	history *layout.History,
+	snapshot settings.Snapshot,
+) (*layout.Layout, error) {
 	options := []layout.Option{layout.WithHistory(history)}
-	if router, ok := tui.PreferredRouter(); ok {
-		options = append(options, layout.WithRouter(router))
+	if snapshot.ApplyToFuture {
+		options = append(options, layout.WithRouter(snapshot.Router))
 	}
 	geo, err := layout.New(options...)
 	if err != nil {
