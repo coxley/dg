@@ -98,7 +98,7 @@ func (m *Model) syncWorkspace() {
 			help.Rect,
 			m.helpContext(),
 			m.bindings.Effective(m.activeBindingScopes()),
-			chrome.VocabularyForProfile(m.preferences.keyProfile),
+			chrome.VocabularyForProfile(m.preferenceValue().KeyProfile),
 		)
 	}
 }

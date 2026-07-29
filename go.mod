@@ -7,6 +7,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260727090823-41c9e6be3365
+	github.com/lrstanley/bubbletint/v2 v2.0.2
 	github.com/orsinium-labs/enum v1.5.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/stretchr/testify v1.11.1

@@ -184,13 +184,13 @@ func TestSidebarFooterUsesShortcutVocabulary(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.keyProfile = chrome.ProfileMac
+	model.preferences.baseline.KeyProfile = chrome.ProfileMac
 	model.bindings.SetProfile(chrome.ProfileMac)
 	model.syncSidebarShortcut()
 	require.Contains(t, model.sidebar.declaration.Footer, "cmd+b")
 	require.NotContains(t, model.sidebar.declaration.Footer, "super+b")
 
-	model.preferences.keyProfile = chrome.ProfileStandard
+	model.preferences.baseline.KeyProfile = chrome.ProfileStandard
 	model.bindings.SetProfile(chrome.ProfileStandard)
 	model.syncSidebarShortcut()
 	require.Contains(t, model.sidebar.declaration.Footer, "ctrl+b")

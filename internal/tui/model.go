@@ -192,6 +192,7 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	}
 	m.bindings = resolver
 	m.workspace.SetFooter(1)
+	m.applySettingsSnapshot(configured.settings)
 	m.sidebar = newSidebar(sidebarDeclaration{
 		Header: "SIDEBAR",
 		Items: []sidebarItem{
@@ -201,7 +202,7 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 		},
 		Footer: "Esc canvas",
 	}, m.theme.sidebarStyles())
-	m.applySettingsSnapshot(configured.settings)
+	m.syncSidebarShortcut()
 	m.clipboard = clipboardview.New(m.theme.formStyles())
 	m.dialogs = newDialogController(m.theme, m.clipboard, m.preferenceValue())
 	m.nav = nav.New(m.theme.Nav, []nav.Item{
@@ -261,12 +262,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.BackgroundColorMsg:
 		syncWorkspace = true
-		m.theme = DefaultTheme(message.IsDark())
-		m.nav.SetStyles(m.theme.Nav)
-		m.dialogs.SetStyles(m.theme)
-		m.canvas.SetStyles(m.theme.Canvas)
-		m.sidebar.setStyles(m.theme.sidebarStyles())
-		clear(m.styledRuns)
+		preferences := m.preferenceValue()
+		m.applyTheme(themeForTints(
+			message.IsDark(),
+			preferences.DarkTint,
+			preferences.LightTint,
+		))
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
 		m.bindings.SetSuperAvailable(message.SupportsKeyDisambiguation())
@@ -320,6 +321,15 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateSidebarMotion(message)
 	}
 	return m, nil
+}
+
+func (m *Model) applyTheme(theme Theme) {
+	m.theme = theme
+	m.nav.SetStyles(theme.Nav)
+	m.dialogs.SetStyles(theme)
+	m.canvas.SetStyles(theme.Canvas)
+	m.sidebar.setStyles(theme.sidebarStyles())
+	clear(m.styledRuns)
 }
 
 func (m *Model) syncWorkspaceAfterUpdate(sync bool) {

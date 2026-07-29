@@ -224,7 +224,7 @@ func (m *Model) requestSave() {
 		return
 	}
 	if m.path == "" {
-		m.dialogs.OpenSave(m.preferences.saveDirectory)
+		m.dialogs.OpenSave(m.preferenceValue().SaveDirectory)
 		m.status = ""
 		return
 	}

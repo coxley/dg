@@ -7,22 +7,13 @@ import (
 	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui/chrome"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
-	"github.com/coxley/dg/layout"
 )
 
 type preferenceState struct {
-	router                layout.Router
-	originalRouter        layout.Router
+	baseline              preferenceDialogValue
+	draft                 preferenceDialogValue
 	applyToFuture         bool
-	originalApplyToFuture bool
-	saveDirectory         string
-	originalSaveDirectory string
-	commentPrefix         string
-	originalCommentPrefix string
-	keyProfile            chrome.KeyProfile
-	originalKeyProfile    chrome.KeyProfile
-	darkTint              string
-	lightTint             string
+	baselineApplyToFuture bool
 }
 
 type preferenceDialogValue = preferencesview.Value
@@ -58,6 +49,10 @@ func newPreferenceDialogBody(
 			theme.Modal.Body.GetHorizontalFrameSize(),
 		0,
 		theme.preferenceStyles(),
+		preferencesview.WithTints(
+			tintOptions(darkTints),
+			tintOptions(lightTints),
+		),
 	)
 	return body
 }
@@ -184,17 +179,21 @@ func (b *preferenceDialogBody) SetStyles(theme Theme) {
 }
 
 func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {
-	m.preferences.router = m.geo.Router()
+	darkTint, lightTint := normalizeTintIDs(snapshot.DarkTint, snapshot.LightTint)
+	m.preferences.baseline = preferenceDialogValue{
+		Router:        m.geo.Router(),
+		SaveDirectory: snapshot.SaveDirectory,
+		CommentPrefix: preferencesview.NormalizeCommentPrefix(
+			snapshot.CommentPrefix,
+		),
+		KeyProfile: keyProfile(snapshot.ShortcutStyle),
+		DarkTint:   darkTint,
+		LightTint:  lightTint,
+	}
+	m.preferences.draft = m.preferences.baseline
 	m.preferences.applyToFuture = snapshot.ApplyToFuture
-	m.preferences.saveDirectory = snapshot.SaveDirectory
-	m.preferences.commentPrefix = preferencesview.NormalizeCommentPrefix(
-		snapshot.CommentPrefix,
-	)
-	m.preferences.keyProfile = keyProfile(snapshot.ShortcutStyle)
-	m.preferences.darkTint = snapshot.DarkTint
-	m.preferences.lightTint = snapshot.LightTint
-	m.bindings.SetProfile(m.preferences.keyProfile)
-	m.syncSidebarShortcut()
+	m.bindings.SetProfile(m.preferences.baseline.KeyProfile)
+	m.theme = themeForTints(true, darkTint, lightTint)
 }
 
 func keyProfile(style settings.ShortcutStyle) chrome.KeyProfile {
@@ -243,12 +242,10 @@ func (m *Model) openPreferences() {
 }
 
 func (m *Model) preferenceValue() preferenceDialogValue {
-	return preferenceDialogValue{
-		Router:        m.geo.Router(),
-		SaveDirectory: m.preferences.saveDirectory,
-		CommentPrefix: m.preferences.commentPrefix,
-		KeyProfile:    m.preferences.keyProfile,
+	if m.preferenceEdit {
+		return m.preferences.draft
 	}
+	return m.preferences.baseline
 }
 
 func (m *Model) beginPreferenceEdit() {
@@ -256,12 +253,9 @@ func (m *Model) beginPreferenceEdit() {
 		return
 	}
 	m.preferenceEdit = true
-	m.preferences.originalRouter = m.geo.Router()
-	m.preferences.router = m.preferences.originalRouter
-	m.preferences.originalApplyToFuture = m.preferences.applyToFuture
-	m.preferences.originalSaveDirectory = m.preferences.saveDirectory
-	m.preferences.originalCommentPrefix = m.preferences.commentPrefix
-	m.preferences.originalKeyProfile = m.preferences.keyProfile
+	m.preferences.baseline.Router = m.geo.Router()
+	m.preferences.draft = m.preferences.baseline
+	m.preferences.baselineApplyToFuture = m.preferences.applyToFuture
 	m.beginTransaction()
 }
 
@@ -271,15 +265,17 @@ func (m *Model) cancelPreferences() {
 		hadTransaction := m.transactionOpen
 		err = m.cancelTransaction()
 		if !hadTransaction {
-			m.geo.SetRouter(m.preferences.originalRouter)
+			m.geo.SetRouter(m.preferences.baseline.Router)
 			err = errors.Join(err, m.geo.Build())
 		}
-		m.preferences.router = m.preferences.originalRouter
-		m.preferences.applyToFuture = m.preferences.originalApplyToFuture
-		m.preferences.saveDirectory = m.preferences.originalSaveDirectory
-		m.preferences.commentPrefix = m.preferences.originalCommentPrefix
-		m.preferences.keyProfile = m.preferences.originalKeyProfile
-		m.bindings.SetProfile(m.preferences.originalKeyProfile)
+		m.preferences.draft = m.preferences.baseline
+		m.preferences.applyToFuture = m.preferences.baselineApplyToFuture
+		m.bindings.SetProfile(m.preferences.baseline.KeyProfile)
+		m.applyTheme(themeForTints(
+			m.theme.Dark,
+			m.preferences.baseline.DarkTint,
+			m.preferences.baseline.LightTint,
+		))
 		m.syncSidebarShortcut()
 		err = errors.Join(err, m.render())
 	}
@@ -291,15 +287,21 @@ func (m *Model) cancelPreferences() {
 }
 
 func (m *Model) previewPreferences(value preferenceDialogValue) {
-	m.preferences.saveDirectory = value.SaveDirectory
-	m.preferences.commentPrefix = value.CommentPrefix
-	m.preferences.keyProfile = value.KeyProfile
+	value.DarkTint, value.LightTint = normalizeTintIDs(
+		value.DarkTint,
+		value.LightTint,
+	)
+	previous := m.preferences.draft
+	m.preferences.draft = value
 	m.bindings.SetProfile(value.KeyProfile)
 	m.syncSidebarShortcut()
-	if value.Router == m.preferences.router {
+	if value.DarkTint != previous.DarkTint ||
+		value.LightTint != previous.LightTint {
+		m.applyTheme(themeForTints(m.theme.Dark, value.DarkTint, value.LightTint))
+	}
+	if value.Router == previous.Router {
 		return
 	}
-	m.preferences.router = value.Router
 	m.geo.SetRouter(value.Router)
 	if err := m.rebuild(); err != nil {
 		m.setError(err.Error())
@@ -308,14 +310,15 @@ func (m *Model) previewPreferences(value preferenceDialogValue) {
 
 func (m *Model) savePreferences(message preferenceSaveMsg) tea.Cmd {
 	m.previewPreferences(message.Value)
+	draft := m.preferences.draft
 	snapshot := settings.Snapshot{
-		Router:        message.Value.Router,
+		Router:        draft.Router,
 		ApplyToFuture: message.SaveDefaults,
-		SaveDirectory: message.Value.SaveDirectory,
-		CommentPrefix: message.Value.CommentPrefix,
-		ShortcutStyle: shortcutStyle(message.Value.KeyProfile),
-		DarkTint:      m.preferences.darkTint,
-		LightTint:     m.preferences.lightTint,
+		SaveDirectory: draft.SaveDirectory,
+		CommentPrefix: draft.CommentPrefix,
+		ShortcutStyle: shortcutStyle(draft.KeyProfile),
+		DarkTint:      draft.DarkTint,
+		LightTint:     draft.LightTint,
 	}
 	if err := m.settingsStore.Save(snapshot); err != nil {
 		m.setError("save preferences: " + err.Error())
@@ -325,6 +328,7 @@ func (m *Model) savePreferences(message preferenceSaveMsg) tea.Cmd {
 		m.setError(err.Error())
 		return nil
 	}
+	m.preferences.baseline = draft
 	m.preferences.applyToFuture = message.SaveDefaults
 	m.preferenceEdit = false
 	m.status = ""

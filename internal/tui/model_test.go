@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"image/color"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -39,18 +40,18 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 		SaveDirectory: "/diagrams",
 		CommentPrefix: "# ",
 		ShortcutStyle: settings.ShortcutMac,
-		DarkTint:      "dark",
-		LightTint:     "light",
+		DarkTint:      defaultDarkTint,
+		LightTint:     defaultLightTint,
 	}, store))
 
 	require.NoError(t, err)
 	require.Same(t, store, model.settingsStore)
 	require.True(t, model.preferences.applyToFuture)
-	require.Equal(t, "/diagrams", model.preferences.saveDirectory)
-	require.Equal(t, "# ", model.preferences.commentPrefix)
-	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
-	require.Equal(t, "dark", model.preferences.darkTint)
-	require.Equal(t, "light", model.preferences.lightTint)
+	require.Equal(t, "/diagrams", model.preferences.baseline.SaveDirectory)
+	require.Equal(t, "# ", model.preferences.baseline.CommentPrefix)
+	require.Equal(t, chrome.ProfileMac, model.preferences.baseline.KeyProfile)
+	require.Equal(t, defaultDarkTint, model.preferences.baseline.DarkTint)
+	require.Equal(t, defaultLightTint, model.preferences.baseline.LightTint)
 	require.NotNil(t, model.dialogs.preferences.model)
 	require.NotNil(t, model.dialogs.save.form)
 	require.NotNil(t, model.dialogs.save.picker)
@@ -536,7 +537,7 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
-	model.preferences.keyProfile = chrome.ProfileStandard
+	model.preferences.baseline.KeyProfile = chrome.ProfileStandard
 	model.bindings.SetProfile(chrome.ProfileStandard)
 	updateModel(t, model, keyPress('?', "?"))
 	require.True(t, model.helpInspector.visible)
@@ -642,7 +643,7 @@ func TestDialogControllerOwnsDistinctModalSurfacesAndScopes(t *testing.T) {
 			name: "save dialog",
 			id:   surfaceSave,
 			open: func(model *Model) {
-				model.dialogs.OpenSave(model.preferences.saveDirectory)
+				model.dialogs.OpenSave(model.preferences.baseline.SaveDirectory)
 			},
 		},
 		{
@@ -698,7 +699,7 @@ func TestDialogShellMovesEveryFloatingSurface(t *testing.T) {
 		case surfacePreferences:
 			model.openPreferences()
 		case surfaceSave:
-			model.dialogs.OpenSave(model.preferences.saveDirectory)
+			model.dialogs.OpenSave(model.preferences.baseline.SaveDirectory)
 		case surfaceExport:
 			model.dialogs.OpenExport()
 		case surfaceNotice:
@@ -993,6 +994,23 @@ func TestPreferenceFormCanReachSaveAndCancel(t *testing.T) {
 	require.Contains(t, view, "Cancel")
 }
 
+func TestShortPreferenceFormRevealsTintAndActions(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 12})
+	model.openPreferences()
+	for range 9 {
+		updateModel(t, model, keyPress(tea.KeyDown, ""))
+	}
+	require.Equal(t, chrome.ID("dark-tint"), model.dialogs.preferences.model.FocusID())
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, chrome.ID("light-tint"), model.dialogs.preferences.model.FocusID())
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	require.Equal(t, chrome.ID("save"), model.dialogs.preferences.model.FocusID())
+	require.Contains(t, ansi.Strip(model.View().Content), "Save")
+}
+
 func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
 	t.Parallel()
 
@@ -1020,8 +1038,47 @@ func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
 	model.cancelPreferences()
 
 	model.openPreferences()
-	require.Equal(t, before, model.preferences.router)
+	require.Equal(t, before, model.preferences.draft.Router)
 	require.Equal(t, before.Costs.Step, model.dialogs.preferences.model.Value().Router.Costs.Step)
+}
+
+func TestPreferenceTintPreviewsRestoreBaselineOnCancel(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.openPreferences()
+	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
+	baseline := model.preferences.baseline
+
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+
+	require.NotEqual(t, baseline.DarkTint, model.preferences.draft.DarkTint)
+	require.Equal(t, model.preferences.draft.DarkTint, model.theme.TintID)
+
+	model.cancelPreferences()
+
+	require.Equal(t, baseline, model.preferences.baseline)
+	require.Equal(t, baseline, model.preferences.draft)
+	require.Equal(t, baseline.DarkTint, model.theme.TintID)
+}
+
+func TestBackgroundColorSelectsRegisteredLightTint(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.BackgroundColorMsg{Color: color.White})
+	require.Equal(t, model.preferences.baseline.LightTint, model.theme.TintID)
+
+	model.openPreferences()
+	require.True(t, model.dialogs.preferences.model.Focus("light-tint"))
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+
+	require.NotEqual(
+		t,
+		model.preferences.baseline.LightTint,
+		model.preferences.draft.LightTint,
+	)
+	require.Equal(t, model.preferences.draft.LightTint, model.theme.TintID)
 }
 
 func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
@@ -1035,14 +1092,14 @@ func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
 		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
 	model.updateDialog(keyPress(tea.KeyLeft, ""))
-	require.Equal(t, chrome.ProfileMac, model.preferences.keyProfile)
+	require.Equal(t, chrome.ProfileMac, model.preferences.draft.KeyProfile)
 	chord, ok := model.bindings.ChordFor(scopeGlobal, commandSave)
 	require.True(t, ok)
 	require.Equal(t, chrome.Chord("super+s"), chord)
 	require.Contains(t, model.sidebar.declaration.Footer, "cmd+b")
 
 	model.cancelPreferences()
-	require.Equal(t, chrome.ProfileStandard, model.preferences.keyProfile)
+	require.Equal(t, chrome.ProfileStandard, model.preferences.baseline.KeyProfile)
 	chord, ok = model.bindings.ChordFor(scopeGlobal, commandSave)
 	require.True(t, ok)
 	require.Equal(t, chrome.Chord("ctrl+s"), chord)
@@ -1053,6 +1110,9 @@ func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
 		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
 	model.updateDialog(keyPress(tea.KeyLeft, ""))
+	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+	darkTint := model.preferences.draft.DarkTint
 	require.NotNil(t, model.savePreferences(preferenceSaveMsg{
 		Value:        model.dialogs.preferences.model.Value(),
 		SaveDefaults: true,
@@ -1061,6 +1121,9 @@ func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
 	snapshot, err := model.settingsStore.Load()
 	require.NoError(t, err)
 	require.Equal(t, settings.ShortcutMac, snapshot.ShortcutStyle)
+	require.Equal(t, darkTint, snapshot.DarkTint)
+	require.Equal(t, model.preferences.baseline, model.preferences.draft)
+	require.Equal(t, darkTint, model.preferences.baseline.DarkTint)
 }
 
 func TestPreferencesSaveShowsNotice(t *testing.T) {
@@ -1092,8 +1155,11 @@ func TestPreferencePersistenceFailureKeepsDraftOpen(t *testing.T) {
 	model.openPreferences()
 	before := model.geo.Router()
 	model.updateDialog(keyPress(tea.KeyRight, ""))
+	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
+	model.updateDialog(keyPress(tea.KeyRight, ""))
 	draft := model.dialogs.preferences.model.Value()
 	require.NotEqual(t, before, draft.Router)
+	require.Equal(t, draft.DarkTint, model.theme.TintID)
 
 	command := model.savePreferences(preferenceSaveMsg{
 		Value:        draft,
@@ -1106,7 +1172,49 @@ func TestPreferencePersistenceFailureKeepsDraftOpen(t *testing.T) {
 	require.True(t, model.transactionOpen)
 	require.Equal(t, draft, model.dialogs.preferences.model.Value())
 	require.Equal(t, draft.Router, model.geo.Router())
+	require.Equal(t, draft.DarkTint, model.theme.TintID)
 	require.Contains(t, model.status, "save preferences:")
+
+	model.cancelPreferences()
+	require.Equal(t, before, model.geo.Router())
+	require.Equal(t, model.preferences.baseline.DarkTint, model.theme.TintID)
+}
+
+func TestPreferencePersistenceFailurePermitsRetry(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	model.settingsStore = settings.NewStore(filepath.Join(blocker, "config.json"))
+	model.openPreferences()
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+	draft := model.preferences.draft
+
+	require.Nil(t, model.savePreferences(preferenceSaveMsg{
+		Value:        draft,
+		SaveDefaults: true,
+	}))
+	require.True(t, model.transactionOpen)
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	model.settingsStore = settings.NewStore(path)
+	command := model.savePreferences(preferenceSaveMsg{
+		Value:        draft,
+		SaveDefaults: true,
+	})
+
+	require.NotNil(t, command)
+	require.False(t, model.preferenceEdit)
+	require.False(t, model.transactionOpen)
+	require.Equal(t, draft, model.preferences.baseline)
+	require.Equal(t, draft.DarkTint, model.theme.TintID)
+	snapshot, err := model.settingsStore.Load()
+	require.NoError(t, err)
+	require.Equal(t, draft.Router, snapshot.Router)
+	require.Equal(t, draft.DarkTint, snapshot.DarkTint)
 }
 
 func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {
@@ -1883,7 +1991,7 @@ func TestKeyboardEnhancementsAdvertiseMacVocabulary(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.keyProfile = chrome.ProfileMac
+	model.preferences.baseline.KeyProfile = chrome.ProfileMac
 	model.bindings.SetProfile(chrome.ProfileMac)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	model.openHelp()
@@ -1947,7 +2055,7 @@ func TestModelViewShowsSaveForm(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.saveDirectory = t.TempDir()
+	model.preferences.baseline.SaveDirectory = t.TempDir()
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	view := model.View()
@@ -2013,7 +2121,7 @@ func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(dir, ".hidden"), 0o700))
 
 	model, _ := newTestModel(t)
-	model.preferences.saveDirectory = dir
+	model.preferences.baseline.SaveDirectory = dir
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))

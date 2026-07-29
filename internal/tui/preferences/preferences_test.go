@@ -48,6 +48,10 @@ func TestKeyboardTraversalVisitsEveryActionAndWraps(t *testing.T) {
 	require.True(t, model.Focus(fieldKeyProfile))
 
 	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, fieldDarkTint, model.FocusID())
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, fieldLightTint, model.FocusID())
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
 	require.Equal(t, actionSave, model.FocusID())
 	_, _ = model.Update(keyPress(tea.KeyTab, ""))
 	require.Equal(t, actionSaveDefaults, model.FocusID())
@@ -214,6 +218,42 @@ func TestKeyProfileSelectorUpdatesValue(t *testing.T) {
 	require.Equal(t, chrome.ProfileMac, model.Value().KeyProfile)
 	_, _ = model.Update(keyPress(tea.KeyRight, ""))
 	require.Equal(t, chrome.ProfileStandard, model.Value().KeyProfile)
+}
+
+func TestTintSelectorsUseIndependentChoices(t *testing.T) {
+	t.Parallel()
+
+	model := New(
+		Value{
+			Router:    layout.DefaultRouter(),
+			DarkTint:  "dark-a",
+			LightTint: "light-a",
+		},
+		64,
+		20,
+		testStyles(),
+		WithTints(
+			[]TintOption{
+				{ID: "dark-a", Label: "Dark A"},
+				{ID: "dark-b", Label: "Dark B"},
+			},
+			[]TintOption{
+				{ID: "light-a", Label: "Light A"},
+				{ID: "light-b", Label: "Light B"},
+				{ID: "light-c", Label: "Light C"},
+			},
+		),
+	)
+
+	require.True(t, model.Focus(fieldDarkTint))
+	_, _ = model.Update(keyPress(tea.KeyRight, ""))
+	require.Equal(t, "dark-b", model.Value().DarkTint)
+	require.Equal(t, "light-a", model.Value().LightTint)
+
+	require.True(t, model.Focus(fieldLightTint))
+	_, _ = model.Update(keyPress(tea.KeyRight, ""))
+	require.Equal(t, "dark-b", model.Value().DarkTint)
+	require.Equal(t, "light-b", model.Value().LightTint)
 }
 
 func TestInvalidKeyProfileDefaultsToAuto(t *testing.T) {

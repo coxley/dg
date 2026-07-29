@@ -83,13 +83,16 @@ full-screen placement. One retained dialog plan supplies rendering and local
 pointer coordinates. Back and outside-click behavior comes from each
 declaration.
 
-The preferences model reports editable values; root applies router changes
-live and owns the layout history transaction. Cancel, close, outside click, or
-lost focus restores the original values. Numeric fields change only with Left
-and Right or `h` and `l`, and briefly highlight the pressed arrow. The
-directory field opens the bounded filesystem adapter. Save applies the current
-form; Save as Defaults also enables the persisted router for new diagrams.
-Growing form spacers anchor actions to the body bottom.
+The preferences model reports an editable draft; root previews router, shortcut,
+and semantic tint changes and owns the layout history transaction. Cancel,
+close, outside click, or lost focus restores the session baseline. Settings
+persistence succeeds before root commits the layout-backed preview and promotes
+the draft. Numeric fields change only with Left and Right or `h` and `l`, and
+briefly highlight the pressed arrow. Independent dark and light tint selectors
+follow the terminal background without painting the canvas. The directory field
+opens the bounded filesystem adapter. Save applies the current form; Save as
+Defaults also enables the persisted router for new diagrams. Growing form
+spacers anchor actions to the body bottom.
 
 The sidebar uses an application-declared Pane. It docks at wide regular sizes
 and becomes a compact overlay drawer at 80 columns or fewer. One workspace

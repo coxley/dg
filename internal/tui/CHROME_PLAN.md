@@ -2,7 +2,7 @@
 
 - Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Follow-up Phase D complete; Phase E not started
+- Current phase: Follow-up Phase E complete; Phase F not started
 - Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
@@ -812,7 +812,7 @@ headless-terminal sizes remain defined under Verification Strategy.
 | B. Settings and construction | Complete | One injected snapshot configures startup |
 | C. Command resolver and shortcut presentation | Complete | Dispatch and Help share one effective binding set |
 | D. Dialog ownership | Complete | Root owns no body-local form state |
-| E. Preference previews and semantic tints | Not started | Preview, rollback, and persistence agree |
+| E. Preference previews and semantic tints | Complete | Preview, rollback, and persistence agree |
 | F. Interaction-state regions | Not started | Root interaction states are explicit and exhaustively dispatched |
 | G. Sidebar geometry | Not started | Full-width content slides without reflow and nav remains fixed |
 | H. Sidebar motion policy | Not started | Spring dynamics are isolated behind scalar transition mechanics |
@@ -905,21 +905,21 @@ Persistence failures keep the owning dialog and its current draft open.
 
 ### Follow-up Phase E: preference previews and semantic tints
 
-- [ ] Treat each Preferences session as a baseline plus an editable draft.
-- [ ] Preview theme selection, routing costs, and Shortcut style immediately.
-- [ ] Restore the baseline on Cancel, Back, outside click, or other close
+- [x] Treat each Preferences session as a baseline plus an editable draft.
+- [x] Preview theme selection, routing costs, and Shortcut style immediately.
+- [x] Restore the baseline on Cancel, Back, outside click, or other close
   without save.
-- [ ] Write settings before committing layout-backed preview transactions.
+- [x] Write settings before committing layout-backed preview transactions.
   Failed writes retain the preview and permit retry or cancel.
-- [ ] Promote the draft to the new baseline only after persistence succeeds.
-- [ ] Adapt `bubbletint/v2` behind `internal/tui/theme.go`; chrome components
+- [x] Promote the draft to the new baseline only after persistence succeeds.
+- [x] Adapt `bubbletint/v2` behind `internal/tui/theme.go`; chrome components
   consume only application semantic theme roles.
-- [ ] Store independent dark and light tint IDs. Select the registered light
+- [x] Store independent dark and light tint IDs. Select the registered light
   tint when `tea.BackgroundColorMsg.IsDark()` is false and the dark tint
   otherwise.
-- [ ] Populate the selectors from `DefaultDarkTints` and
+- [x] Populate the selectors from `DefaultDarkTints` and
   `DefaultLightTints`; do not assume the two lists form pairs.
-- [ ] Continue inheriting the terminal background rather than painting the
+- [x] Continue inheriting the terminal background rather than painting the
   canvas.
 
 ### Follow-up Phase F: interaction-state regions
@@ -1117,6 +1117,10 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-29 | Route concrete child message types separately while handling only body-emitted application effects in root. | Grouping child message types behind one controller predicate added one allocation to every canvas Update/View frame; concrete routing restored the Phase C hot-path allocation counts. |
 | 2026-07-29 | Keep failed document and settings writes in their owning dialog with the current draft intact. | Application effects now close or replace a dialog only after the corresponding write succeeds, so retry and cancel remain available after errors. |
 | 2026-07-29 | Replace the bounded Huh adapter with a directory-only picker that omits files and hidden entries. | Huh's `FileAllowed(false)` disabled file selection but still rendered and traversed file rows; the application field is specifically a directory choice. |
+| 2026-07-29 | Represent each Preferences edit as one committed baseline and one live draft, and persist the draft before committing its layout transaction. | Failed-write tests retain the draft, preview, and open transaction for retry or cancellation; successful writes alone promote the baseline. |
+| 2026-07-29 | Keep independent BubbleTint dark and light registries behind the application theme adapter. | The upstream default lists differ in membership and size; selectors store stable IDs while chrome receives only semantic Lip Gloss styles. |
+| 2026-07-29 | Tint semantic interaction roles while inheriting normal terminal foreground and background. | Selection, active, hover, port, error, and focused-sidebar roles visibly preview the palette without painting the canvas or lengthening every normal chrome cell's ANSI output. |
+| 2026-07-29 | Reuse an arranged dialog body's bounds while terminal geometry is unchanged. | Re-running natural measurement on every constrained form input reset its scroll offset; retaining the body bounds keeps the newly focused tint and action rows visible at `80x12`. |
 
 ## Changed-File Ledger
 
@@ -1140,6 +1144,7 @@ Update this table after each completed phase or reviewable slice.
 | Follow-up B | `go.mod`, `go.sum`, `cmd/dg/{main.go,main_test.go}`, `internal/settings/{settings.go,settings_test.go}`, `internal/tui/{model.go,model_test.go,preferences.go,save.go}`, `internal/tui/cmd/chrome-lab/main_test.go`, `internal/tui/CHROME_PLAN.md` | Add typed XDG settings with atomic persistence, inject one loaded snapshot into layout and TUI construction, retain allocated dialog bodies, and add one fixed-size program-level smoke. |
 | Follow-up C | `internal/tui/CHROME_PLAN.md`, `internal/tui/{bindings.go,bindings_test.go,help.go,model.go,model_test.go,preferences.go,sidebar.go,sidebar_test.go,workspace.go}`, deleted `internal/tui/keymap.go`, `internal/tui/chrome/{command.go,command_test.go}`, `internal/tui/preferences/{preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}` | Make binding declarations the sole key-dispatch and Help source, project Primary chords by shortcut style, separate capability from execution and vocabulary, delete the legacy key map, and update live shortcut presentation. |
 | Follow-up D | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,view.go,workspace.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/modal/AGENTS.md`, `internal/tui/preferences/{preferences.go,preferences_test.go}` | Replace root callback specs and body-local fields with one retained dialog controller, typed stateful bodies and semantic effect messages; share one arranged plan across rendering and input; keep failed writes and drafts open; replace Huh with visible-directory-only navigation; preserve canvas hot-path allocations. |
+| Follow-up E | `go.mod`, `go.sum`, `internal/tui/{AGENTS.md,CHROME_PLAN.md,clipboard.go,modal.go,model.go,model_test.go,preferences.go,save.go,sidebar.go,sidebar_test.go,theme.go,theme_test.go,workspace.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}` | Add explicit preference baselines and drafts, live router/shortcut/tint previews, write-before-commit persistence, independent BubbleTint dark/light selectors, semantic theme roles that inherit terminal backgrounds, and constrained retained-dialog focus reveal. |
 
 ## Verification Ledger
 
@@ -1302,3 +1307,10 @@ passing command without preserving the investigated failure.
 | 2026-07-29 | Follow-up D | Initial post-picker `golangci-lint run --path-mode abs` | Reported one repeated directory-picker test title. Reused one test constant. |
 | 2026-07-29 | Follow-up D | Final directory-picker/narrow tests; `go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs`; `dd-gopls check <all changed Phase D Go files>` | Passed visible-directory filtering, navigation, selection, dialog integration, all packages under normal and race execution, vet, lint with 0 issues, and diagnostics with no findings. |
 | 2026-07-29 | Follow-up D | Post-picker `./internal/tui/cmd/chrome-lab/smoke.sh`; root raw Command-P/Command-S `ht` matrix at `100x30`, `80x16`, and `80x12` | Chrome-lab passed all scenarios. Root passed Preferences and Save picker open/Back/cancel, files and hidden entries absent, exact dimensions, final canvas composition, and hidden cursor; all sessions cleaned up. |
+| 2026-07-29 | Follow-up E | Initial sandboxed `GOCACHE=/private/tmp/dg-codex-go-build go get github.com/lrstanley/bubbletint/v2@latest`; escalated retry; `go mod tidy` | The sandboxed download failed because the module proxy hostname could not resolve. The cache/network-enabled retry added `bubbletint/v2 v2.0.2`; tidy retained it as a direct dependency. |
+| 2026-07-29 | Follow-up E | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/preferences ./internal/tui -count=1`; `go test ./internal/tui/... ./cmd/dg -count=1` | Passed independent tint declarations, dark/light background selection, live router/shortcut/tint preview, baseline rollback, failed-write retry/cancel, successful promotion, constrained focus reveal, and all affected TUI and command packages. |
+| 2026-07-29 | Follow-up E | Initial sandboxed and final `dd-gopls check <all changed and new Phase E Go files>` | The sandboxed run could not write module, build, or imports caches. The cache-enabled final run passed with no diagnostics. |
+| 2026-07-29 | Follow-up E | Initial and final `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui -run '^$' -bench 'BenchmarkModel' -benchmem -count=1` | The initial normal-text tinting kept allocation counts stable but raised MoveAndView bytes to 5,480 B/op. Restricting tints to semantic interaction roles restored MoveAndView to 4,890 ns/op, 4,712 B/op, 10 allocs/op. Final AltDrag: 47,649 ns/op, 12,457 B/op, 9 allocs/op; MoveCommittedDuplicate: 46,450 ns/op, 12,505 B/op, 13 allocs/op. True-color selection previews retain the prior allocation counts while increasing selected-frame byte sizes. |
+| 2026-07-29 | Follow-up E | Initial sandboxed and final `./internal/tui/cmd/chrome-lab/smoke.sh` | The sandboxed run could not reach the local headless-terminal daemon. The final daemon-enabled smoke passed all scenarios at `100x30`, `80x16`, and `80x12`; all sessions cleaned up. |
+| 2026-07-29 | Follow-up E | Initial and final root raw Command-P `ht` preference matrix at `100x30`, `80x16`, and `80x12` with isolated XDG config roots | The initial matrix exposed constrained dialog remeasurement resetting form scroll before Save at `80x12`. Reusing retained body bounds fixed it. The final matrix passed dark-tint preview, constrained action reveal, persisted independent tint IDs, exact dimensions, and hidden cursor; all sessions cleaned up. |
+| 2026-07-29 | Follow-up E | Final `GOCACHE=/private/tmp/dg-codex-go-build go test ./...`; `go test -race ./...`; `go vet ./...`; `golangci-lint run --path-mode abs` | Passed all packages under normal and race execution; vet passed; lint reported 0 issues. |

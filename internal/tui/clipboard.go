@@ -28,7 +28,7 @@ func (m *Model) copySelection() tea.Cmd {
 	m.status = ""
 	return m.updateClipboard(clipboardview.RequestCopy(
 		text,
-		m.preferences.commentPrefix,
+		m.preferenceValue().CommentPrefix,
 	))
 }
 

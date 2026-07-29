@@ -237,7 +237,7 @@ func (m *Model) syncSidebarShortcut() {
 	}
 	display := chrome.DisplayChord(
 		chord,
-		chrome.VocabularyForProfile(m.preferences.keyProfile),
+		chrome.VocabularyForProfile(m.preferenceValue().KeyProfile),
 	)
 	m.sidebar.setFooter("Esc canvas  " + display + " close")
 }

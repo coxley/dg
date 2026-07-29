@@ -8,11 +8,23 @@ import (
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
+	tint "github.com/lrstanley/bubbletint/v2"
+)
+
+const (
+	defaultDarkTint  = "builtin_dark"
+	defaultLightTint = "builtin_light"
+)
+
+var (
+	darkTints  = tint.NewRegistry(tint.TintBuiltinDark, tint.DefaultDarkTints()...)
+	lightTints = tint.NewRegistry(tint.TintBuiltinLight, tint.DefaultLightTints()...)
 )
 
 // Theme contains every terminal-facing visual style.
 type Theme struct {
 	Dark            bool
+	TintID          string
 	Canvas          canvasview.Styles
 	Nav             nav.Styles
 	Modal           modalview.Styles
@@ -35,10 +47,16 @@ type sidebarStyles struct {
 
 // DefaultTheme returns the editor's default terminal theme.
 func DefaultTheme(dark bool) Theme {
-	lightDark := lipgloss.LightDark(dark)
-	focus := lightDark(lipgloss.Color("153"), lipgloss.Color("24"))
-	text := lightDark(lipgloss.Color("16"), lipgloss.Color("231"))
-	muted := lightDark(lipgloss.Color("240"), lipgloss.Color("245"))
+	return themeForTints(dark, defaultDarkTint, defaultLightTint)
+}
+
+func themeForTints(dark bool, darkID, lightID string) Theme {
+	selected := registeredTint(dark, darkID, lightID)
+	focus := firstTintColor(selected.SelectionBg, selected.BrightBlue, selected.Blue)
+	text := firstTintColor(selected.Fg, selected.White, selected.BrightWhite)
+	muted := firstTintColor(selected.BrightBlack, selected.Black, selected.Fg)
+	port := firstTintColor(selected.BrightGreen, selected.Green, selected.Fg)
+	alert := firstTintColor(selected.BrightRed, selected.Red, selected.Fg)
 	tab := lipgloss.NewStyle().
 		Faint(true).
 		Padding(0, 1)
@@ -57,18 +75,22 @@ func DefaultTheme(dark bool) Theme {
 	modalBody := lipgloss.NewStyle().
 		PaddingTop(1)
 
-	button := lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), true).MarginRight(1)
+	button := lipgloss.NewStyle().
+		Padding(0, 1).
+		Border(lipgloss.NormalBorder(), true).
+		MarginRight(1)
 	focusedButton := button.Border(lipgloss.DoubleBorder(), true)
 	return Theme{
-		Dark: dark,
+		Dark:   dark,
+		TintID: selected.ID,
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().
 				Background(focus).
 				Foreground(text),
 			Port: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("46")),
+				Foreground(port),
 			Error: lipgloss.NewStyle().
-				Foreground(lipgloss.Color("1")),
+				Foreground(alert),
 		},
 		Nav: nav.Styles{
 			Container: toolbar,
@@ -98,6 +120,48 @@ func DefaultTheme(dark bool) Theme {
 			Padding(0, 1),
 		SidebarFooter: tab.Foreground(muted),
 	}
+}
+
+func registeredTint(dark bool, darkID, lightID string) *tint.Tint {
+	registry, id := lightTints, lightID
+	if dark {
+		registry, id = darkTints, darkID
+	}
+	if selected, ok := registry.GetTint(id); ok {
+		return selected
+	}
+	if dark {
+		selected, _ := registry.GetTint(defaultDarkTint)
+		return selected
+	}
+	selected, _ := registry.GetTint(defaultLightTint)
+	return selected
+}
+
+func firstTintColor(colors ...*tint.Color) *tint.Color {
+	for _, color := range colors {
+		if color != nil {
+			return color
+		}
+	}
+	return &tint.Color{A: 0xff}
+}
+
+func tintOptions(registry *tint.Registry) []preferencesview.TintOption {
+	tints := registry.Tints()
+	options := make([]preferencesview.TintOption, len(tints))
+	for i, registered := range tints {
+		options[i] = preferencesview.TintOption{
+			ID:    registered.ID,
+			Label: registered.DisplayName,
+		}
+	}
+	return options
+}
+
+func normalizeTintIDs(darkID, lightID string) (string, string) {
+	return registeredTint(true, darkID, lightID).ID,
+		registeredTint(false, darkID, lightID).ID
 }
 
 func (t Theme) formStyles() chrome.FormStyles {

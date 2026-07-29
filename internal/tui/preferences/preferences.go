@@ -20,6 +20,8 @@ const (
 	fieldComment       chrome.ID = "comment"
 	fieldDirectory     chrome.ID = "directory"
 	fieldKeyProfile    chrome.ID = "key-profile"
+	fieldDarkTint      chrome.ID = "dark-tint"
+	fieldLightTint     chrome.ID = "light-tint"
 	preferenceSpacer   chrome.ID = "preference-spacer"
 	preferenceActions  chrome.ID = "preference-actions"
 	actionSave         chrome.ID = "save"
@@ -45,6 +47,25 @@ type Value struct {
 	SaveDirectory string
 	CommentPrefix string
 	KeyProfile    chrome.KeyProfile
+	DarkTint      string
+	LightTint     string
+}
+
+// TintOption declares one application-provided semantic tint choice.
+type TintOption struct {
+	ID    string
+	Label string
+}
+
+// Option configures a preferences model.
+type Option func(*Model)
+
+// WithTints supplies independent dark and light tint choices.
+func WithTints(dark, light []TintOption) Option {
+	return func(model *Model) {
+		model.darkTints = append([]TintOption(nil), dark...)
+		model.lightTints = append([]TintOption(nil), light...)
+	}
 }
 
 // Action identifies how an edited preference form should close.
@@ -90,11 +111,16 @@ type Model struct {
 	width      int
 	height     int
 	styles     Styles
+	darkTints  []TintOption
+	lightTints []TintOption
 }
 
 // New returns a declarative preferences model.
-func New(value Value, width, height int, styles Styles) *Model {
+func New(value Value, width, height int, styles Styles, options ...Option) *Model {
 	m := &Model{width: max(width, 0), height: max(height, 0), styles: styles}
+	for _, option := range options {
+		option(m)
+	}
 	m.Reset(value)
 	return m
 }
@@ -158,7 +184,10 @@ func (m *Model) Reset(value Value) {
 	m.action = ActionNone
 	m.completed = false
 	m.pickerOpen = false
-	m.form = chrome.NewForm(preferenceDeclaration(value), m.styles.Form)
+	m.form = chrome.NewForm(
+		preferenceDeclarationWithTints(value, m.darkTints, m.lightTints),
+		m.styles.Form,
+	)
 	m.form.SetBounds(chrome.Rect{Width: m.width, Height: m.height})
 	m.resetPicker(value.SaveDirectory)
 }
@@ -279,6 +308,8 @@ func (m *Model) sync() {
 	m.value.Router = router
 	m.value.CommentPrefix = NormalizeCommentPrefix(m.mustSelected(fieldComment))
 	m.value.KeyProfile = profileFromValue(m.mustSelected(fieldKeyProfile))
+	m.value.DarkTint = m.mustSelected(fieldDarkTint)
+	m.value.LightTint = m.mustSelected(fieldLightTint)
 	m.value.SaveDirectory, _ = m.form.Directory(fieldDirectory)
 }
 
@@ -307,6 +338,13 @@ func (m *Model) submit(id chrome.ID) {
 }
 
 func preferenceDeclaration(value Value) chrome.FormDeclaration {
+	return preferenceDeclarationWithTints(value, nil, nil)
+}
+
+func preferenceDeclarationWithTints(
+	value Value,
+	darkTints, lightTints []TintOption,
+) chrome.FormDeclaration {
 	return chrome.FormDeclaration{
 		Fields: []chrome.FormField{
 			numberField(fieldStep, "Step cost", uint64(value.Router.Costs.Step), math.MaxUint32),
@@ -340,6 +378,8 @@ func preferenceDeclaration(value Value) chrome.FormDeclaration {
 				},
 				Selected: int(NormalizeKeyProfile(value.KeyProfile)),
 			},
+			tintField(fieldDarkTint, "Dark tint", value.DarkTint, darkTints),
+			tintField(fieldLightTint, "Light tint", value.LightTint, lightTints),
 		},
 		Spacer: chrome.FormSpacer{ID: preferenceSpacer, Grow: 1},
 		Actions: chrome.ButtonListDeclaration{
@@ -350,6 +390,30 @@ func preferenceDeclaration(value Value) chrome.FormDeclaration {
 				{ID: actionCancel, Label: "Cancel"},
 			},
 		},
+	}
+}
+
+func tintField(
+	id chrome.ID,
+	label, selected string,
+	tints []TintOption,
+) chrome.FormField {
+	options := make([]chrome.FormOption, len(tints))
+	values := make([]string, len(tints))
+	for i, tint := range tints {
+		options[i] = chrome.FormOption{Label: tint.Label, Value: tint.ID}
+		values[i] = tint.ID
+	}
+	if len(options) == 0 {
+		options = []chrome.FormOption{{Label: selected, Value: selected}}
+		values = []string{selected}
+	}
+	return chrome.FormField{
+		ID:       id,
+		Label:    label,
+		Kind:     chrome.SelectField,
+		Options:  options,
+		Selected: optionIndex(values, selected),
 	}
 }
 

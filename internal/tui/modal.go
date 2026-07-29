@@ -68,6 +68,8 @@ type dialogController struct {
 	export      exportDialogBody
 	notice      noticeDialogBody
 	plan        dialogPlan
+	screen      chrome.Size
+	avoidTop    int
 }
 
 func newDialogController(
@@ -136,6 +138,12 @@ func (d *dialogController) Arrange(
 	}
 	width := min(body.PreferredWidth(), screenWidth)
 	bounds := chrome.Rect{Width: width}
+	screen := chrome.Size{Width: screenWidth, Height: screenHeight}
+	if d.screen == screen && d.avoidTop == avoidTop &&
+		d.plan.body.Width != 0 && d.plan.body.Height != 0 {
+		bounds.Width = d.plan.body.Width
+		bounds.Height = d.plan.body.Height
+	}
 	for range 4 {
 		body.SetBounds(bounds)
 		d.configure(
@@ -162,6 +170,8 @@ func (d *dialogController) Arrange(
 			Width: bounds.Width, Height: bounds.Height,
 		},
 	}
+	d.screen = screen
+	d.avoidTop = avoidTop
 	return d.plan.overlay
 }
 

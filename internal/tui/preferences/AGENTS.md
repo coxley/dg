@@ -18,6 +18,8 @@ form geometry and traversal, and `directorypicker` owns filesystem navigation.
   let its retained plan reveal the focused control.
 - Preference rows justify titles against the left edge and controls against
   the right edge of the current modal body width.
+- The application supplies independent dark and light semantic tint options;
+  the form stores only their selected IDs.
 - A growing declarative spacer anchors actions to the body bottom-left.
 - Wheel input moves form focus without activating fields. Arrow keys and
   `h`/`j`/`k`/`l` provide equivalent navigation.
