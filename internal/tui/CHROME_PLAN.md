@@ -1,9 +1,9 @@
 # TUI Chrome Architecture and Migration Plan
 
-- Status: complete
+- Status: migration complete; post-migration follow-up planned
 - Scope: non-canvas UI under `internal/tui`
-- Current phase: Phase 10 complete; later feature sweeps not started
-- Last updated: 2026-07-28
+- Current phase: Phase 10 complete; follow-up Phase A not started
+- Last updated: 2026-07-29
 
 This document is the execution record for making the TUI chrome declarative.
 Update the phase checklist, decision log, changed-file ledger, and verification
@@ -723,6 +723,276 @@ history, layers, and object-tree behavior remain application feature phases.
 - [x] Update `internal/tui/AGENTS.md` to describe the final architecture.
 - [x] Audit public chrome declarations for unused configurability and delete it.
 
+## Post-Migration Feedback Plan
+
+The declarative migration completed at `6169c7c`. The following phases refine
+ownership exposed by the completed implementation. They preserve the existing
+chrome contracts unless a phase explicitly replaces one.
+
+Apply these cross-cutting decisions throughout the follow-up:
+
+- Keep preferences under `$XDG_CONFIG_HOME/dg/config.json`, falling back to
+  `$HOME/.config/dg/config.json`. Do not read or migrate the cache path; there
+  are no existing users to migrate.
+- Do not add `bubblezone`. Retain arranged-plan hit testing unless a concrete
+  defect demonstrates that it is insufficient.
+- Keep application effects in root `Update`; reusable controls and dialog
+  bodies emit semantic messages.
+- Prefer concrete state and exhaustive switches over callback registries or a
+  general registration framework.
+- Preserve direct `Model.Update` tests for state transitions and
+  `headless-terminal` for real PTY behavior.
+
+### Fresh-session workflow
+
+Implement one follow-up phase per Codex task in the main checkout. A newly
+created local task is the programmatic equivalent of `/new`: it receives a
+compact phase prompt and discovers durable context from this plan instead of
+inheriting the preceding conversation.
+
+The user explicitly authorized automatic transitions through all follow-up
+phases. At the end of each phase, create the next task in the saved project's
+local checkout and send its initial prompt directly. Do not ask the user to run
+`/new` or paste a handoff. Do not begin the next phase in the task that
+completed the preceding phase.
+
+Every fresh task begins with:
+
+1. Read the root `AGENTS.md`, `internal/tui/AGENTS.md`, and the nearest
+   package-level `AGENTS.md` for every package in scope.
+2. Read this section, the target phase, the latest decision-log entries, and
+   the changed-file and verification ledgers.
+3. Inspect the target phase's discovery paths below and current `git status`.
+4. Confirm the preceding phase's commit is present before editing.
+5. Mark only that phase `In progress`. Preserve unrelated checkout changes.
+
+Every phase ends with:
+
+1. Complete its narrow tests and the integration gate appropriate to the files
+   changed. Investigate every failure.
+2. Update the phase checklist and status, decision log, changed-file ledger,
+   and verification ledger with exact commands and outcomes.
+3. Create a temporary handoff for the next phase that references this plan
+   instead of duplicating it.
+4. Commit the completed phase before starting its successor.
+5. Use the Codex task-creation tool with the saved project's local environment
+   to start a fresh task in the same checkout, with the handoff content as its
+   initial prompt. Do not select a worktree environment.
+6. Report the created task to the user. Phase H ends the chain and creates no
+   successor.
+
+Follow phases A through H in order. A establishes control semantics consumed by
+D. B establishes settings consumed by C and E. D establishes dialog ownership
+before E adds preference transactions. F follows D so dialog-local fields leave
+the root before interaction state is reorganized. H follows G so animation
+policy cannot mask sidebar geometry defects.
+
+### Quick discovery
+
+| Phase | Start with | Narrow verification |
+| --- | --- | --- |
+| A | `internal/tui/chrome/{command,focus,form,textinput}.go`, their tests, `internal/tui/preferences/preferences.go` | `go test ./internal/tui/chrome ./internal/tui/preferences` |
+| B | `cmd/dg/{AGENTS.md,main.go,main_test.go}`, `internal/tui/{model,preferences}.go`, chrome-lab tests | `go test ./cmd/dg ./internal/tui ./internal/tui/cmd/chrome-lab` |
+| C | `internal/tui/{bindings,keymap,help,model}.go`, `internal/tui/chrome/command.go` | `go test ./internal/tui/chrome ./internal/tui` |
+| D | `internal/tui/{modal,workspace,preferences,save}.go`, `internal/tui/modal`, `internal/tui/preferences` | `go test ./internal/tui/modal ./internal/tui/preferences ./internal/tui` |
+| E | `internal/tui/{preferences,theme}.go`, `internal/tui/preferences`, router assertions in `model_test.go` | `go test ./internal/tui/preferences ./internal/tui` |
+| F | `internal/tui/{model,mouse,duplicate,edit,selection,view}.go` and interaction tests in `model_test.go` | `go test ./internal/tui` plus affected benchmarks |
+| G | `internal/tui/{sidebar,workspace,view}.go`, `internal/tui/chrome/surface.go`, sidebar and surface tests | `go test ./internal/tui/chrome ./internal/tui` plus chrome-lab smoke |
+| H | `internal/tui/chrome/{motion,surface}.go`, `internal/tui/sidebar.go`, motion/sidebar tests | `go test ./internal/tui/chrome ./internal/tui` plus chrome-lab smoke |
+
+Use `GOCACHE=/private/tmp/dg-codex-go-build` for Go commands. The full gate and
+headless-terminal sizes remain defined under Verification Strategy.
+
+| Phase | Status | Review gate |
+| --- | --- | --- |
+| A. Control navigation and ButtonList | Not started | Forms traverse every control and wrap |
+| B. Settings and construction | Not started | One injected snapshot configures startup |
+| C. Command resolver and shortcut presentation | Not started | Dispatch and Help share one effective binding set |
+| D. Dialog ownership | Not started | Root owns no body-local form state |
+| E. Preference previews and semantic tints | Not started | Preview, rollback, and persistence agree |
+| F. Interaction-state regions | Not started | Root interaction states are explicit and exhaustively dispatched |
+| G. Sidebar geometry | Not started | Full-width content slides without reflow and nav remains fixed |
+| H. Sidebar motion policy | Not started | Spring dynamics are isolated behind scalar transition mechanics |
+
+### Follow-up Phase A: control navigation and ButtonList
+
+- [ ] Resolve physical keys once into semantic control intents:
+  `NavigateLeft`, `NavigateRight`, `FocusNext`, `FocusPrevious`, and
+  `Activate`.
+- [ ] Map Left and `h` to `NavigateLeft`; map Right and `l` to
+  `NavigateRight`. Consumers must not inspect which physical alias produced the
+  intent.
+- [ ] Preserve text-entry precedence so `h` and `l` type while arrow keys move
+  the caret in text inputs.
+- [ ] Replace ActionBar mechanics with one horizontal `ButtonList` component.
+- [ ] Give every button a stable focus ID. Tab and Shift-Tab traverse buttons
+  individually and wrap through the containing form.
+- [ ] Make a standalone ButtonList wrap within itself.
+- [ ] Preserve Left/Right spatial traversal, Enter activation, and
+  click-to-focus-and-activate behavior.
+- [ ] Keep ButtonList horizontal until another orientation has a concrete
+  consumer.
+
+### Follow-up Phase B: settings and construction
+
+- [ ] Add an `internal/settings` package that owns the schema, config path,
+  load, and atomic save.
+- [ ] Load one settings snapshot before constructing the initial layout and
+  pass that snapshot and store into the TUI through explicit construction
+  options.
+- [ ] Keep all dialog bodies allocated on `Model`; loading values and showing a
+  dialog are separate state changes.
+- [ ] Use `Model.Init` only for runtime commands such as terminal background
+  and capability probes. Return independent startup commands through
+  `tea.Batch` or ordered commands through `tea.Sequence`.
+- [ ] Make tests able to construct a model from an explicit initial settings
+  snapshot without touching global paths.
+- [ ] Pilot exactly one `teatest/v2` program-level chrome-lab smoke at a fixed
+  size. Send non-timed messages, quit explicitly, and assert final model state
+  plus stable output fragments.
+- [ ] Do not use `teatest.WaitFor`, raw escape-stream goldens, animation, or
+  clipboard timers. Remove the dependency if the pilot catches no behavior
+  distinct from direct model and `headless-terminal` tests.
+
+### Follow-up Phase C: command resolver and shortcut presentation
+
+- [ ] Make the application binding declarations the sole source for dispatch,
+  collision checks, and contextual Help.
+- [ ] Remove manual physical-key conditions and the superseded key map after
+  every current command has a semantic binding.
+- [ ] Present the preference as `Shortcut style`: Auto, Mac, or Standard.
+- [ ] Keep `super` as the normalized Bubble Tea chord and render it as `cmd`
+  under the Mac shortcut style.
+- [ ] Resolve `Primary` to Command in Mac mode and Control in Standard mode.
+  Auto chooses the platform default while remaining explicitly overridable for
+  remote terminals.
+- [ ] Use Primary+S, Primary+A, Primary+B, and Primary+P where terminal
+  conventions permit. Do not use Command+Comma because terminals commonly
+  reserve it.
+- [ ] Keep shortcut profile, terminal keyboard capability, and displayed chord
+  vocabulary as separate inputs.
+
+### Follow-up Phase D: dialog ownership
+
+- [ ] Replace root callbacks that accept `*Model` with one small stateful dialog
+  body boundary.
+- [ ] Let the dialog controller own the active ID, shell, placement, pointer
+  capture, common Back/outside behavior, and message routing.
+- [ ] Let each body own its form or picker, local focus, editable values,
+  scopes, text-capture policy, rendering, and local updates.
+- [ ] Construct bodies once and expose typed open/reset methods such as
+  `OpenSave`, `OpenPreferences`, and `OpenNotice`; do not pass untyped values.
+- [ ] Emit semantic cross-boundary messages for preference preview/save/cancel,
+  document save, export, and notice dismissal.
+- [ ] Keep field, picker, scroll, and local focus messages inside the active
+  body.
+- [ ] Arrange one modal rectangle, derive the body rectangle from its shell,
+  and use that same plan for rendering and pointer input. Remove preparatory
+  geometry mutation during rendering.
+
+Root handles semantic dialog messages only to perform application effects:
+
+- apply or restore theme, shortcut, and router previews;
+- persist settings and promote a successful preference draft;
+- validate and write documents;
+- render selections and request clipboard writes;
+- clear notices and restore the previous surface.
+
+Persistence failures keep the owning dialog and its current draft open.
+
+### Follow-up Phase E: preference previews and semantic tints
+
+- [ ] Treat each Preferences session as a baseline plus an editable draft.
+- [ ] Preview theme selection, routing costs, and Shortcut style immediately.
+- [ ] Restore the baseline on Cancel, Back, outside click, or other close
+  without save.
+- [ ] Write settings before committing layout-backed preview transactions.
+  Failed writes retain the preview and permit retry or cancel.
+- [ ] Promote the draft to the new baseline only after persistence succeeds.
+- [ ] Adapt `bubbletint/v2` behind `internal/tui/theme.go`; chrome components
+  consume only application semantic theme roles.
+- [ ] Store independent dark and light tint IDs. Select the registered light
+  tint when `tea.BackgroundColorMsg.IsDark()` is false and the dark tint
+  otherwise.
+- [ ] Populate the selectors from `DefaultDarkTints` and
+  `DefaultLightTints`; do not assume the two lists form pairs.
+- [ ] Continue inheriting the terminal background rather than painting the
+  canvas.
+
+### Follow-up Phase F: interaction-state regions
+
+- [ ] Enumerate the current root interaction flags and assign each to one
+  orthogonal region: active tool, longer-lived session, pointer gesture, click
+  tracker, or render cache.
+- [ ] Represent the pointer gesture as one tagged concrete state so mutually
+  exclusive gestures cannot coexist.
+- [ ] Represent connection editing as a concrete session plus connection
+  gesture. Keep previews separate from layout mutation and transact only on a
+  valid commit.
+- [ ] Give move, resize, rectangle creation, duplication, keyboard movement,
+  and label editing explicit transaction ownership and Finish, Cancel, and
+  Interrupt behavior.
+- [ ] Preserve interruption semantics: commit the last visible real-layout
+  placement and discard preview-only state.
+- [ ] Route behavior through one small exhaustive interaction switch plus
+  isolated handlers. Adding a tool should add a declaration, binding, concrete
+  state, tests, and one dispatch case rather than extending conditions across
+  root methods.
+- [ ] Move dialog-local fields out of `Model` as Phase D bodies assume
+  ownership; do not create a global editor FSM.
+
+### Follow-up Phase G: sidebar geometry
+
+- [ ] Keep the navigation anchored to terminal/workspace geometry so its screen
+  rectangle and width remain static while the sidebar moves.
+- [ ] Measure and render the sidebar at its full target width throughout a
+  transition.
+- [ ] Translate the full pane from outside the screen and clip it to the current
+  visible extent. Never remeasure the pane to the visible extent.
+- [ ] In docked placement, move the canvas origin one cell for every revealed
+  sidebar cell. In drawer placement, keep the canvas fixed.
+- [ ] Derive sidebar content placement, visible hit rectangle, and canvas host
+  from the same integer visible extent.
+- [ ] Test constant content width and wrapping, fixed navigation bounds, exact
+  sidebar/canvas tiling, visible-only pointer hits, resize, reversal, exact
+  endpoints, and unchanged document viewport coordinates.
+
+For a sidebar width `W` and visible extent `E`:
+
+```text
+content: x = -W + E, width = W
+visible: x = 0,      width = E
+canvas:  x = E,      width = terminal width - E   (docked only)
+```
+
+### Follow-up Phase H: sidebar motion policy
+
+- [ ] Replace the current easing implementation with a small private scalar
+  transition type backed initially by `harmonica`.
+- [ ] Keep `harmonica` types and floating-point position/velocity inside the
+  transition implementation. Workspace, sidebar, rendering, and input consume
+  only the rounded integer extent and whether motion remains active.
+- [ ] Give the transition only algorithm-neutral operations: retarget, advance
+  by a time delta, snap, read the current extent, and report whether it is
+  moving.
+- [ ] Keep Bubble Tea tick scheduling, surface arrangement, focus, pointer
+  routing, and invalidation outside the transition.
+- [ ] Preserve position when retargeting. Preserve velocity only when it points
+  toward the new target; otherwise clear it.
+- [ ] Use a fixed 60 Hz cadence, critical damping, integer-cell publication,
+  and exact endpoint snapping. Rearrange only when the published cell changes.
+- [ ] Make motion disabling snap through the same endpoint path.
+- [ ] Test algorithm-independent behavior at the sidebar/workspace boundary:
+  no jumps, valid extents, safe reversal, resize retargeting, exact settling,
+  and identical disabled-motion endpoints.
+- [ ] Limit spring-specific tests to the private transition type. Replacing the
+  spring with easing should require changing only that implementation and its
+  focused tests.
+
+Do not introduce a public animation interface or configurable animation
+framework. The private scalar boundary provides replaceability without adding
+speculative generality.
+
 ## Later Feature Sweeps
 
 Track these separately after the foundation proves stable:
@@ -824,6 +1094,15 @@ decision log when the relevant phase supplies evidence.
 | 2026-07-28 | Edit TextInput values as grapheme clusters and clip them by display cells. | Combining marks and wide glyphs then share one caret, paste, pointer, and rendering model without leaking Unicode arithmetic into applications. |
 | 2026-07-28 | Delete `flex` and `numinput`, but retain `modal`, `nav`, and `preferences`. | Chrome fully supersedes the former layout and numeric-control mechanics; the retained packages still own distinct application content or presentation policy. |
 | 2026-07-28 | Route concrete child messages separately in root Update. | Grouping message types forced unrelated mouse events to escape; concrete cases preserve semantic routing and the Phase 9 allocation envelope. |
+| 2026-07-29 | Store preferences under the XDG config path with no cache-path migration. | Configuration must survive cache cleanup, and the application has no existing users requiring compatibility logic. |
+| 2026-07-29 | Keep arranged-plan mouse hit testing and omit `bubblezone`. | Current layout plans already provide synchronous geometry shared by rendering and input. |
+| 2026-07-29 | Use semantic control intents and one ButtonList whose buttons participate in form focus order. | Components should consume navigation meaning rather than physical aliases, and Tab should reach every action. |
+| 2026-07-29 | Load settings once before model construction and reserve `Model.Init` for runtime commands. | Durable configuration determines initial layout while runtime probes naturally execute as Bubble Tea commands. |
+| 2026-07-29 | Give dialog bodies ownership of local state and let root handle only semantic application effects. | Root callbacks force unrelated body state onto an already oversized Model. |
+| 2026-07-29 | Model editor interactions as concrete orthogonal state regions with one exhaustive gesture dispatch. | Tagged states make exclusivity and transaction ownership reviewable without hiding flow in a registry framework. |
+| 2026-07-29 | Translate and clip a full-width sidebar while keeping navigation screen-anchored. | Stable measurement prevents text reflow, while one visible extent coordinates docked canvas movement and hit testing. |
+| 2026-07-29 | Isolate Harmonica behind a private scalar transition rather than a public animation framework. | Sidebar behavior depends on integer extent, not the interpolation algorithm, so a later easing replacement should remain local. |
+| 2026-07-29 | Pilot `teatest/v2` only for one program-level smoke and retain direct model plus real-PTY tests. | It exercises Bubble Tea program wiring but lacks PTY input decoding and uses real-time polling unsuitable for broad deterministic coverage. |
 
 ## Changed-File Ledger
 
@@ -842,6 +1121,7 @@ Update this table after each completed phase or reviewable slice.
 | 8 | `internal/tui/modal/{AGENTS.md,confirmation.go,confirmation_test.go,modal.go,modal_test.go}`, `internal/tui/{bindings,clipboard_test,modal,model,model_test,preferences,save,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Replace the modal enum with declarative dialog specs and distinct surfaces, add fit-driven placement and a reusable confirmation body, preserve application transactions, and cover current dialog lifecycles. |
 | 9 | `internal/tui/chrome/{AGENTS.md,motion.go,motion_test.go,surface.go,surface_test.go}`, `internal/tui/{bindings,model,sidebar,sidebar_test,theme,view,workspace}.go`, `internal/tui/cmd/chrome-lab/{README.md,main.go,main_test.go,smoke.sh}`, `internal/tui/CHROME_PLAN.md` | Add workspace-owned cell transitions, animated dock/drawer geometry, an application-declared sidebar Pane, placement-aware focus and dismissal, and deterministic lab/root PTY coverage. |
 | 10 | `go.mod`, `internal/tui/{AGENTS.md,bindings.go,clipboard_test.go,modal.go,model.go,model_test.go,preferences.go,save.go,theme.go}`, `internal/tui/chrome/{AGENTS.md,command_test.go,form.go,form_test.go,textinput.go,textinput_test.go}`, `internal/tui/clipboard/{AGENTS.md,clipboard.go,clipboard_test.go}`, `internal/tui/directorypicker/{AGENTS.md,directorypicker.go,directorypicker_test.go}`, `internal/tui/preferences/{AGENTS.md,preferences.go,preferences_test.go}`, `internal/tui/cmd/chrome-lab/{main.go,main_test.go,smoke.sh}`, deleted `internal/tui/flex/*`, deleted `internal/tui/numinput/*`, `internal/tui/CHROME_PLAN.md` | Add grapheme- and cell-aware text input, migrate Save and Export to declarative forms, isolate Huh filesystem navigation, remove superseded helpers and theme adapters, and record the final chrome architecture. |
+| Follow-up planning | `internal/tui/CHROME_PLAN.md` | Record post-migration ownership, settings, input, dialog, interaction, sidebar, motion, dependency, and verification decisions. |
 
 ## Verification Ledger
 
@@ -851,6 +1131,7 @@ passing command without preserving the investigated failure.
 | Date | Phase | Command | Result |
 | --- | --- | --- | --- |
 | 2026-07-28 | 0 | Documentation inspection only | Plan creation; no production code changed. |
+| 2026-07-29 | Follow-up planning | Documentation inspection only | Recorded the approved post-migration plan; no production code or dependencies changed. |
 | 2026-07-28 | 0 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` | Failed: `TestKeyboardEnhancementsAdvertiseSuperCopy` expects `super+c / ctrl+c`; model renders `cmd+c / ctrl+c`. Subpackages and `cmd/dg` passed. Resolve in Phase 1. |
 | 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` (sandboxed) | Blocked before compilation: Go could not create the module cache under `/Users/codey.oxley/go`. Re-ran with module-cache access. |
 | 2026-07-28 | 1 | `GOCACHE=/private/tmp/dg-codex-go-build go test ./internal/tui/... ./cmd/dg` (pre-change) | Failed only `TestKeyboardEnhancementsAdvertiseSuperCopy`: expected `super+c / ctrl+c`, got `cmd+c / ctrl+c`; all TUI subpackages and `cmd/dg` passed. |
