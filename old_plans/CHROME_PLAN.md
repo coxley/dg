@@ -46,6 +46,18 @@ The migration must:
   failure artifacts until experience demonstrates a specific need.
 - Implement all future sidebar content as part of the foundational migration.
 
+## Later Feature Sweeps
+
+Track these separately after the foundation proves stable:
+
+- [ ] Additional floating action menus.
+- [ ] Recent saved and unsaved diagram browser.
+- [ ] Undo-history sidebar content and navigation.
+- [ ] Layers and object-ID tree.
+- [ ] Unsaved-close confirmation dialog.
+- [ ] Arbitrary user key rebinding, import/export, and conflict UI.
+- [ ] Accessibility behavior for custom form controls.
+
 ## References
 
 - `AGENTS.md` and `internal/tui/AGENTS.md` define the project and frontend
@@ -996,22 +1008,6 @@ Do not introduce a public animation interface or configurable animation
 framework. The private scalar boundary provides replaceability without adding
 speculative generality.
 
-## Later Feature Sweeps
-
-Track these separately after the foundation proves stable:
-
-- [ ] Additional floating action menus.
-- [ ] Recent saved and unsaved diagram browser.
-- [ ] Undo-history sidebar content and navigation.
-- [ ] Layers and object-ID tree.
-- [ ] Unsaved-close confirmation dialog.
-- [ ] Persisted Help visibility, position, and size.
-- [ ] Persisted sidebar visibility, width, selected section, and focus target.
-- [ ] User-configurable motion disabling or reduced-motion detection.
-- [ ] Arbitrary user key rebinding, import/export, and conflict UI.
-- [ ] Accessibility behavior for custom form controls.
-- [ ] Optional committed screen goldens if structural tests miss recurring visual
-  defects.
 
 ## Risk Register
 
