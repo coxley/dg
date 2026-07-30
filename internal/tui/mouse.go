@@ -10,7 +10,10 @@ import (
 	"github.com/coxley/dg/layout"
 )
 
-const reconnectDragRadius = 3
+const (
+	reconnectDragRadius  = 3
+	connectionSnapRadius = 2
+)
 
 func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	point, ok := m.documentPoint(mouse.X, mouse.Y)
@@ -78,6 +81,7 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	}
 	if m.interaction.idle() && mouse.Mod.Contains(tea.ModCtrl) {
 		m.geo.Selection().Toggle(hit)
+		m.refreshSelectionHighlight()
 		m.interaction.resetGesture()
 		m.status = ""
 		return
@@ -199,7 +203,7 @@ func (m *Model) prioritizeSelectedEdge() {
 
 func (m *Model) updateConnectionClick(point layout.Point) {
 	if m.interaction.session.kind != sessionConnection {
-		portID, ok := m.usablePortAt(point)
+		portID, ok := m.nearestConnectionPort(point, layout.NoPortID)
 		if !ok {
 			m.status = dragFromSource
 			return
@@ -518,22 +522,53 @@ func (m *Model) updateConnectionRelease(mouse tea.Mouse) {
 			m.cancelMode()
 			return
 		}
-		m.status = "select a destination port"
+		m.clearConnection()
+		m.status = dragFromSource
 		return
 	}
 	m.cursor = point
 	m.refreshHits()
 	m.refreshConnectionPreview()
-	destination, ok := m.usablePortAt(point)
-	if !ok || destination == connection.source {
+	destination, ok := m.nearestConnectionPort(point, connection.source)
+	if !ok {
 		if connection.reconnect {
 			m.cancelMode()
 			return
 		}
-		m.status = "drag to a destination port"
+		m.clearConnection()
+		m.status = dragFromSource
 		return
 	}
 	m.completeConnectionTo(destination)
+}
+
+func (m *Model) nearestConnectionPort(
+	point layout.Point,
+	excluded uint32,
+) (uint32, bool) {
+	best := layout.NoPortID
+	bestDistance := uint64(connectionSnapRadius + 1)
+	for dy := -connectionSnapRadius; dy <= connectionSnapRadius; dy++ {
+		for dx := -connectionSnapRadius; dx <= connectionSnapRadius; dx++ {
+			distance := uint64(max(dx, -dx) + max(dy, -dy))
+			if distance > connectionSnapRadius {
+				continue
+			}
+			candidate, ok := movePoint(point, dx, dy)
+			if !ok {
+				continue
+			}
+			portID, ok := m.usablePortAt(candidate)
+			if !ok || portID == excluded ||
+				distance > bestDistance ||
+				distance == bestDistance && portID >= best {
+				continue
+			}
+			best = portID
+			bestDistance = distance
+		}
+	}
+	return best, best != layout.NoPortID
 }
 
 func (m *Model) updateMouseWheel(mouse tea.Mouse) {

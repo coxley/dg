@@ -3,10 +3,12 @@ package canvas
 
 import (
 	"fmt"
+	"sort"
 
 	"charm.land/lipgloss/v2"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
+	"github.com/rivo/uniseg"
 )
 
 // FrameID identifies a retained canvas frame.
@@ -29,11 +31,21 @@ type Styles struct {
 type Span struct {
 	Start int
 	End   int
+
+	checkpointStart int
+	checkpointEnd   int
+	indexed         bool
+}
+
+type rowCheckpoint struct {
+	byteOffset int
+	column     uint32
 }
 
 type retainedFrame struct {
-	frame render.Frame
-	rows  []Span
+	frame       render.Frame
+	rows        []Span
+	checkpoints []rowCheckpoint
 }
 
 // Model owns render encoders, retained frames, row indexes, and styles.
@@ -113,6 +125,7 @@ func (m *Model) Clear(id FrameID) {
 	retained.frame.Bounds = layout.Rect{}
 	retained.frame.Text = retained.frame.Text[:0]
 	retained.rows = retained.rows[:0]
+	retained.checkpoints = retained.checkpoints[:0]
 }
 
 // Frame returns a retained frame.
@@ -134,10 +147,67 @@ func (m Model) Rows(id FrameID) []Span {
 	return m.frames[id].rows
 }
 
+// Row returns a row suffix beginning at a grapheme boundary near documentX.
+func (m *Model) Row(id FrameID, row int, documentX uint32) ([]byte, uint32) {
+	retained := &m.frames[id]
+	if row < 0 || row >= len(retained.rows) {
+		return nil, retained.frame.Bounds.Min.X
+	}
+	span := &retained.rows[row]
+	rowOrigin := retained.frame.Bounds.Min.X
+	if documentX <= rowOrigin {
+		return retained.frame.Text[span.Start:span.End], rowOrigin
+	}
+	if documentX >= retained.frame.Bounds.Max().X {
+		return nil, documentX
+	}
+	if !span.indexed {
+		retained.indexRow(span)
+	}
+	checkpoints := retained.checkpoints[span.checkpointStart:span.checkpointEnd]
+	target := documentX - rowOrigin
+	index := sort.Search(len(checkpoints), func(i int) bool {
+		return checkpoints[i].column > target
+	}) - 1
+	checkpoint := checkpoints[max(index, 0)]
+	return retained.frame.Text[checkpoint.byteOffset:span.End],
+		rowOrigin + checkpoint.column
+}
+
 func (m *Model) retain(id FrameID, frame render.Frame) {
 	retained := &m.frames[id]
 	retained.frame = frame
 	retained.rows = indexRows(retained.rows, frame.Text)
+	retained.checkpoints = retained.checkpoints[:0]
+}
+
+func (f *retainedFrame) indexRow(span *Span) {
+	const stride = uint32(32)
+
+	span.checkpointStart = len(f.checkpoints)
+	f.checkpoints = append(f.checkpoints, rowCheckpoint{
+		byteOffset: span.Start,
+	})
+	row := f.frame.Text[span.Start:span.End]
+	byteOffset := span.Start
+	var column, previous uint32
+	state := -1
+	for len(row) != 0 {
+		cluster, rest, width, nextState := uniseg.FirstGraphemeCluster(row, state)
+		row, state = rest, nextState
+		byteOffset += len(cluster)
+		column += uint32(width)
+		if column-previous < stride {
+			continue
+		}
+		f.checkpoints = append(f.checkpoints, rowCheckpoint{
+			byteOffset: byteOffset,
+			column:     column,
+		})
+		previous = column
+	}
+	span.checkpointEnd = len(f.checkpoints)
+	span.indexed = true
 }
 
 func indexRows(dst []Span, text []byte) []Span {

@@ -83,7 +83,7 @@ type interactionRenderCache struct {
 	connectionRaster   []layout.RasterCell
 	duplicateLayout    *layout.Layout
 	duplicateHighlight []bool
-	moveHighlight      []bool
+	selectionHighlight []bool
 }
 
 func (c *interactionRenderCache) clearDuplicate(canvas *canvasview.Model) {

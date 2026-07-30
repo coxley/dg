@@ -621,16 +621,10 @@ func (l *Layout) previewRoute(
 	var destinations [4]Port
 	var destinationPorts [4]uint32
 	destinationCount := 0
-	for portID, port := range l.Ports {
-		if uint32(portID) != sourcePort &&
-			l.graph.PortExists(uint32(portID)) &&
-			l.PortUsable(uint32(portID)) &&
-			port.Anchor == point {
-			destinations[0] = port
-			destinationPorts[0] = uint32(portID)
-			destinationCount = 1
-			break
-		}
+	if portID, ok := l.usablePortAt(point, sourcePort); ok {
+		destinations[0] = l.Ports[portID]
+		destinationPorts[0] = portID
+		destinationCount = 1
 	}
 	if destinationCount == 0 {
 		for _, dir := range [...]direction{north, east, south, west} {

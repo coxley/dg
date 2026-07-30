@@ -3,15 +3,31 @@ package tui
 import (
 	"slices"
 
+	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
 )
 
+func (m *Model) refreshSelectionHighlight() {
+	highlight := m.interaction.render.selectionHighlight[:0]
+	if !m.geo.Selection().Empty() {
+		highlight = appendSelectionHighlight(
+			highlight,
+			m.geo,
+			&m.canvas,
+			canvasview.BaseFrame,
+		)
+	}
+	m.interaction.render.selectionHighlight = highlight
+}
+
 func appendSelectionHighlight(
 	dst []bool,
 	geo *layout.Layout,
-	frame render.Frame,
+	canvas *canvasview.Model,
+	frameID canvasview.FrameID,
 ) []bool {
+	frame := canvas.Frame(frameID)
 	bounds := frame.Bounds
 	cellCount := int(bounds.Size.Width) * int(bounds.Size.Height)
 	dst = slices.Grow(dst[:0], cellCount)[:cellCount]
@@ -38,8 +54,14 @@ func appendSelectionHighlight(
 	}
 	for edgeID := range geo.Selection().Edges() {
 		points := geo.Edges[edgeID].Points
+		hit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
 		for i := 1; i < len(points); i++ {
-			markHighlightSegment(mark, points[i-1], points[i])
+			markHighlightSegment(func(point layout.Point) {
+				owner, ok := canvas.OwnerAt(frameID, point)
+				if ok && owner == hit {
+					mark(point)
+				}
+			}, points[i-1], points[i])
 		}
 	}
 	return dst

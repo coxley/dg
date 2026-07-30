@@ -25,6 +25,7 @@ func (a selectionArea) contains(point layout.Point) bool {
 
 func (m *Model) clearSelection() {
 	m.geo.Selection().Clear()
+	m.interaction.render.selectionHighlight = m.interaction.render.selectionHighlight[:0]
 }
 
 func (m *Model) hasSelection() bool {
@@ -41,6 +42,7 @@ func (m *Model) selectedCounts() (nodes, edges int) {
 
 func (m *Model) selectOnly(hit layout.Hit) {
 	m.geo.Selection().SelectOnly(hit)
+	m.refreshSelectionHighlight()
 }
 
 func (m *Model) hitSelected(hit layout.Hit) bool {
@@ -70,6 +72,7 @@ func (m *Model) expandSelection() {
 		afterNodes+afterEdges < m.liveObjectCount() {
 		m.geo.Selection().Expand()
 	}
+	m.refreshSelectionHighlight()
 	m.status = ""
 }
 
@@ -93,6 +96,7 @@ func (m *Model) finishAreaSelection() {
 		m.interaction.gesture.start,
 		m.interaction.gesture.point,
 	)
+	m.refreshSelectionHighlight()
 	m.interaction.resetGesture()
 	m.refreshHits()
 	m.status = ""

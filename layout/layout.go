@@ -146,14 +146,19 @@ type Layout struct {
 	explicitSizes []Size
 	// TODO: Should styles be a lookup table instead for more compactness? Or a list of
 	// int64 with each entry representing styles for 8 nodes / edges at once?
-	nodeStyles                 []NodeStyle
-	edgeStyles                 []EdgeStyle
-	padding                    Padding
-	router                     Router
-	scratch                    routeScratch
-	draftPorts                 []Port
-	portUsable                 []bool
-	draftUsable                []bool
+	nodeStyles  []NodeStyle
+	edgeStyles  []EdgeStyle
+	padding     Padding
+	router      Router
+	scratch     routeScratch
+	draftPorts  []Port
+	portUsable  []bool
+	draftUsable []bool
+	// portLookup maps anchors to the lowest usable port ID. Collisions retain
+	// every usable port at an anchor in ascending ID order.
+	portLookup                 map[Point]uint32
+	portLookupCollisions       map[Point][]uint32
+	portLookupHighWater        int
 	drawOrder                  []Hit
 	attachments                []Attachment
 	attachmentBuildRollback    attachmentBuildSnapshot
@@ -330,6 +335,9 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		l.selection.Toggle(Hit{ID: nodeID, Kind: HitNode})
 	}
 	for edgeID, edge := range l.graph.Edges {
+		if !l.graph.EdgeExists(uint32(edgeID)) {
+			continue
+		}
 		if uint64(edge.PortA) >= uint64(len(portMap)) ||
 			uint64(edge.PortB) >= uint64(len(portMap)) {
 			continue
@@ -343,7 +351,7 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		}
 		duplicateID, err := l.ConnectPorts(portMap[edge.PortA], portMap[edge.PortB])
 		if err != nil {
-			return err
+			return fmt.Errorf("duplicate edge %d: %w", edgeID, err)
 		}
 		if err := l.SetEdgeStyle(duplicateID, l.edgeStyles[edgeID]); err != nil {
 			return err
@@ -798,6 +806,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		}
 	}
 	for _, portID := range l.graph.Nodes[nodeID].Ports {
+		l.removePortLookup(portID)
 		l.Ports[portID] = Port{}
 		l.portUsable[portID] = false
 	}
@@ -811,6 +820,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	l.attachments[nodeID] = Attachment{}
 	l.removeLayer(Hit{ID: nodeID, Kind: HitNode})
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
+	l.compactPortLookup()
 	if l.history != nil {
 		l.history.record(historyChange{
 			kind: historyDeleteNode,
@@ -853,6 +863,11 @@ func (l *Layout) PortUsable(portID uint32) bool {
 	return l.graph.PortExists(portID) &&
 		uint64(portID) < uint64(len(l.portUsable)) &&
 		l.portUsable[portID]
+}
+
+// UsablePortAt returns the lowest live usable port ID anchored at point.
+func (l *Layout) UsablePortAt(point Point) (uint32, bool) {
+	return l.usablePortAt(point, NoPortID)
 }
 
 // EdgePorts returns an edge's endpoint port IDs.
@@ -1170,6 +1185,7 @@ func (l *Layout) initializeGeometry() error {
 	l.attachments = make([]Attachment, len(l.graph.Nodes))
 	l.Ports = make([]Port, len(l.graph.Ports))
 	l.portUsable = make([]bool, len(l.graph.Ports))
+	l.initializePortLookup()
 	l.Edges = make([]Edge, len(l.graph.Edges))
 	l.edgeStyles = make([]EdgeStyle, len(l.graph.Edges))
 	if err := l.initializeDrawOrder(); err != nil {
@@ -1311,9 +1327,103 @@ func sidePosition(point Point, rect Rect, side ir.Side) (position, length uint32
 
 func (l *Layout) commitNodePorts(nodeID uint32) {
 	for i, portID := range l.graph.Nodes[nodeID].Ports {
+		l.removePortLookup(portID)
 		l.Ports[portID] = l.draftPorts[i]
 		l.portUsable[portID] = l.draftUsable[i]
+		if l.portUsable[portID] {
+			l.addPortLookup(portID)
+		}
 	}
+}
+
+func (l *Layout) initializePortLookup() {
+	l.portLookup = make(map[Point]uint32)
+	l.portLookupCollisions = make(map[Point][]uint32)
+	l.portLookupHighWater = 0
+}
+
+func (l *Layout) addPortLookup(portID uint32) {
+	point := l.Ports[portID].Anchor
+	head, ok := l.portLookup[point]
+	if !ok {
+		l.portLookup[point] = portID
+		l.portLookupHighWater = max(l.portLookupHighWater, len(l.portLookup))
+		return
+	}
+	ports := l.portLookupCollisions[point]
+	if len(ports) == 0 {
+		ports = append(ports, head)
+	}
+	index, found := slices.BinarySearch(ports, portID)
+	if found {
+		return
+	}
+	ports = slices.Insert(ports, index, portID)
+	l.portLookupCollisions[point] = ports
+	l.portLookup[point] = ports[0]
+}
+
+func (l *Layout) removePortLookup(portID uint32) {
+	if uint64(portID) >= uint64(len(l.portUsable)) || !l.portUsable[portID] {
+		return
+	}
+	point := l.Ports[portID].Anchor
+	head, ok := l.portLookup[point]
+	if !ok {
+		return
+	}
+	ports := l.portLookupCollisions[point]
+	if len(ports) == 0 {
+		if head == portID {
+			delete(l.portLookup, point)
+		}
+		return
+	}
+	index, found := slices.BinarySearch(ports, portID)
+	if !found {
+		return
+	}
+	ports = slices.Delete(ports, index, index+1)
+	if len(ports) == 1 {
+		l.portLookup[point] = ports[0]
+		delete(l.portLookupCollisions, point)
+		return
+	}
+	l.portLookup[point] = ports[0]
+	l.portLookupCollisions[point] = ports
+}
+
+func (l *Layout) compactPortLookup() {
+	if l.portLookupHighWater < 64 ||
+		len(l.portLookup)*4 >= l.portLookupHighWater {
+		return
+	}
+	l.rebuildPortLookup()
+}
+
+func (l *Layout) rebuildPortLookup() {
+	l.initializePortLookup()
+	for portID := range l.Ports {
+		id := uint32(portID)
+		if l.PortUsable(id) {
+			l.addPortLookup(id)
+		}
+	}
+}
+
+func (l *Layout) usablePortAt(point Point, excluded uint32) (uint32, bool) {
+	portID, ok := l.portLookup[point]
+	if !ok {
+		return 0, false
+	}
+	if portID == excluded {
+		ports := l.portLookupCollisions[point]
+		if len(ports) < 2 {
+			return 0, false
+		}
+		portID = ports[1]
+	}
+	return portID, true
 }
 
 func cloneGraph(graph ir.Graph) ir.Graph {

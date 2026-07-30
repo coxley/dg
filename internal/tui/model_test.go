@@ -1473,7 +1473,7 @@ func newHelpScenarioModel(
 			Y:      int(model.geo.Ports[source].Anchor.Y),
 			Button: tea.MouseLeft,
 		})
-		updateModel(t, model, tea.MouseReleaseMsg{
+		updateModel(t, model, tea.MouseMotionMsg{
 			X:      int(blank.X),
 			Y:      int(blank.Y),
 			Button: tea.MouseLeft,
@@ -2733,19 +2733,16 @@ func TestModelCreatesNodesWithEnterAndEscape(t *testing.T) {
 	require.False(t, model.geo.NodeExists(escaped))
 }
 
-func TestModelConnectsSelectedPorts(t *testing.T) {
+func TestModelLineToolWaitsForDragSource(t *testing.T) {
 	t.Parallel()
 
-	model, left, right := newTwoNodeModel(t)
+	model, left, _ := newTwoNodeModel(t)
 	source := portExiting(t, model, left, 1)
-	destination := portExiting(t, model, right, -1)
 
 	selectHit(t, model, layout.Hit{ID: source, Kind: layout.HitPort})
-	updateModel(t, model, keyPress('c', "c"))
-	require.Equal(t, modeNavigate, model.interaction.mode())
 	updateModel(t, model, keyPress('l', "l"))
 	require.Equal(t, modeConnect, model.interaction.mode())
-	require.Equal(t, source, model.interaction.session.connection.source)
+	require.Equal(t, sessionNone, model.interaction.session.kind)
 	anchors := make(map[layout.Point]struct{})
 	for portID := range model.geo.NodePorts(left) {
 		if !model.geo.PortUsable(portID) {
@@ -2758,12 +2755,9 @@ func TestModelConnectsSelectedPorts(t *testing.T) {
 	require.Len(t, anchors, 6)
 	require.False(t, model.highlightedPoint(model.geo.Nodes[left].Rect.Min))
 
-	selectHit(t, model, layout.Hit{ID: destination, Kind: layout.HitPort})
 	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-	require.Equal(t, modeNavigate, model.interaction.mode())
-	require.Len(t, model.geo.Edges, 1)
-	require.True(t, model.geo.EdgeExists(0))
-	require.NotEmpty(t, model.geo.Edges[0].Points)
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Empty(t, model.geo.Edges)
 }
 
 func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
@@ -2773,27 +2767,37 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 15})
 	require.NoError(t, model.geo.PlaceNode(left, model.geo.Nodes[left].Rect.Min.Add(0, 6)))
 	require.NoError(t, model.geo.PlaceNode(right, model.geo.Nodes[right].Rect.Min.Add(0, 6)))
+	third, err := model.geo.NewNodeAt("third", layout.NewPoint(35, 8))
+	require.NoError(t, err)
 	require.NoError(t, model.rebuild())
 	sourceID := portExiting(t, model, left, 1)
 	destinationID := portExiting(t, model, right, -1)
 	source := model.geo.Ports[sourceID]
 	destination := model.geo.Ports[destinationID]
+	press := source.Anchor.Add(1, 0)
+	drop := destination.Anchor.Add(1, 0)
 
 	updateModel(t, model, keyPress('l', "l"))
 	require.Equal(t, modeConnect, model.interaction.mode())
 	updateModel(t, model, tea.MouseClickMsg{
-		X:      int(source.Anchor.X),
-		Y:      int(source.Anchor.Y),
+		X:      int(press.X),
+		Y:      int(press.Y),
 		Button: tea.MouseLeft,
 	})
 	require.Equal(t, gestureConnection, model.interaction.gesture.kind)
 	require.Equal(t, sourceID, model.interaction.session.connection.source)
 
 	updateModel(t, model, tea.MouseMotionMsg{
-		X:      int(destination.Anchor.X),
-		Y:      int(destination.Anchor.Y),
+		X:      int(drop.X),
+		Y:      int(drop.Y),
 		Button: tea.MouseLeft,
 	})
+	preview := model.interaction.render.connectionPreview
+	require.Equal(
+		t,
+		destination.Anchor,
+		preview[len(preview)-1],
+	)
 	middle := layout.NewPoint(
 		(source.Exit.X+destination.Anchor.X)/2,
 		source.Exit.Y,
@@ -2823,12 +2827,78 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 	require.Equal(t, '┤', glyph)
 
 	updateModel(t, model, tea.MouseReleaseMsg{
-		X:      int(destination.Anchor.X),
-		Y:      int(destination.Anchor.Y),
+		X:      int(drop.X),
+		Y:      int(drop.Y),
 		Button: tea.MouseLeft,
 	})
 	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.True(t, model.geo.EdgeExists(0))
+
+	updateModel(t, model, keyPress('l', "l"))
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Equal(t, sessionNone, model.interaction.session.kind)
+	secondSource := model.geo.Ports[portExiting(t, model, right, 1)].Anchor
+	secondDestination := model.geo.Ports[portExiting(t, model, third, -1)].Anchor
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(secondSource.X),
+		Y:      int(secondSource.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(secondDestination.X),
+		Y:      int(secondDestination.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      int(secondDestination.X),
+		Y:      int(secondDestination.Y),
+		Button: tea.MouseLeft,
+	})
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.True(t, model.geo.EdgeExists(1))
+}
+
+func TestModelLineDragMissClearsSource(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 50, Height: 20})
+	source := model.geo.Ports[portExiting(t, model, left, 1)].Anchor
+	destination := model.geo.Ports[portExiting(t, model, right, -1)].Anchor
+	miss := layout.NewPoint((source.X+destination.X)/2, source.Y+5)
+
+	updateModel(t, model, keyPress('l', "l"))
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(source.X),
+		Y:      int(source.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      int(miss.X),
+		Y:      int(miss.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      int(miss.X),
+		Y:      int(miss.Y),
+		Button: tea.MouseLeft,
+	})
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Equal(t, sessionNone, model.interaction.session.kind)
+
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(destination.X),
+		Y:      int(destination.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      int(destination.X),
+		Y:      int(destination.Y),
+		Button: tea.MouseLeft,
+	})
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Equal(t, sessionNone, model.interaction.session.kind)
+	require.Empty(t, model.geo.Edges)
 }
 
 func TestModelBlurDiscardsConnectionPreview(t *testing.T) {
@@ -2951,7 +3021,7 @@ func TestModelConnectionPreviewRoutesAroundNodes(t *testing.T) {
 	}
 }
 
-func TestModelReconnectsNearestEdgeEndpoint(t *testing.T) {
+func TestModelLineToolDoesNotReconnectSelectedEdge(t *testing.T) {
 	t.Parallel()
 
 	model, left, right := newTwoNodeModel(t)
@@ -2959,25 +3029,13 @@ func TestModelReconnectsNearestEdgeEndpoint(t *testing.T) {
 	portB := portExiting(t, model, right, -1)
 	edgeID, err := model.geo.ConnectPorts(portA, portB)
 	require.NoError(t, err)
-	third, err := model.geo.NewNodeAt("third", layout.NewPoint(35, 8))
-	require.NoError(t, err)
-	replacement := portExiting(t, model, third, -1)
 	require.NoError(t, model.rebuild())
 
 	selectHit(t, model, layout.Hit{ID: edgeID, Kind: layout.HitEdge})
 	updateModel(t, model, keyPress('l', "l"))
-	require.True(t, model.interaction.session.connection.reconnect)
-	oldPort := model.interaction.session.connection.oldPort
-	selectHit(t, model, layout.Hit{ID: replacement, Kind: layout.HitPort})
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-
-	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Equal(t, sessionNone, model.interaction.session.kind)
 	require.True(t, model.geo.EdgeExists(edgeID))
-	gotA, gotB, err := model.geo.EdgePorts(edgeID)
-	require.NoError(t, err)
-	require.Contains(t, []uint32{gotA, gotB}, replacement)
-	require.NotContains(t, []uint32{gotA, gotB}, oldPort)
-	require.NotEmpty(t, model.geo.Edges[edgeID].Points)
 }
 
 func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {

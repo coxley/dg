@@ -168,9 +168,7 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 func (m *Model) updateMovementCommand(command chrome.CommandID) {
 	switch command {
 	case commandActivate:
-		if m.interaction.mode() == modeConnect {
-			m.completeConnection()
-		}
+		return
 	case commandCancel:
 		m.cancelMode()
 	case commandFocusNext:

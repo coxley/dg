@@ -33,6 +33,7 @@ func (m *Model) View() tea.View {
 	}
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
+		frameID,
 		frame,
 		rows,
 		m.viewport,
@@ -272,6 +273,7 @@ func (m *Model) cursorPosition() (int, int, bool) {
 
 func (m *Model) appendViewport(
 	dst []byte,
+	frameID canvasview.FrameID,
 	frame render.Frame,
 	rows []canvasview.Span,
 	origin layout.Point,
@@ -298,14 +300,14 @@ func (m *Model) appendViewport(
 			continue
 		}
 		rowID := int(documentY - uint64(frame.Bounds.Min.Y))
+		rowOrigin := frame.Bounds.Min.X
 		if rowID < len(rows) {
-			span := rows[rowID]
-			row = frame.Text[span.Start:span.End]
+			row, rowOrigin = m.canvas.Row(frameID, rowID, origin.X)
 		}
 		dst = m.appendViewportLine(
 			dst,
 			row,
-			frame.Bounds.Min.X,
+			rowOrigin,
 			origin.X,
 			documentY,
 			width,
@@ -557,16 +559,6 @@ func (m *Model) highlightKindAt(point layout.Point) highlightKind {
 		}
 		return highlightNone
 	}
-	if m.interaction.movingRigidly() {
-		if highlightContains(
-			m.interaction.render.moveHighlight,
-			m.canvas.Frame(canvasview.BaseFrame),
-			point,
-		) {
-			return highlightSelection
-		}
-		return highlightNone
-	}
 	if m.interaction.gesture.kind == gestureAreaSelection &&
 		m.marqueeArea().contains(point) {
 		return highlightSelection
@@ -582,21 +574,12 @@ func (m *Model) highlightKindAt(point layout.Point) highlightKind {
 		geo = m.interaction.render.duplicateLayout
 	}
 	if !geo.Selection().Empty() {
-		for nodeID := range geo.Selection().Nodes() {
-			if m.highlightForHit(
-				layout.Hit{ID: nodeID, Kind: layout.HitNode},
-				point,
-			) {
-				return highlightSelection
-			}
-		}
-		for edgeID := range geo.Selection().Edges() {
-			if m.highlightForHit(
-				layout.Hit{ID: edgeID, Kind: layout.HitEdge},
-				point,
-			) {
-				return highlightSelection
-			}
+		if highlightContains(
+			m.interaction.render.selectionHighlight,
+			m.canvas.Frame(canvasview.BaseFrame),
+			point,
+		) {
+			return highlightSelection
 		}
 		return highlightNone
 	}
@@ -639,13 +622,7 @@ func (m *Model) portAt(point layout.Point) bool {
 }
 
 func (m *Model) usablePortAt(point layout.Point) (uint32, bool) {
-	for i := range m.geo.Ports {
-		portID := uint32(i)
-		if m.geo.PortUsable(portID) && m.geo.Ports[i].Anchor == point {
-			return portID, true
-		}
-	}
-	return 0, false
+	return m.geo.UsablePortAt(point)
 }
 
 func (m *Model) connectionPreviewConnections(
@@ -680,15 +657,21 @@ func (m *Model) refreshConnectionPreview() {
 		return
 	}
 	var (
-		preview []layout.Point
-		err     error
+		preview     []layout.Point
+		err         error
+		destination = layout.NoPortID
+		target      = m.cursor
 	)
+	if portID, ok := m.nearestConnectionPort(m.cursor, connection.source); ok {
+		destination = portID
+		target = m.geo.Ports[portID].Anchor
+	}
 	style := m.connectionPreviewStyle()
 	if connection.reconnect {
 		preview, err = m.geo.PreviewRouteWithoutEdgeStyled(
 			m.interaction.render.connectionPreview[:0],
 			connection.source,
-			m.cursor,
+			target,
 			connection.edge,
 			style,
 		)
@@ -696,7 +679,7 @@ func (m *Model) refreshConnectionPreview() {
 		preview, err = m.geo.PreviewRouteStyled(
 			m.interaction.render.connectionPreview[:0],
 			connection.source,
-			m.cursor,
+			target,
 			style,
 		)
 	}
@@ -706,11 +689,6 @@ func (m *Model) refreshConnectionPreview() {
 		return
 	}
 	m.interaction.render.connectionPreview = preview
-	destination := layout.NoPortID
-	if portID, ok := m.usablePortAt(m.cursor); ok &&
-		portID != connection.source {
-		destination = portID
-	}
 	m.interaction.render.connectionRaster, err = m.canvas.RasterizeEdge(
 		m.interaction.render.connectionRaster[:0],
 		m.geo,

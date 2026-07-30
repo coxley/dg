@@ -412,6 +412,80 @@ func BenchmarkLayoutStress(b *testing.B) {
 	})
 }
 
+func BenchmarkLayoutHighWaterConnect(b *testing.B) {
+	for _, fixture := range []struct {
+		name  string
+		setup func(testing.TB) *Layout
+	}{
+		{name: "fresh_small", setup: newSmallConnectBenchmarkLayout},
+		{name: "shrunk_from_nodes", setup: newNodesHighWaterConnectBenchmarkLayout},
+		{name: "shrunk_from_stress", setup: newStressHighWaterConnectBenchmarkLayout},
+	} {
+		b.Run(fixture.name, func(b *testing.B) {
+			runtime.GC()
+			var before runtime.MemStats
+			runtime.ReadMemStats(&before)
+
+			geo := fixture.setup(b)
+
+			sourcePort, ok := geo.graph.PickCenterPort(0, ir.RightSide)
+			require.True(b, ok)
+			destinationPort, ok := geo.graph.PickCenterPort(1, ir.LeftSide)
+			require.True(b, ok)
+			destination := geo.Ports[destinationPort].Anchor
+			middle := NewPoint(
+				(geo.Ports[sourcePort].Anchor.X+destination.X)/2,
+				(geo.Ports[sourcePort].Anchor.Y+destination.Y)/2,
+			)
+			cursors := [...]Point{
+				geo.Ports[sourcePort].Exit,
+				middle,
+				destination,
+			}
+			var preview []Point
+			connect := func() uint32 {
+				for _, cursor := range cursors {
+					var err error
+					preview, err = geo.PreviewRoute(
+						preview[:0],
+						sourcePort,
+						cursor,
+					)
+					require.NoError(b, err)
+				}
+				edgeID, err := geo.ConnectPorts(sourcePort, destinationPort)
+				require.NoError(b, err)
+				require.NoError(b, geo.Build())
+				return edgeID
+			}
+
+			edgeID := connect()
+			require.NoError(b, geo.DeleteEdge(edgeID))
+
+			runtime.GC()
+			var after runtime.MemStats
+			runtime.ReadMemStats(&after)
+			liveBytes := uint64(0)
+			if after.HeapAlloc > before.HeapAlloc {
+				liveBytes = after.HeapAlloc - before.HeapAlloc
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				edgeID = connect()
+				require.NoError(b, geo.DeleteEdge(edgeID))
+			}
+			runtime.KeepAlive(geo)
+			benchmarkPreview = preview
+			b.ReportMetric(float64(liveBytes), "live-B")
+			b.ReportMetric(float64(len(geo.Nodes)), "node-slots")
+			b.ReportMetric(float64(len(geo.Ports)), "port-slots")
+			b.ReportMetric(float64(len(geo.Edges)), "edge-slots")
+		})
+	}
+}
+
 func TestLayoutBuildReusesScratch(t *testing.T) {
 	geo, _ := newBenchmarkLayout(t)
 	require.NoError(t, geo.Build())
@@ -482,6 +556,57 @@ func newStressBenchmarkLayout(tb testing.TB) *Layout {
 		benchmarkClusterCount*benchmarkClusterNodes,
 	)
 	require.Len(tb, geo.Edges, benchmarkClusterCount*2)
+	return geo
+}
+
+func newSmallConnectBenchmarkLayout(tb testing.TB) *Layout {
+	tb.Helper()
+
+	geo, err := New()
+	require.NoError(tb, err)
+	_, err = geo.NewNodeAt("foo", NewPoint(4, 0))
+	require.NoError(tb, err)
+	_, err = geo.NewNodeAt("bar", NewPoint(12, 0))
+	require.NoError(tb, err)
+	require.NoError(tb, geo.Build())
+	return geo
+}
+
+func newNodesHighWaterConnectBenchmarkLayout(tb testing.TB) *Layout {
+	tb.Helper()
+
+	geo := newSmallConnectBenchmarkLayout(tb)
+	for nodeID := 2; nodeID < benchmarkClusterCount*benchmarkClusterNodes; nodeID++ {
+		index := nodeID - 2
+		_, err := geo.NewNodeAt("x", NewPoint(
+			4+uint32(index%40)*12,
+			10+uint32(index/40)*9,
+		))
+		require.NoError(tb, err)
+	}
+	require.NoError(tb, geo.Build())
+	return shrinkConnectBenchmarkLayout(tb, geo)
+}
+
+func newStressHighWaterConnectBenchmarkLayout(tb testing.TB) *Layout {
+	tb.Helper()
+
+	geo := newStressBenchmarkLayout(tb)
+	return shrinkConnectBenchmarkLayout(tb, geo)
+}
+
+func shrinkConnectBenchmarkLayout(
+	tb testing.TB,
+	geo *Layout,
+) *Layout {
+	tb.Helper()
+
+	for nodeID := len(geo.Nodes) - 1; nodeID >= 2; nodeID-- {
+		require.NoError(tb, geo.DeleteNode(uint32(nodeID)))
+	}
+	require.True(tb, geo.NodeExists(0))
+	require.True(tb, geo.NodeExists(1))
+	require.NoError(tb, geo.Build())
 	return geo
 }
 

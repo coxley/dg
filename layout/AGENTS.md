@@ -162,7 +162,9 @@ lower-scoring valid result.
 
 `PreviewRoute` treats a point as a roaming port.
 `PreviewRouteWithoutEdge` omits a relocated edge from occupancy. Preview
-methods reuse scratch and do not mutate committed geometry or history.
+methods reuse scratch and do not mutate committed geometry or history. A
+coordinate index resolves a cursor on a usable port without scanning the
+ID-aligned port slice; overlapping ports retain the lowest live ID.
 
 ### Performance controls and fallbacks
 
@@ -182,10 +184,14 @@ Use the existing controls before adding another index or cache:
   prevents unusually large nodes from expanding the index without bound
 - route occupancy tracks active edge IDs so the heuristic only assumes
   `SharedStep` when exact-port sharing is possible
+- the usable-port coordinate index keeps preview destination lookup independent
+  of live and tombstoned port counts
 
 Profile `BenchmarkLayoutStress` before changing these controls. Its 200
 three-node clusters exercise preview and commit, selection movement,
 attachment, label editing, CPU, allocations, and retained live bytes.
+`BenchmarkLayoutHighWaterConnect` compares a fresh two-node layout with the
+same scene after deleting a 600-node high-water workload.
 
 Use profile children to choose the next change:
 

@@ -46,6 +46,10 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - the canvas covers the terminal and the centered toolbar floats above it
 - cursor display is limited to label editing
 - left drag moves objects or creates rectangles and lines
+- the line tool always waits for a fresh source drag; selecting a port or edge
+  before activation does not seed a connection or reconnect
+- a line press and release snap to the closest usable port within two Manhattan
+  cells
 - right drag resizes from the nearest corner
 - double-click restores automatic node sizing
 - Alt-drag duplicates selected nodes and their internal edges
@@ -73,6 +77,14 @@ Gloss-rendered navigation and highlight spans. Rendering every cell through
 `lipgloss.Style` causes large allocation and latency regressions.
 
 Profile drag changes with the existing TUI benchmarks and `go tool pprof`.
+`BenchmarkModelConnectionPreviewHighWater` sends Bubble Tea click and motion
+messages through the complete link-drag update and view path for fresh, active
+stress, and post-deletion layouts.
+`BenchmarkModelHorizontalScrollHighWater` measures motion and view generation
+near the far edge of the 200-cluster layout.
+`BenchmarkModelSelectionHighWater` measures selecting and clearing every
+cluster. `BenchmarkModelDragAllHighWater` measures rigid motion of the complete
+layout.
 
 ## Dialogs, settings, sidebar, and clipboard
 

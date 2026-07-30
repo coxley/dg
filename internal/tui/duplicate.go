@@ -214,7 +214,8 @@ func (m *Model) refreshDuplicateHighlight() {
 	m.interaction.render.duplicateHighlight = appendSelectionHighlight(
 		m.interaction.render.duplicateHighlight,
 		m.interaction.render.duplicateLayout,
-		m.canvas.Frame(canvasview.DuplicateFrame),
+		&m.canvas,
+		canvasview.DuplicateFrame,
 	)
 }
 

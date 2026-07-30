@@ -75,6 +75,24 @@ func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
 	require.False(t, geo.NodeExists(4))
 }
 
+func TestDuplicateSelectionReusesTombstones(t *testing.T) {
+	t.Parallel()
+
+	geo := newStressBenchmarkLayout(t)
+	for nodeID := len(geo.Nodes) - 1; nodeID >= benchmarkClusterNodes; nodeID-- {
+		require.NoError(t, geo.DeleteNode(uint32(nodeID)))
+	}
+	require.True(t, geo.Selection().SelectOnly(Hit{ID: 0, Kind: HitNode}))
+	require.True(t, geo.Selection().Toggle(Hit{ID: 1, Kind: HitNode}))
+	require.True(t, geo.Selection().Toggle(Hit{ID: 2, Kind: HitNode}))
+
+	require.NoError(t, geo.DuplicateSelection(30, 0))
+	require.NoError(t, geo.Build())
+	nodes, edges := geo.Selection().Counts()
+	require.Equal(t, benchmarkClusterNodes, nodes)
+	require.Equal(t, 2, edges)
+}
+
 func TestSetRouterIsUndoable(t *testing.T) {
 	t.Parallel()
 

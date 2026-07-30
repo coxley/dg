@@ -413,4 +413,5 @@ func (l *Layout) restoreAttachmentBuildState(state *attachmentBuildSnapshot) {
 	l.portUsable, state.portUsable = state.portUsable, l.portUsable
 	l.Edges, state.edges = state.edges, l.Edges
 	l.attachments, state.attachments = state.attachments, l.attachments
+	l.rebuildPortLookup()
 }

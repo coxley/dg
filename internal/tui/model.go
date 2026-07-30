@@ -632,11 +632,6 @@ func (m *Model) moveSelectedNodes(
 		if err := m.render(); err != nil {
 			return false, errors.Join(err, m.restoreMovedNodes())
 		}
-		m.interaction.render.moveHighlight = appendSelectionHighlight(
-			m.interaction.render.moveHighlight,
-			m.geo,
-			m.canvas.Frame(canvasview.BaseFrame),
-		)
 	} else if err := m.rebuildSelection(); err != nil {
 		return false, errors.Join(err, m.restoreMovedNodes())
 	}
@@ -759,20 +754,7 @@ func (m *Model) beginConnection() {
 	}
 	m.clearConnection()
 	m.interaction.tool = toolConnect
-	hit, ok := m.activeHit()
-	if !ok {
-		m.status = dragFromSource
-		return
-	}
-	if hit.Kind != layout.HitPort && hit.Kind != layout.HitEdge {
-		m.status = dragFromSource
-		return
-	}
-	if err := m.startConnection(hit); err != nil {
-		m.setError(err.Error())
-		return
-	}
-	m.status = ""
+	m.status = dragFromSource
 }
 
 func (m *Model) startConnection(hit layout.Hit) error {
@@ -803,19 +785,6 @@ func (m *Model) startConnection(hit layout.Hit) error {
 	}
 	m.refreshConnectionPreview()
 	return nil
-}
-
-func (m *Model) completeConnection() {
-	if m.interaction.session.kind != sessionConnection {
-		m.status = dragFromSource
-		return
-	}
-	hit, ok := m.activeHit()
-	if !ok || hit.Kind != layout.HitPort {
-		m.status = "select a destination port"
-		return
-	}
-	m.completeConnectionTo(hit.ID)
 }
 
 func (m *Model) completeConnectionTo(destination uint32) {
@@ -989,7 +958,6 @@ func (m *Model) finishMove() {
 	}
 	err := m.commitTransaction()
 	m.interaction.resetGesture()
-	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 	if err != nil {
 		m.setError(err.Error())
 	} else {
@@ -1000,7 +968,6 @@ func (m *Model) finishMove() {
 func (m *Model) rejectMove(cause error) {
 	rollbackErr := errors.Join(m.cancelTransaction(), m.render())
 	m.interaction.resetGesture()
-	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 	m.refreshHits()
 	m.setError(fmt.Errorf(
 		"placement rejected: %w",
@@ -1032,7 +999,6 @@ func (m *Model) interruptInteraction() {
 	m.clearConnection()
 	m.cancelDuplicateDrag()
 	m.interaction.resetGesture()
-	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 }
 
 func (m *Model) interruptMove() (placementErr, commitErr error) {
@@ -1117,11 +1083,13 @@ func (m *Model) rebuildSelection() error {
 func (m *Model) render() error {
 	if !hasGeometry(m.geo) {
 		m.canvas.Clear(canvasview.BaseFrame)
+		m.refreshSelectionHighlight()
 		return nil
 	}
 	if err := m.canvas.Render(canvasview.BaseFrame, m.geo); err != nil {
 		return fmt.Errorf("render layout: %w", err)
 	}
+	m.refreshSelectionHighlight()
 	return nil
 }
 

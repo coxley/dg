@@ -18,3 +18,6 @@ base and preview frames, and row indexes used by viewport rendering.
 
 Run `go test ./internal/tui/canvas` and the root TUI move/duplicate benchmarks
 after changing frame retention or rendering.
+
+`BenchmarkModelRenderHighWater` separates active node count, active raster
+bounds, and retained allocations after a large layout shrinks.

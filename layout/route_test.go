@@ -629,6 +629,43 @@ func TestPreviewRouteTreatsPointAsFloatingPort(t *testing.T) {
 	}
 }
 
+func TestUsablePortAtTracksLiveGeometry(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	first, err := geo.NewNodeAt("node", NewPoint(2, 2))
+	require.NoError(t, err)
+	second, err := geo.NewNodeAt("node", NewPoint(2, 2))
+	require.NoError(t, err)
+	firstPort, ok := geo.graph.PickCenterPort(first, ir.RightSide)
+	require.True(t, ok)
+	secondPort, ok := geo.graph.PickCenterPort(second, ir.RightSide)
+	require.True(t, ok)
+	point := geo.Ports[firstPort].Anchor
+	require.Equal(t, point, geo.Ports[secondPort].Anchor)
+
+	require.NoError(t, geo.BringToFront(Hit{ID: first, Kind: HitNode}))
+	portID, ok := geo.UsablePortAt(point)
+	require.True(t, ok)
+	require.Equal(t, firstPort, portID)
+	portID, ok = geo.usablePortAt(point, firstPort)
+	require.True(t, ok)
+	require.Equal(t, secondPort, portID)
+
+	require.NoError(t, geo.DeleteNode(first))
+	portID, ok = geo.UsablePortAt(point)
+	require.True(t, ok)
+	require.Equal(t, secondPort, portID)
+
+	require.NoError(t, geo.PlaceNode(second, NewPoint(20, 2)))
+	_, ok = geo.UsablePortAt(point)
+	require.False(t, ok)
+	portID, ok = geo.UsablePortAt(geo.Ports[secondPort].Anchor)
+	require.True(t, ok)
+	require.Equal(t, secondPort, portID)
+}
+
 func TestPreviewRouteWithoutEdgeValidatesEdge(t *testing.T) {
 	t.Parallel()
 
