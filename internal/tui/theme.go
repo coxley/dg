@@ -13,14 +13,11 @@ import (
 	tint "github.com/lrstanley/bubbletint/v2"
 )
 
-const (
-	defaultDarkTint  = "builtin_dark"
-	defaultLightTint = "builtin_light"
-)
-
 var (
-	darkTints  = tint.NewRegistry(tint.TintBuiltinDark, tint.DefaultDarkTints()...)
-	lightTints = tint.NewRegistry(tint.TintBuiltinLight, tint.DefaultLightTints()...)
+	defaultDarkTint  = tint.TintDuotoneDark
+	defaultLightTint = tint.TintBuiltinLight
+	darkTints        = tint.NewRegistry(tint.TintBuiltinDark, tint.DefaultDarkTints()...)
+	lightTints       = tint.NewRegistry(tint.TintBuiltinLight, tint.DefaultLightTints()...)
 )
 
 // Theme contains every terminal-facing visual style.
@@ -71,14 +68,20 @@ type saveStyles struct {
 
 // DefaultTheme returns the editor's default terminal theme.
 func DefaultTheme(dark bool) Theme {
-	return themeForTints(dark, defaultDarkTint, defaultLightTint)
+	if dark {
+		return convertTint(defaultDarkTint)
+	}
+	return convertTint(defaultLightTint)
 }
 
 func themeForTints(dark bool, darkID, lightID string) Theme {
-	theme := registeredTint(dark, darkID, lightID)
+	return convertTint(registeredTint(dark, darkID, lightID))
+}
+
+func convertTint(theme *tint.Tint) Theme {
 	focus := cmp.Or(theme.SelectionBg, theme.BrightBlue, theme.Blue)
 	text := cmp.Or(theme.Fg, theme.White, theme.BrightWhite)
-	muted := cmp.Or(theme.BrightBlack, theme.Black, theme.Fg)
+	muted := cmp.Or(theme.BrightWhite, theme.Black, theme.Fg)
 	port := cmp.Or(theme.BrightGreen, theme.Green, theme.Fg)
 	alert := cmp.Or(theme.BrightRed, theme.Red, theme.Fg)
 	plain := lipgloss.NewStyle()
@@ -163,7 +166,7 @@ func themeForTints(dark bool, darkID, lightID string) Theme {
 		Error:        plain.Foreground(alert),
 	}
 	return Theme{
-		Dark:   dark,
+		Dark:   theme.Dark,
 		TintID: theme.ID,
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().
@@ -178,9 +181,7 @@ func themeForTints(dark bool, darkID, lightID string) Theme {
 			Active: lipgloss.NewStyle().
 				Background(focus).
 				Foreground(text),
-			Hover: lipgloss.NewStyle().
-				Foreground(muted).
-				Underline(true),
+			Hover: lipgloss.NewStyle().Foreground(text),
 		},
 		Modal: modalview.Styles{
 			Container:       modal,
@@ -233,19 +234,22 @@ func themeForTints(dark bool, darkID, lightID string) Theme {
 }
 
 func registeredTint(dark bool, darkID, lightID string) *tint.Tint {
-	registry, id := lightTints, lightID
+	var id string
+	var fallback *tint.Tint
+	var reg *tint.Registry
 	if dark {
-		registry, id = darkTints, darkID
+		id = darkID
+		fallback = defaultDarkTint
+		reg = darkTints
+	} else {
+		id = lightID
+		fallback = defaultLightTint
+		reg = lightTints
 	}
-	if selected, ok := registry.GetTint(id); ok {
-		return selected
+	if tint, ok := reg.GetTint(id); ok {
+		return tint
 	}
-	if dark {
-		selected, _ := registry.GetTint(defaultDarkTint)
-		return selected
-	}
-	selected, _ := registry.GetTint(defaultLightTint)
-	return selected
+	return fallback
 }
 
 func tintOptions(registry *tint.Registry) []preferencesview.TintOption {

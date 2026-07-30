@@ -8,15 +8,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/internal/tui/chrome"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
-	"github.com/lrstanley/bubbletint/v2"
+	tint "github.com/lrstanley/bubbletint/v2"
 	"github.com/stretchr/testify/require"
 )
 
 func TestThemeUsesRegisteredTintForTerminalBackground(t *testing.T) {
 	t.Parallel()
 
-	dark := themeForTints(true, "dracula_plus", defaultLightTint)
-	light := themeForTints(false, defaultDarkTint, "github")
+	dark := themeForTints(true, "dracula_plus", defaultLightTint.ID)
+	light := themeForTints(false, defaultDarkTint.ID, "github")
 
 	require.Equal(t, "dracula_plus", dark.TintID)
 	require.Equal(t, "github", light.TintID)
@@ -30,8 +30,8 @@ func TestThemeFallsBackToRegisteredDefaultTint(t *testing.T) {
 	dark := themeForTints(true, "missing-dark", "missing-light")
 	light := themeForTints(false, "missing-dark", "missing-light")
 
-	require.Equal(t, defaultDarkTint, dark.TintID)
-	require.Equal(t, defaultLightTint, light.TintID)
+	require.Equal(t, defaultDarkTint.ID, dark.TintID)
+	require.Equal(t, defaultLightTint.ID, light.TintID)
 }
 
 func TestThemeTintOptionsComeFromIndependentDefaultLists(t *testing.T) {
@@ -44,10 +44,10 @@ func TestThemeTintOptionsComeFromIndependentDefaultLists(t *testing.T) {
 	require.Len(t, light, len(tint.DefaultLightTints()))
 	require.NotEqual(t, len(dark), len(light))
 	require.Contains(t, dark, preferencesview.TintOption{
-		ID: defaultDarkTint, Label: "Builtin Dark",
+		ID: defaultDarkTint.ID, Label: defaultDarkTint.DisplayName,
 	})
 	require.Contains(t, light, preferencesview.TintOption{
-		ID: defaultLightTint, Label: "Builtin Light",
+		ID: defaultLightTint.ID, Label: defaultLightTint.DisplayName,
 	})
 }
 

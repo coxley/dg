@@ -45,8 +45,8 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 		SaveDirectory: "/diagrams",
 		CommentPrefix: "# ",
 		ShortcutStyle: settings.ShortcutMac,
-		DarkTint:      defaultDarkTint,
-		LightTint:     defaultLightTint,
+		DarkTint:      defaultDarkTint.ID,
+		LightTint:     defaultLightTint.ID,
 	}, store))
 
 	require.NoError(t, err)
@@ -55,8 +55,8 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	require.Equal(t, "/diagrams", model.preferences.baseline.SaveDirectory)
 	require.Equal(t, "# ", model.preferences.baseline.CommentPrefix)
 	require.Equal(t, chrome.ProfileMac, model.preferences.baseline.KeyProfile)
-	require.Equal(t, defaultDarkTint, model.preferences.baseline.DarkTint)
-	require.Equal(t, defaultLightTint, model.preferences.baseline.LightTint)
+	require.Equal(t, defaultDarkTint.ID, model.preferences.baseline.DarkTint)
+	require.Equal(t, defaultLightTint.ID, model.preferences.baseline.LightTint)
 	require.NotNil(t, model.dialogs.preferences.model)
 	require.NotNil(t, model.dialogs.save.form)
 	require.NotNil(t, model.dialogs.save.picker)
