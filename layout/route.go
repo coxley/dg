@@ -678,12 +678,15 @@ func (r Router) routeSelection(l *Layout) error {
 				return fmt.Errorf("expand edge %d: %w", edgeID, err)
 			}
 			scratch.expanded = expanded
-			_, _, valid := r.scorePath(
-				l,
-				id,
-				expanded,
-				&scratch.occupancy,
-			)
+			valid := l.pathClearForRoute(id, expanded)
+			if valid {
+				_, _, valid = r.scorePath(
+					l,
+					id,
+					expanded,
+					&scratch.occupancy,
+				)
+			}
 			if valid {
 				scratch.occupancy.add(id, scratch.paths[edgeID])
 				continue
@@ -715,6 +718,19 @@ func (r Router) routeSelection(l *Layout) error {
 		)
 	}
 	return nil
+}
+
+func (l *Layout) pathClearForRoute(edgeID uint32, path []Point) bool {
+	if len(path) < 2 {
+		return false
+	}
+	route := l.routeEdge(edgeID)
+	for _, point := range path[1 : len(path)-1] {
+		if l.blockedForRoute(route, point) {
+			return false
+		}
+	}
+	return true
 }
 
 func (l *Layout) edgeSelectedForRouting(edgeID uint32) bool {
@@ -1315,7 +1331,9 @@ func (l *Layout) blockedForRoute(route routeEdge, p Point) bool {
 	for nodeID, node := range l.Nodes {
 		// Endpoint nodes may overlap. Their edge can traverse the overlap and
 		// the raster layer later hides the covered part of the route.
-		if !slices.Contains(endpointNodes[:endpointCount], uint32(nodeID)) &&
+		attachment, attached := l.NodeAttachment(uint32(nodeID))
+		if (!attached || attachment.EdgeID != route.id) &&
+			!slices.Contains(endpointNodes[:endpointCount], uint32(nodeID)) &&
 			node.Rect.Contains(p) {
 			return true
 		}

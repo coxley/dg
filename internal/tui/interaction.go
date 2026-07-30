@@ -57,6 +57,12 @@ type pointerGesture struct {
 	fixed  layout.Point
 	corner resizeCorner
 	rigid  bool
+
+	duplicateRank   int
+	attachmentEdge  uint32
+	attachmentPoint layout.Point
+	hasAttachment   bool
+	moved           bool
 }
 
 func (g pointerGesture) duplicateActive() bool {

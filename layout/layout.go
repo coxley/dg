@@ -146,17 +146,20 @@ type Layout struct {
 	explicitSizes []Size
 	// TODO: Should styles be a lookup table instead for more compactness? Or a list of
 	// int64 with each entry representing styles for 8 nodes / edges at once?
-	nodeStyles  []NodeStyle
-	edgeStyles  []EdgeStyle
-	padding     Padding
-	router      Router
-	scratch     routeScratch
-	draftPorts  []Port
-	portUsable  []bool
-	draftUsable []bool
-	drawOrder   []Hit
-	history     *History
-	selection   Selection
+	nodeStyles                 []NodeStyle
+	edgeStyles                 []EdgeStyle
+	padding                    Padding
+	router                     Router
+	scratch                    routeScratch
+	draftPorts                 []Port
+	portUsable                 []bool
+	draftUsable                []bool
+	drawOrder                  []Hit
+	attachments                []Attachment
+	attachmentBuildRollback    attachmentBuildSnapshot
+	attachmentMutationRollback attachmentBuildSnapshot
+	history                    *History
+	selection                  Selection
 }
 
 // Option configures a Layout.
@@ -261,12 +264,14 @@ func (l *Layout) newNodeAt(
 	l.explicitSizes = growTo(l.explicitSizes, len(l.graph.Nodes))
 	l.nodeStyles = growTo(l.nodeStyles, len(l.graph.Nodes))
 	l.Nodes = growTo(l.Nodes, len(l.graph.Nodes))
+	l.attachments = growTo(l.attachments, len(l.graph.Nodes))
 	l.Ports = growTo(l.Ports, len(l.graph.Ports))
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.origins[nodeID] = point
 	l.explicitSizes[nodeID] = Size{}
 	l.nodeStyles[nodeID] = NodeStyle{}
 	l.Nodes[nodeID] = node
+	l.attachments[nodeID] = Attachment{}
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.commitNodePorts(nodeID)
 	l.appendLayer(Hit{ID: nodeID, Kind: HitNode})
@@ -292,7 +297,8 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 	}
 
 	portMap := make([]uint32, len(l.graph.Ports))
-	selected := make([]bool, len(l.graph.Nodes))
+	nodeMap := make([]uint32, len(l.graph.Nodes))
+	edgeMap := make([]uint32, len(l.graph.Edges))
 	l.selection.Clear()
 	for _, sourceID := range selectedNodes {
 		origin, ok := offsetPoint(l.origins[sourceID], dx, dy)
@@ -308,7 +314,7 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		if err != nil {
 			return err
 		}
-		selected[sourceID] = true
+		nodeMap[sourceID] = nodeID + 1
 		for i, sourcePort := range source.Ports {
 			portMap[sourcePort] = l.graph.Nodes[nodeID].Ports[i]
 		}
@@ -330,9 +336,9 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		}
 		nodeA := l.graph.Ports[edge.PortA].Node
 		nodeB := l.graph.Ports[edge.PortB].Node
-		if uint64(nodeA) >= uint64(len(selected)) ||
-			uint64(nodeB) >= uint64(len(selected)) ||
-			!selected[nodeA] || !selected[nodeB] {
+		if uint64(nodeA) >= uint64(len(nodeMap)) ||
+			uint64(nodeB) >= uint64(len(nodeMap)) ||
+			nodeMap[nodeA] == 0 || nodeMap[nodeB] == 0 {
 			continue
 		}
 		duplicateID, err := l.ConnectPorts(portMap[edge.PortA], portMap[edge.PortB])
@@ -356,6 +362,27 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		l.Edges[duplicateID].Points = points
 		l.selection.ensureCapacity()
 		l.selection.Toggle(Hit{ID: duplicateID, Kind: HitEdge})
+		edgeMap[edgeID] = duplicateID + 1
+	}
+	for _, sourceID := range selectedNodes {
+		attachment, ok := l.NodeAttachment(sourceID)
+		if !ok ||
+			uint64(attachment.EdgeID) >= uint64(len(edgeMap)) ||
+			edgeMap[attachment.EdgeID] == 0 {
+			continue
+		}
+		duplicate := attachment
+		duplicate.NodeID = nodeMap[sourceID] - 1
+		duplicate.EdgeID = edgeMap[attachment.EdgeID] - 1
+		l.setAttachmentState(duplicate.NodeID, duplicate, true)
+		if l.history != nil {
+			l.history.record(historyChange{
+				kind:            historySetAttachment,
+				id:              duplicate.NodeID,
+				afterAttachment: duplicate,
+				afterAttached:   true,
+			})
+		}
 	}
 	return nil
 }
@@ -703,19 +730,44 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 	}
 	previous := l.graph.Edges[edgeID]
 	previousStyle := l.edgeStyles[edgeID]
+	var previousAttachments []Attachment
+	for attachment := range l.Attachments(edgeID) {
+		previousAttachments = append(previousAttachments, attachment)
+	}
+	var rollback layoutHistoryState
+	if len(previousAttachments) != 0 {
+		rollback = l.historyState()
+	}
+	for _, attachment := range previousAttachments {
+		l.setAttachmentState(attachment.NodeID, Attachment{}, false)
+	}
 	layer, _ := l.removeLayer(Hit{ID: edgeID, Kind: HitEdge})
 	if err := l.graph.DeleteEdge(edgeID); err != nil {
 		return err
 	}
 	l.Edges[edgeID] = Edge{}
 	l.edgeStyles[edgeID] = EdgeStyle{}
+	if len(previousAttachments) != 0 {
+		if err := l.Build(); err != nil {
+			if restoreErr := l.restoreHistoryState(rollback); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf(
+					"restore edge %d deletion: %w",
+					edgeID,
+					restoreErr,
+				))
+			}
+			return fmt.Errorf("delete edge %d: %w", edgeID, err)
+		}
+	}
+	l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 	if l.history != nil {
 		l.history.record(historyChange{
-			kind:            historyDeleteEdge,
-			id:              edgeID,
-			beforeEdge:      previous,
-			beforeEdgeStyle: previousStyle,
-			beforeLayer:     uint32(layer),
+			kind:              historyDeleteEdge,
+			id:                edgeID,
+			beforeEdge:        previous,
+			beforeEdgeStyle:   previousStyle,
+			beforeLayer:       uint32(layer),
+			beforeAttachments: previousAttachments,
 		})
 	}
 	return nil
@@ -736,6 +788,9 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 			continue
 		}
 		if l.graph.EdgeIncidentTo(uint32(edgeID), nodeID) {
+			for attachment := range l.Attachments(uint32(edgeID)) {
+				l.setAttachmentState(attachment.NodeID, Attachment{}, false)
+			}
 			l.Edges[edgeID] = Edge{}
 			l.edgeStyles[edgeID] = EdgeStyle{}
 			l.removeLayer(Hit{ID: uint32(edgeID), Kind: HitEdge})
@@ -753,6 +808,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	l.explicitSizes[nodeID] = Size{}
 	l.nodeStyles[nodeID] = NodeStyle{}
 	l.Nodes[nodeID] = Node{}
+	l.attachments[nodeID] = Attachment{}
 	l.removeLayer(Hit{ID: nodeID, Kind: HitNode})
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	if l.history != nil {
@@ -922,6 +978,7 @@ func (l *Layout) Clone() (*Layout, error) {
 			}
 		}
 	}
+	cloned.attachments = slices.Clone(l.attachments)
 	for nodeID := range l.selection.Nodes() {
 		cloned.selection.Toggle(Hit{ID: nodeID, Kind: HitNode})
 	}
@@ -936,7 +993,15 @@ func (l *Layout) Clone() (*Layout, error) {
 
 // Build routes edges using the current node and port geometry.
 func (l *Layout) Build() error {
-	if err := l.router.route(l); err != nil {
+	if !l.hasAttachments() {
+		if err := l.router.route(l); err != nil {
+			return fmt.Errorf("route edges: %w", err)
+		}
+		return nil
+	}
+	l.snapshotAttachmentBuildState(&l.attachmentBuildRollback)
+	if err := l.buildAttachments(false); err != nil {
+		l.restoreAttachmentBuildState(&l.attachmentBuildRollback)
 		return fmt.Errorf("route edges: %w", err)
 	}
 	return nil
@@ -945,6 +1010,14 @@ func (l *Layout) Build() error {
 // BuildSelection reroutes selected edges and edges incident to selected nodes
 // against existing unrelated routes. It changes no route when routing fails.
 func (l *Layout) BuildSelection() error {
+	if l.hasAttachments() {
+		l.snapshotAttachmentBuildState(&l.attachmentBuildRollback)
+		if err := l.buildAttachments(true); err != nil {
+			l.restoreAttachmentBuildState(&l.attachmentBuildRollback)
+			return fmt.Errorf("route selected edges: %w", err)
+		}
+		return nil
+	}
 	if err := l.router.routeSelection(l); err != nil {
 		return fmt.Errorf("route selected edges: %w", err)
 	}
@@ -1094,6 +1167,7 @@ func (l *Layout) initializeGeometry() error {
 	l.explicitSizes = make([]Size, len(l.graph.Nodes))
 	l.nodeStyles = make([]NodeStyle, len(l.graph.Nodes))
 	l.Nodes = make([]Node, len(l.graph.Nodes))
+	l.attachments = make([]Attachment, len(l.graph.Nodes))
 	l.Ports = make([]Port, len(l.graph.Ports))
 	l.portUsable = make([]bool, len(l.graph.Ports))
 	l.Edges = make([]Edge, len(l.graph.Edges))

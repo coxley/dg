@@ -128,6 +128,218 @@ func TestRoundTripMultilineLabelAndExplicitSize(t *testing.T) {
 	require.Equal(t, doc, decoded)
 }
 
+func TestRoundTripAttachment(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", layout.NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", layout.NewPoint(30, 4))
+	require.NoError(t, err)
+	node, err := geo.NewNodeAt("tag", layout.NewPoint(12, 15))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	point := documentEdgeMiddle(geo.Edges[edge].Points)
+	require.NoError(t, geo.PlaceNode(
+		node,
+		layout.NewPoint(point.X-2, point.Y-1),
+	))
+	require.NoError(t, geo.AttachNode(node, edge, point))
+
+	data, err := Marshal(geo)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"attachments"`)
+	doc, err := Unmarshal(data)
+	require.NoError(t, err)
+	require.Len(t, doc.Attachments, 1)
+
+	loaded, err := doc.Layout()
+	require.NoError(t, err)
+	require.Equal(t, doc, FromLayout(loaded))
+	got, ok := loaded.NodeAttachment(doc.Attachments[0].Node)
+	require.True(t, ok)
+	require.Equal(t, doc.Attachments[0].Edge, got.EdgeID)
+	require.Equal(t, doc.Attachments[0].Position, got.Position)
+}
+
+func TestRoundTripAttachmentProperties(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(t *rapid.T) {
+		geo, err := layout.New()
+		require.NoError(t, err)
+		source, err := geo.NewNodeAt("source", layout.NewPoint(20, 20))
+		require.NoError(t, err)
+		destination, err := geo.NewNodeAt(
+			"destination",
+			layout.NewPoint(
+				rapid.Uint32Range(70, 120).Draw(t, "destination x"),
+				rapid.Uint32Range(10, 60).Draw(t, "destination y"),
+			),
+		)
+		require.NoError(t, err)
+		node, err := geo.NewNodeAt("tag", layout.NewPoint(40, 70))
+		require.NoError(t, err)
+		edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+		require.NoError(t, geo.Build())
+
+		length := documentPathLength(geo.Edges[edge].Points)
+		require.Greater(t, length, uint64(1))
+		point := documentEdgePoint(
+			geo.Edges[edge].Points,
+			rapid.Uint64Range(1, length-1).Draw(t, "edge offset"),
+		)
+		size := geo.Nodes[node].Rect.Size
+		anchor := layout.NewPoint(
+			rapid.Uint32Range(0, min(size.Width-1, point.X)).Draw(t, "anchor x"),
+			rapid.Uint32Range(0, min(size.Height-1, point.Y)).Draw(t, "anchor y"),
+		)
+		require.NoError(t, geo.PlaceNode(
+			node,
+			layout.NewPoint(point.X-anchor.X, point.Y-anchor.Y),
+		))
+		require.NoError(t, geo.AttachNode(node, edge, point))
+
+		data, err := Marshal(geo)
+		require.NoError(t, err)
+		doc, err := Unmarshal(data)
+		require.NoError(t, err)
+		loaded, err := doc.Layout()
+		require.NoError(t, err)
+		second, err := Marshal(loaded)
+		require.NoError(t, err)
+		require.Equal(t, data, second)
+	})
+}
+
+func TestDocumentAttachmentValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*Document)
+		want   string
+	}{
+		{
+			name: "unknown node",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Node = uint32(len(doc.Nodes))
+			},
+			want: "unknown node",
+		},
+		{
+			name: "unknown edge",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Edge = uint32(len(doc.Edges))
+			},
+			want: "unknown edge",
+		},
+		{
+			name: "duplicate node",
+			mutate: func(doc *Document) {
+				doc.Attachments = append(doc.Attachments, doc.Attachments[0])
+			},
+			want: "duplicates node",
+		},
+		{
+			name: "edge start",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Position = 0
+			},
+			want: "overlap an edge endpoint",
+		},
+		{
+			name: "edge end",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Position = math.MaxUint16
+			},
+			want: "overlap an edge endpoint",
+		},
+		{
+			name: "incident node",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Node = 0
+			},
+			want: "cannot attach",
+		},
+		{
+			name: "anchor outside node",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Anchor.X = math.MaxUint32
+			},
+			want: "anchor outside node",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			doc := validAttachmentDocument(t)
+			test.mutate(&doc)
+			_, err := doc.Layout()
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func validAttachmentDocument(t testing.TB) Document {
+	t.Helper()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", layout.NewPoint(10, 10))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", layout.NewPoint(50, 10))
+	require.NoError(t, err)
+	node, err := geo.NewNodeAt("tag", layout.NewPoint(25, 20))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	point := documentEdgeMiddle(geo.Edges[edge].Points)
+	require.NoError(t, geo.PlaceNode(node, layout.NewPoint(point.X-1, point.Y-1)))
+	require.NoError(t, geo.AttachNode(node, edge, point))
+	return FromLayout(geo)
+}
+
+func documentEdgeMiddle(points []layout.Point) layout.Point {
+	return documentEdgePoint(points, documentPathLength(points)/2)
+}
+
+func documentPathLength(points []layout.Point) uint64 {
+	var length uint64
+	for i := 1; i < len(points); i++ {
+		a, b := points[i-1], points[i]
+		length += uint64(max(a.X, b.X)-min(a.X, b.X)) +
+			uint64(max(a.Y, b.Y)-min(a.Y, b.Y))
+	}
+	return length
+}
+
+func documentEdgePoint(points []layout.Point, distance uint64) layout.Point {
+	for i := 1; i < len(points); i++ {
+		a, b := points[i-1], points[i]
+		segment := uint64(max(a.X, b.X)-min(a.X, b.X)) +
+			uint64(max(a.Y, b.Y)-min(a.Y, b.Y))
+		if distance > segment {
+			distance -= segment
+			continue
+		}
+		switch {
+		case a.X == b.X && b.Y >= a.Y:
+			return layout.NewPoint(a.X, a.Y+uint32(distance))
+		case a.X == b.X:
+			return layout.NewPoint(a.X, a.Y-uint32(distance))
+		case b.X >= a.X:
+			return layout.NewPoint(a.X+uint32(distance), a.Y)
+		default:
+			return layout.NewPoint(a.X-uint32(distance), a.Y)
+		}
+	}
+	return points[len(points)-1]
+}
+
 func TestUnmarshalRejectsInvalidJSONShape(t *testing.T) {
 	t.Parallel()
 

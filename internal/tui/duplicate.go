@@ -16,12 +16,18 @@ func (m *Model) beginDuplicateDrag(point layout.Point, hit layout.Hit) {
 	if !m.geo.Selection().Contains(hit) {
 		m.selectOnly(hit)
 	}
+	rank, ok := selectedNodeRank(m.geo.Selection(), hit.ID)
+	if !ok {
+		m.setError("duplicate target is not selected")
+		return
+	}
 	m.target = hit
 	m.interaction.gesture = pointerGesture{
-		kind:   gestureDuplicatePending,
-		target: hit,
-		start:  point,
-		point:  point,
+		kind:          gestureDuplicatePending,
+		target:        hit,
+		start:         point,
+		point:         point,
+		duplicateRank: rank,
 	}
 	m.status = ""
 }
@@ -61,6 +67,12 @@ func (m *Model) updateDuplicateDrag(point layout.Point) {
 	}
 	m.refreshDuplicateHighlight()
 	m.cursor = point
+	if nodeID, ok := selectedNodeAt(
+		m.interaction.render.duplicateLayout.Selection(),
+		m.interaction.gesture.duplicateRank,
+	); ok {
+		m.refreshAttachmentCandidateFor(m.interaction.render.duplicateLayout, nodeID)
+	}
 	m.ensureCursorVisible()
 	m.status = ""
 }
@@ -123,12 +135,34 @@ func (m *Model) finishDuplicateDrag(point layout.Point) {
 		m.cancelDuplicateDrag()
 		return
 	}
+	gesture := m.interaction.gesture
 	dx, dy := pointDelta(m.interaction.gesture.start, point)
 	m.cancelDuplicateDrag()
 	m.beginTransaction(transactionDuplicate)
 	if err := m.geo.DuplicateSelection(dx, dy); err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
+	}
+	duplicate, ok := selectedNodeAt(
+		m.geo.Selection(),
+		gesture.duplicateRank,
+	)
+	if !ok {
+		m.setError(errors.Join(
+			errors.New("duplicated target is unavailable"),
+			m.cancelTransaction(),
+		).Error())
+		return
+	}
+	if gesture.hasAttachment {
+		if err := m.geo.AttachNode(
+			duplicate,
+			gesture.attachmentEdge,
+			gesture.attachmentPoint,
+		); err != nil {
+			m.setError(errors.Join(err, m.cancelTransaction()).Error())
+			return
+		}
 	}
 	if err := m.rebuild(); err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction(), m.render()).Error())
@@ -138,14 +172,34 @@ func (m *Model) finishDuplicateDrag(point layout.Point) {
 		m.setError(err.Error())
 		return
 	}
-	if hit, ok := m.firstSelectedNode(); ok {
-		m.target = hit
-		m.cursor = m.geo.Nodes[hit.ID].LabelPoint
-	}
+	m.target = layout.Hit{ID: duplicate, Kind: layout.HitNode}
+	m.cursor = m.geo.Nodes[duplicate].LabelPoint
 	m.refreshHits()
 	m.selectTarget()
 	m.ensureCursorVisible()
 	m.status = ""
+}
+
+func selectedNodeRank(selection *layout.Selection, target uint32) (int, bool) {
+	rank := 0
+	for nodeID := range selection.Nodes() {
+		if nodeID == target {
+			return rank, true
+		}
+		rank++
+	}
+	return 0, false
+}
+
+func selectedNodeAt(selection *layout.Selection, rank int) (uint32, bool) {
+	index := 0
+	for nodeID := range selection.Nodes() {
+		if index == rank {
+			return nodeID, true
+		}
+		index++
+	}
+	return 0, false
 }
 
 func (m *Model) cancelDuplicateDrag() {

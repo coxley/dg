@@ -30,6 +30,7 @@ const (
 	historySetNodeStyle
 	historySetEdgeStyle
 	historySetRouter
+	historySetAttachment
 )
 
 type historyPort struct {
@@ -49,14 +50,15 @@ type historyLayer struct {
 }
 
 type historyNode struct {
-	ID     uint32
-	Label  string
-	Origin Point
-	Size   Size
-	Style  NodeStyle
-	Ports  []historyPort
-	Edges  []historyEdge
-	Layers []historyLayer
+	ID          uint32
+	Label       string
+	Origin      Point
+	Size        Size
+	Style       NodeStyle
+	Ports       []historyPort
+	Edges       []historyEdge
+	Layers      []historyLayer
+	Attachments []Attachment
 }
 
 type historyChange struct {
@@ -81,6 +83,12 @@ type historyChange struct {
 	beforeLayer     uint32
 	afterLayer      uint32
 	node            historyNode
+
+	beforeAttachment  Attachment
+	afterAttachment   Attachment
+	beforeAttached    bool
+	afterAttached     bool
+	beforeAttachments []Attachment
 }
 
 type historyEntry struct {
@@ -300,7 +308,8 @@ func (h *History) coalesce(change historyChange) bool {
 		change.kind != historySetLayer &&
 		change.kind != historySetNodeStyle &&
 		change.kind != historySetEdgeStyle &&
-		change.kind != historySetRouter {
+		change.kind != historySetRouter &&
+		change.kind != historySetAttachment {
 		return false
 	}
 	if change.kind == historySetLayer {
@@ -373,6 +382,14 @@ func coalesceChange(previous *historyChange, change historyChange) bool {
 	case historySetRouter:
 		previous.afterRouter = change.afterRouter
 		return previous.beforeRouter == previous.afterRouter
+	case historySetAttachment:
+		previous.afterAttachment = change.afterAttachment
+		previous.afterAttached = change.afterAttached
+		previous.afterPoint = change.afterPoint
+		return previous.beforeAttached == previous.afterAttached &&
+			(!previous.beforeAttached ||
+				previous.beforeAttachment == previous.afterAttachment) &&
+			previous.beforePoint == previous.afterPoint
 	default:
 		return false
 	}
@@ -505,12 +522,18 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 		if forward {
 			return h.layout.DeleteEdge(change.id)
 		}
-		return h.layout.restoreHistoryEdge(
+		if err := h.layout.restoreHistoryEdge(
 			change.id,
 			change.beforeEdge,
 			change.beforeEdgeStyle,
 			int(change.beforeLayer),
-		)
+		); err != nil {
+			return err
+		}
+		for _, attachment := range change.beforeAttachments {
+			h.layout.setAttachmentState(attachment.NodeID, attachment, true)
+		}
+		return nil
 	case historyReconnectEdge:
 		edge := change.beforeEdge
 		if forward {
@@ -546,32 +569,45 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 		}
 		h.layout.SetRouter(router)
 		return nil
+	case historySetAttachment:
+		attachment := change.beforeAttachment
+		attached := change.beforeAttached
+		point := change.beforePoint
+		if forward {
+			attachment = change.afterAttachment
+			attached = change.afterAttached
+			point = change.afterPoint
+		}
+		h.layout.setAttachmentState(change.id, attachment, attached)
+		return h.layout.PlaceNode(change.id, point)
 	default:
 		return fmt.Errorf("unknown history change %d", change.kind)
 	}
 }
 
 type layoutHistoryState struct {
-	graph      ir.Graph
-	origins    []Point
-	sizes      []Size
-	nodeStyles []NodeStyle
-	edgeStyles []EdgeStyle
-	order      []Hit
-	padding    Padding
-	router     Router
+	graph       ir.Graph
+	origins     []Point
+	sizes       []Size
+	nodeStyles  []NodeStyle
+	edgeStyles  []EdgeStyle
+	order       []Hit
+	padding     Padding
+	router      Router
+	attachments []Attachment
 }
 
 func (l *Layout) historyState() layoutHistoryState {
 	return layoutHistoryState{
-		graph:      l.graph.Clone(),
-		origins:    slices.Clone(l.origins),
-		sizes:      slices.Clone(l.explicitSizes),
-		nodeStyles: slices.Clone(l.nodeStyles),
-		edgeStyles: slices.Clone(l.edgeStyles),
-		order:      slices.Clone(l.drawOrder),
-		padding:    l.padding,
-		router:     l.router,
+		graph:       l.graph.Clone(),
+		origins:     slices.Clone(l.origins),
+		sizes:       slices.Clone(l.explicitSizes),
+		nodeStyles:  slices.Clone(l.nodeStyles),
+		edgeStyles:  slices.Clone(l.edgeStyles),
+		order:       slices.Clone(l.drawOrder),
+		padding:     l.padding,
+		router:      l.router,
+		attachments: slices.Clone(l.attachments),
 	}
 }
 
@@ -586,6 +622,7 @@ func (l *Layout) restoreHistoryState(state layoutHistoryState) error {
 	l.explicitSizes = slices.Clone(state.sizes)
 	l.nodeStyles = slices.Clone(state.nodeStyles)
 	l.edgeStyles = slices.Clone(state.edgeStyles)
+	l.attachments = slices.Clone(state.attachments)
 	for nodeID := range l.graph.Nodes {
 		if !l.graph.NodeExists(uint32(nodeID)) {
 			continue
@@ -648,6 +685,9 @@ func (l *Layout) historyNode(nodeID uint32) historyNode {
 			})
 		}
 	}
+	for attachment := range l.attachmentsForNodeAndEdges(nodeID, node.Edges) {
+		node.Attachments = append(node.Attachments, attachment)
+	}
 	return node
 }
 
@@ -664,6 +704,10 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	l.graph.Nodes[node.ID] = ir.Node{Label: node.Label, Ports: ports}
 	for _, edge := range node.Edges {
 		l.graph.Edges[edge.ID] = edge.Edge
+	}
+	l.attachments = growTo(l.attachments, len(l.graph.Nodes))
+	for _, attachment := range node.Attachments {
+		l.setAttachmentState(attachment.NodeID, attachment, true)
 	}
 	l.graph = l.graph.Clone()
 

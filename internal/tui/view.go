@@ -78,6 +78,7 @@ func (m *Model) View() tea.View {
 	content = m.composeSurfaces(content)
 	view := tea.NewView(content + "\n")
 	view.AltScreen = true
+	view.ReportFocus = true
 	view.MouseMode = tea.MouseModeAllMotion
 	view.WindowTitle = "dg"
 	view.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
@@ -192,8 +193,17 @@ func composeWorkspaceBase(canvas, status string, plan chrome.WorkspacePlan) stri
 
 type styledRunKey struct {
 	text string
-	port bool
+	kind highlightKind
 }
+
+type highlightKind uint8
+
+const (
+	highlightNone highlightKind = iota
+	highlightSelection
+	highlightPort
+	highlightCandidateEdge
+)
 
 func (m *Model) appendStatusText(dst []byte) []byte {
 	if m.status != "" {
@@ -356,27 +366,26 @@ func (m *Model) appendViewportLine(
 	return append(dst, '\n')
 }
 
-func (m *Model) appendStyledRun(dst, text []byte, selected bool) []byte {
-	if !selected {
+func (m *Model) appendStyledRun(dst, text []byte, kind highlightKind) []byte {
+	if kind == highlightNone {
 		return append(dst, text...)
 	}
-	port := m.interaction.tool == toolConnect
 	key := styledRunKey{
 		text: string(text),
-		port: port,
+		kind: kind,
 	}
 	rendered, ok := m.styledRuns[key]
 	if !ok {
-		rendered = m.highlightStyle().Render(key.text)
+		rendered = m.highlightStyle(kind).Render(key.text)
 		m.styledRuns[key] = rendered
 	}
 	return append(dst, rendered...)
 }
 
-func (m *Model) styleTail(dst []byte, start int) []byte {
+func (m *Model) styleTail(dst []byte, start int, kind highlightKind) []byte {
 	tail := dst[start:]
 	dst = dst[:start]
-	return m.appendStyledRun(dst, tail, true)
+	return m.appendStyledRun(dst, tail, kind)
 }
 
 func appendViewportSegment(
@@ -420,6 +429,7 @@ func appendViewportRow(
 	screenX := 0
 	state := -1
 	styledStart := -1
+	styledKind := highlightNone
 
 	for len(row) != 0 && screenX < width {
 		cluster, rest, clusterWidth, nextState := uniseg.FirstGraphemeCluster(row, state)
@@ -446,8 +456,9 @@ func appendViewportRow(
 		targetX := int(visibleStart - viewportStart)
 		if gap := targetX - screenX; gap != 0 {
 			if styledStart >= 0 {
-				dst = model.styleTail(dst, styledStart)
+				dst = model.styleTail(dst, styledStart, styledKind)
 				styledStart = -1
+				styledKind = highlightNone
 			}
 			dst = appendHighlightedSpaces(
 				dst,
@@ -472,23 +483,27 @@ func appendViewportRow(
 		} else {
 			visible = appendSpaces(visible, int(visibleEnd-visibleStart))
 		}
-		selected := model != nil &&
-			model.highlightedRange(
+		kind := highlightNone
+		if model != nil {
+			kind = model.highlightedRangeKind(
 				documentY,
 				uint32(visibleStart),
 				uint32(visibleEnd),
 			)
-		if selected && styledStart < 0 {
-			styledStart = len(dst)
-		} else if !selected && styledStart >= 0 {
-			dst = model.styleTail(dst, styledStart)
+		}
+		if kind != styledKind && styledStart >= 0 {
+			dst = model.styleTail(dst, styledStart, styledKind)
 			styledStart = -1
+		}
+		if kind != highlightNone && styledStart < 0 {
+			styledStart = len(dst)
+			styledKind = kind
 		}
 		dst = append(dst, visible...)
 		screenX += int(visibleEnd - visibleStart)
 	}
 	if styledStart >= 0 {
-		dst = model.styleTail(dst, styledStart)
+		dst = model.styleTail(dst, styledStart, styledKind)
 	}
 	dst = appendHighlightedSpaces(
 		dst,
@@ -500,36 +515,67 @@ func appendViewportRow(
 	return dst
 }
 
-func (m *Model) highlightedRange(y, start, end uint32) bool {
+func (m *Model) highlightedRangeKind(y, start, end uint32) highlightKind {
+	kind := highlightNone
 	for x := start; x < end; x++ {
-		if m.highlightedPoint(layout.NewPoint(x, y)) {
-			return true
+		candidate := m.highlightKindAt(layout.NewPoint(x, y))
+		if candidate > kind {
+			kind = candidate
 		}
 	}
-	return false
+	return kind
 }
 
 func (m *Model) highlightedPoint(point layout.Point) bool {
+	return m.highlightKindAt(point) != highlightNone
+}
+
+func (m *Model) highlightKindAt(point layout.Point) highlightKind {
+	gesture := m.interaction.gesture
+	if gesture.hasAttachment {
+		geo := m.geo
+		frame := canvasview.BaseFrame
+		if gesture.duplicateActive() {
+			geo = m.interaction.render.duplicateLayout
+			frame = canvasview.DuplicateFrame
+		}
+		owner, ok := m.canvas.OwnerAt(frame, point)
+		if ok && owner == (layout.Hit{
+			ID:   gesture.attachmentEdge,
+			Kind: layout.HitEdge,
+		}) && geo.EdgeExists(gesture.attachmentEdge) {
+			return highlightCandidateEdge
+		}
+	}
 	if m.interaction.gesture.duplicateActive() {
-		return highlightContains(
+		if highlightContains(
 			m.interaction.render.duplicateHighlight,
 			m.canvas.Frame(canvasview.DuplicateFrame),
 			point,
-		)
+		) {
+			return highlightSelection
+		}
+		return highlightNone
 	}
 	if m.interaction.movingRigidly() {
-		return highlightContains(
+		if highlightContains(
 			m.interaction.render.moveHighlight,
 			m.canvas.Frame(canvasview.BaseFrame),
 			point,
-		)
+		) {
+			return highlightSelection
+		}
+		return highlightNone
 	}
 	if m.interaction.gesture.kind == gestureAreaSelection &&
 		m.marqueeArea().contains(point) {
-		return true
+		return highlightSelection
 	}
 	if m.interaction.tool == toolConnect {
-		return m.portAt(point)
+		if m.portAt(point) {
+			return highlightPort
+		}
+		return highlightNone
 	}
 	geo := m.geo
 	if m.interaction.gesture.duplicateActive() {
@@ -541,7 +587,7 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 				layout.Hit{ID: nodeID, Kind: layout.HitNode},
 				point,
 			) {
-				return true
+				return highlightSelection
 			}
 		}
 		for edgeID := range geo.Selection().Edges() {
@@ -549,22 +595,27 @@ func (m *Model) highlightedPoint(point layout.Point) bool {
 				layout.Hit{ID: edgeID, Kind: layout.HitEdge},
 				point,
 			) {
-				return true
+				return highlightSelection
 			}
 		}
-		return false
+		return highlightNone
 	}
 	hit, ok := m.primaryHighlight()
 	if !ok {
-		return false
+		return highlightNone
 	}
-	return m.highlightForHit(hit, point)
+	if m.highlightForHit(hit, point) {
+		return highlightSelection
+	}
+	return highlightNone
 }
 
 func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
 	geo := m.geo
+	frame := canvasview.BaseFrame
 	if m.interaction.gesture.duplicateActive() {
 		geo = m.interaction.render.duplicateLayout
+		frame = canvasview.DuplicateFrame
 	}
 	switch hit.Kind {
 	case layout.HitNode:
@@ -573,8 +624,11 @@ func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
 	case layout.HitPort:
 		return false
 	case layout.HitEdge:
-		return geo.EdgeExists(hit.ID) &&
-			geo.Edges[hit.ID].Contains(point)
+		if !geo.EdgeExists(hit.ID) {
+			return false
+		}
+		owner, ok := m.canvas.OwnerAt(frame, point)
+		return ok && owner == hit
 	}
 	return false
 }
@@ -736,6 +790,7 @@ func appendHighlightedSpaces(
 		return appendSpaces(dst, count)
 	}
 	styledStart := -1
+	styledKind := highlightNone
 	for offset := range max(count, 0) {
 		x := startX + uint64(offset)
 		var text []byte
@@ -744,28 +799,37 @@ func appendHighlightedSpaces(
 		} else {
 			text = append(text, ' ')
 		}
-		selected := x <= math.MaxUint32 &&
-			y <= math.MaxUint32 &&
-			model.highlightedPoint(layout.NewPoint(uint32(x), uint32(y)))
-		if selected && styledStart < 0 {
-			styledStart = len(dst)
-		} else if !selected && styledStart >= 0 {
-			dst = model.styleTail(dst, styledStart)
+		kind := highlightNone
+		if x <= math.MaxUint32 && y <= math.MaxUint32 {
+			kind = model.highlightKindAt(
+				layout.NewPoint(uint32(x), uint32(y)),
+			)
+		}
+		if kind != styledKind && styledStart >= 0 {
+			dst = model.styleTail(dst, styledStart, styledKind)
 			styledStart = -1
+		}
+		if kind != highlightNone && styledStart < 0 {
+			styledStart = len(dst)
+			styledKind = kind
 		}
 		dst = append(dst, text...)
 	}
 	if styledStart >= 0 {
-		dst = model.styleTail(dst, styledStart)
+		dst = model.styleTail(dst, styledStart, styledKind)
 	}
 	return dst
 }
 
-func (m *Model) highlightStyle() lipgloss.Style {
-	if m != nil && m.interaction.tool == toolConnect {
+func (m *Model) highlightStyle(kind highlightKind) lipgloss.Style {
+	switch kind {
+	case highlightPort:
 		return m.canvas.PortStyle()
+	case highlightCandidateEdge:
+		return m.theme.CandidateEdge
+	default:
+		return m.canvas.SelectionStyle()
 	}
-	return m.canvas.SelectionStyle()
 }
 
 func previewGlyph(model *Model, x, y uint64) (rune, bool) {

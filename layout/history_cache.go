@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	historyCacheVersion = 1
+	historyCacheVersion = 2
 	defaultCacheDelay   = 100 * time.Millisecond
 )
 
@@ -402,12 +402,13 @@ type historyCacheFile struct {
 }
 
 type historyCacheLayout struct {
-	Nodes   []historyCacheNode `json:"nodes"`
-	Ports   []historyCachePort `json:"ports"`
-	Edges   []historyCacheEdge `json:"edges"`
-	Layers  []historyCacheHit  `json:"layers,omitempty"`
-	Padding Padding            `json:"padding"`
-	Router  Router             `json:"router"`
+	Nodes       []historyCacheNode       `json:"nodes"`
+	Ports       []historyCachePort       `json:"ports"`
+	Edges       []historyCacheEdge       `json:"edges"`
+	Attachments []historyCacheAttachment `json:"attachments,omitempty"`
+	Layers      []historyCacheHit        `json:"layers,omitempty"`
+	Padding     Padding                  `json:"padding"`
+	Router      Router                   `json:"router"`
 }
 
 type historyCacheHit struct {
@@ -438,42 +439,55 @@ type historyCacheEdge struct {
 	Style EdgeStyle `json:"style,omitzero"`
 }
 
+type historyCacheAttachment struct {
+	NodeID   uint32 `json:"node_id"`
+	EdgeID   uint32 `json:"edge_id"`
+	Position uint16 `json:"position"`
+	Anchor   Point  `json:"anchor"`
+}
+
 type historyCacheEntry struct {
 	Changes []historyCacheChange `json:"changes"`
 }
 
 type historyCacheChange struct {
-	Kind            historyKind       `json:"kind"`
-	ID              uint32            `json:"id"`
-	BeforePoint     Point             `json:"before_point"`
-	AfterPoint      Point             `json:"after_point"`
-	BeforeSize      Size              `json:"before_size,omitzero"`
-	AfterSize       Size              `json:"after_size,omitzero"`
-	BeforeLabel     string            `json:"before_label,omitempty"`
-	AfterLabel      string            `json:"after_label,omitempty"`
-	BeforeEdge      historyCacheEdge  `json:"before_edge"`
-	AfterEdge       historyCacheEdge  `json:"after_edge"`
-	BeforeNodeStyle NodeStyle         `json:"before_node_style,omitzero"`
-	AfterNodeStyle  NodeStyle         `json:"after_node_style,omitzero"`
-	BeforeEdgeStyle EdgeStyle         `json:"before_edge_style,omitzero"`
-	AfterEdgeStyle  EdgeStyle         `json:"after_edge_style,omitzero"`
-	BeforeRouter    Router            `json:"before_router,omitzero"`
-	AfterRouter     Router            `json:"after_router,omitzero"`
-	LayerHit        historyCacheHit   `json:"layer_hit"`
-	BeforeLayer     uint32            `json:"before_layer"`
-	AfterLayer      uint32            `json:"after_layer"`
-	Node            historyCacheHNode `json:"node"`
+	Kind              historyKind              `json:"kind"`
+	ID                uint32                   `json:"id"`
+	BeforePoint       Point                    `json:"before_point"`
+	AfterPoint        Point                    `json:"after_point"`
+	BeforeSize        Size                     `json:"before_size,omitzero"`
+	AfterSize         Size                     `json:"after_size,omitzero"`
+	BeforeLabel       string                   `json:"before_label,omitempty"`
+	AfterLabel        string                   `json:"after_label,omitempty"`
+	BeforeEdge        historyCacheEdge         `json:"before_edge"`
+	AfterEdge         historyCacheEdge         `json:"after_edge"`
+	BeforeNodeStyle   NodeStyle                `json:"before_node_style,omitzero"`
+	AfterNodeStyle    NodeStyle                `json:"after_node_style,omitzero"`
+	BeforeEdgeStyle   EdgeStyle                `json:"before_edge_style,omitzero"`
+	AfterEdgeStyle    EdgeStyle                `json:"after_edge_style,omitzero"`
+	BeforeRouter      Router                   `json:"before_router,omitzero"`
+	AfterRouter       Router                   `json:"after_router,omitzero"`
+	LayerHit          historyCacheHit          `json:"layer_hit"`
+	BeforeLayer       uint32                   `json:"before_layer"`
+	AfterLayer        uint32                   `json:"after_layer"`
+	Node              historyCacheHNode        `json:"node"`
+	BeforeAttachment  historyCacheAttachment   `json:"before_attachment"`
+	AfterAttachment   historyCacheAttachment   `json:"after_attachment"`
+	BeforeAttached    bool                     `json:"before_attached"`
+	AfterAttached     bool                     `json:"after_attached"`
+	BeforeAttachments []historyCacheAttachment `json:"before_attachments,omitempty"`
 }
 
 type historyCacheHNode struct {
-	ID     uint32              `json:"id"`
-	Label  string              `json:"label,omitempty"`
-	Origin Point               `json:"origin"`
-	Size   Size                `json:"size,omitzero"`
-	Style  NodeStyle           `json:"style,omitzero"`
-	Ports  []historyCacheHPort `json:"ports,omitempty"`
-	Edges  []historyCacheHEdge `json:"edges,omitempty"`
-	Layers []historyCacheLayer `json:"layers,omitempty"`
+	ID          uint32                   `json:"id"`
+	Label       string                   `json:"label,omitempty"`
+	Origin      Point                    `json:"origin"`
+	Size        Size                     `json:"size,omitzero"`
+	Style       NodeStyle                `json:"style,omitzero"`
+	Ports       []historyCacheHPort      `json:"ports,omitempty"`
+	Edges       []historyCacheHEdge      `json:"edges,omitempty"`
+	Layers      []historyCacheLayer      `json:"layers,omitempty"`
+	Attachments []historyCacheAttachment `json:"attachments,omitempty"`
 }
 
 type historyCacheLayer struct {
@@ -611,6 +625,14 @@ func cacheLayout(state layoutHistoryState) historyCacheLayout {
 			cache.Edges[i] = cacheEdge(edge, state.edgeStyles[i])
 		}
 	}
+	for nodeID, attachment := range state.attachments {
+		if attachment != (Attachment{}) {
+			cache.Attachments = append(
+				cache.Attachments,
+				cacheAttachment(state.attachments[nodeID]),
+			)
+		}
+	}
 	return cache
 }
 
@@ -621,13 +643,14 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 			Ports: make([]ir.Port, len(c.Ports)),
 			Edges: make([]ir.Edge, len(c.Edges)),
 		},
-		origins:    make([]Point, len(c.Nodes)),
-		sizes:      make([]Size, len(c.Nodes)),
-		nodeStyles: make([]NodeStyle, len(c.Nodes)),
-		edgeStyles: make([]EdgeStyle, len(c.Edges)),
-		order:      make([]Hit, len(c.Layers)),
-		padding:    c.Padding,
-		router:     c.Router,
+		origins:     make([]Point, len(c.Nodes)),
+		sizes:       make([]Size, len(c.Nodes)),
+		nodeStyles:  make([]NodeStyle, len(c.Nodes)),
+		edgeStyles:  make([]EdgeStyle, len(c.Edges)),
+		order:       make([]Hit, len(c.Layers)),
+		padding:     c.Padding,
+		router:      c.Router,
+		attachments: make([]Attachment, len(c.Nodes)),
 	}
 	for i, hit := range c.Layers {
 		decoded, ok := hit.hit()
@@ -674,9 +697,35 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 			state.edgeStyles[i] = edge.Style
 		}
 	}
+	for _, cached := range c.Attachments {
+		attachment := cached.attachment()
+		if uint64(attachment.NodeID) >= uint64(len(state.graph.Nodes)) ||
+			uint64(attachment.EdgeID) >= uint64(len(state.graph.Edges)) ||
+			state.attachments[attachment.NodeID] != (Attachment{}) {
+			return layoutHistoryState{}, false
+		}
+		state.attachments[attachment.NodeID] = attachment
+	}
 	state.graph = state.graph.Clone()
 	if err := state.graph.Validate(); err != nil {
 		return layoutHistoryState{}, false
+	}
+	for _, attachment := range state.attachments {
+		if attachment == (Attachment{}) {
+			continue
+		}
+		if attachment.Position == 0 ||
+			attachment.Position == attachmentPositionMax ||
+			!state.graph.NodeExists(attachment.NodeID) ||
+			!state.graph.EdgeExists(attachment.EdgeID) {
+			return layoutHistoryState{}, false
+		}
+		edge := state.graph.Edges[attachment.EdgeID]
+		node := state.graph.Ports[edge.PortA].Node
+		if node == attachment.NodeID ||
+			state.graph.Ports[edge.PortB].Node == attachment.NodeID {
+			return layoutHistoryState{}, false
+		}
 	}
 	if len(state.order) != 0 {
 		if err := validateDrawOrder(&state.graph, state.order); err != nil {
@@ -692,27 +741,48 @@ func deletedHistoryPort() ir.Port {
 
 func cacheChange(change historyChange) historyCacheChange {
 	return historyCacheChange{
-		Kind:            change.kind,
-		ID:              change.id,
-		BeforePoint:     change.beforePoint,
-		AfterPoint:      change.afterPoint,
-		BeforeSize:      change.beforeSize,
-		AfterSize:       change.afterSize,
-		BeforeLabel:     change.beforeLabel,
-		AfterLabel:      change.afterLabel,
-		BeforeEdge:      cacheEdge(change.beforeEdge, change.beforeEdgeStyle),
-		AfterEdge:       cacheEdge(change.afterEdge, change.afterEdgeStyle),
-		BeforeNodeStyle: change.beforeNodeStyle,
-		AfterNodeStyle:  change.afterNodeStyle,
-		BeforeEdgeStyle: change.beforeEdgeStyle,
-		AfterEdgeStyle:  change.afterEdgeStyle,
-		BeforeRouter:    change.beforeRouter,
-		AfterRouter:     change.afterRouter,
-		LayerHit:        cacheHit(change.layerHit),
-		BeforeLayer:     change.beforeLayer,
-		AfterLayer:      change.afterLayer,
-		Node:            cacheHistoryNode(change.node),
+		Kind:              change.kind,
+		ID:                change.id,
+		BeforePoint:       change.beforePoint,
+		AfterPoint:        change.afterPoint,
+		BeforeSize:        change.beforeSize,
+		AfterSize:         change.afterSize,
+		BeforeLabel:       change.beforeLabel,
+		AfterLabel:        change.afterLabel,
+		BeforeEdge:        cacheEdge(change.beforeEdge, change.beforeEdgeStyle),
+		AfterEdge:         cacheEdge(change.afterEdge, change.afterEdgeStyle),
+		BeforeNodeStyle:   change.beforeNodeStyle,
+		AfterNodeStyle:    change.afterNodeStyle,
+		BeforeEdgeStyle:   change.beforeEdgeStyle,
+		AfterEdgeStyle:    change.afterEdgeStyle,
+		BeforeRouter:      change.beforeRouter,
+		AfterRouter:       change.afterRouter,
+		LayerHit:          cacheHit(change.layerHit),
+		BeforeLayer:       change.beforeLayer,
+		AfterLayer:        change.afterLayer,
+		Node:              cacheHistoryNode(change.node),
+		BeforeAttachment:  cacheAttachment(change.beforeAttachment),
+		AfterAttachment:   cacheAttachment(change.afterAttachment),
+		BeforeAttached:    change.beforeAttached,
+		AfterAttached:     change.afterAttached,
+		BeforeAttachments: cacheAttachments(change.beforeAttachments),
 	}
+}
+
+func cacheAttachment(attachment Attachment) historyCacheAttachment {
+	return historyCacheAttachment(attachment)
+}
+
+func cacheAttachments(attachments []Attachment) []historyCacheAttachment {
+	result := make([]historyCacheAttachment, len(attachments))
+	for i, attachment := range attachments {
+		result[i] = cacheAttachment(attachment)
+	}
+	return result
+}
+
+func (c historyCacheAttachment) attachment() Attachment {
+	return Attachment(c)
 }
 
 func cacheEdge(edge ir.Edge, style EdgeStyle) historyCacheEdge {
@@ -726,14 +796,15 @@ func cacheEdge(edge ir.Edge, style EdgeStyle) historyCacheEdge {
 
 func cacheHistoryNode(node historyNode) historyCacheHNode {
 	cached := historyCacheHNode{
-		ID:     node.ID,
-		Label:  node.Label,
-		Origin: node.Origin,
-		Size:   node.Size,
-		Style:  node.Style,
-		Ports:  make([]historyCacheHPort, len(node.Ports)),
-		Edges:  make([]historyCacheHEdge, len(node.Edges)),
-		Layers: make([]historyCacheLayer, len(node.Layers)),
+		ID:          node.ID,
+		Label:       node.Label,
+		Origin:      node.Origin,
+		Size:        node.Size,
+		Style:       node.Style,
+		Ports:       make([]historyCacheHPort, len(node.Ports)),
+		Edges:       make([]historyCacheHEdge, len(node.Edges)),
+		Layers:      make([]historyCacheLayer, len(node.Layers)),
+		Attachments: cacheAttachments(node.Attachments),
 	}
 	for i, layer := range node.Layers {
 		cached.Layers[i] = historyCacheLayer{
@@ -776,7 +847,7 @@ func (c historyCacheFile) historyEntries() ([]historyEntry, bool) {
 }
 
 func (c historyCacheChange) historyChange() (historyChange, bool) {
-	if c.Kind < historyCreateNode || c.Kind > historySetRouter {
+	if c.Kind < historyCreateNode || c.Kind > historySetAttachment {
 		return historyChange{}, false
 	}
 	if !c.BeforeNodeStyle.Valid() || !c.AfterNodeStyle.Valid() ||
@@ -793,27 +864,42 @@ func (c historyCacheChange) historyChange() (historyChange, bool) {
 		return historyChange{}, false
 	}
 	return historyChange{
-		kind:            c.Kind,
-		id:              c.ID,
-		beforePoint:     c.BeforePoint,
-		afterPoint:      c.AfterPoint,
-		beforeSize:      c.BeforeSize,
-		afterSize:       c.AfterSize,
-		beforeLabel:     c.BeforeLabel,
-		afterLabel:      c.AfterLabel,
-		beforeEdge:      ir.Edge{PortA: c.BeforeEdge.PortA, PortB: c.BeforeEdge.PortB},
-		afterEdge:       ir.Edge{PortA: c.AfterEdge.PortA, PortB: c.AfterEdge.PortB},
-		beforeNodeStyle: c.BeforeNodeStyle,
-		afterNodeStyle:  c.AfterNodeStyle,
-		beforeEdgeStyle: c.BeforeEdgeStyle,
-		afterEdgeStyle:  c.AfterEdgeStyle,
-		beforeRouter:    c.BeforeRouter,
-		afterRouter:     c.AfterRouter,
-		layerHit:        layerHit,
-		beforeLayer:     c.BeforeLayer,
-		afterLayer:      c.AfterLayer,
-		node:            node,
+		kind:              c.Kind,
+		id:                c.ID,
+		beforePoint:       c.BeforePoint,
+		afterPoint:        c.AfterPoint,
+		beforeSize:        c.BeforeSize,
+		afterSize:         c.AfterSize,
+		beforeLabel:       c.BeforeLabel,
+		afterLabel:        c.AfterLabel,
+		beforeEdge:        ir.Edge{PortA: c.BeforeEdge.PortA, PortB: c.BeforeEdge.PortB},
+		afterEdge:         ir.Edge{PortA: c.AfterEdge.PortA, PortB: c.AfterEdge.PortB},
+		beforeNodeStyle:   c.BeforeNodeStyle,
+		afterNodeStyle:    c.AfterNodeStyle,
+		beforeEdgeStyle:   c.BeforeEdgeStyle,
+		afterEdgeStyle:    c.AfterEdgeStyle,
+		beforeRouter:      c.BeforeRouter,
+		afterRouter:       c.AfterRouter,
+		layerHit:          layerHit,
+		beforeLayer:       c.BeforeLayer,
+		afterLayer:        c.AfterLayer,
+		node:              node,
+		beforeAttachment:  c.BeforeAttachment.attachment(),
+		afterAttachment:   c.AfterAttachment.attachment(),
+		beforeAttached:    c.BeforeAttached,
+		afterAttached:     c.AfterAttached,
+		beforeAttachments: cacheAttachmentsToLayout(c.BeforeAttachments),
 	}, true
+}
+
+func cacheAttachmentsToLayout(
+	attachments []historyCacheAttachment,
+) []Attachment {
+	result := make([]Attachment, len(attachments))
+	for i, attachment := range attachments {
+		result[i] = attachment.attachment()
+	}
+	return result
 }
 
 func (c historyCacheHNode) historyNode() (historyNode, bool) {
@@ -821,14 +907,15 @@ func (c historyCacheHNode) historyNode() (historyNode, bool) {
 		return historyNode{}, false
 	}
 	node := historyNode{
-		ID:     c.ID,
-		Label:  c.Label,
-		Origin: c.Origin,
-		Size:   c.Size,
-		Style:  c.Style,
-		Ports:  make([]historyPort, len(c.Ports)),
-		Edges:  make([]historyEdge, len(c.Edges)),
-		Layers: make([]historyLayer, len(c.Layers)),
+		ID:          c.ID,
+		Label:       c.Label,
+		Origin:      c.Origin,
+		Size:        c.Size,
+		Style:       c.Style,
+		Ports:       make([]historyPort, len(c.Ports)),
+		Edges:       make([]historyEdge, len(c.Edges)),
+		Layers:      make([]historyLayer, len(c.Layers)),
+		Attachments: cacheAttachmentsToLayout(c.Attachments),
 	}
 	for i, port := range c.Ports {
 		side, ok := historySide(port.Side)
@@ -889,12 +976,13 @@ func historySide(value string) (ir.Side, bool) {
 }
 
 type semanticHistoryState struct {
-	Nodes   []semanticHistoryNode  `json:"nodes"`
-	Ports   []semanticHistoryPort  `json:"ports"`
-	Edges   []semanticHistoryEdge  `json:"edges"`
-	Layers  []semanticHistoryLayer `json:"layers,omitempty"`
-	Padding Padding                `json:"padding"`
-	Router  Router                 `json:"router"`
+	Nodes       []semanticHistoryNode       `json:"nodes"`
+	Ports       []semanticHistoryPort       `json:"ports"`
+	Edges       []semanticHistoryEdge       `json:"edges"`
+	Attachments []semanticHistoryAttachment `json:"attachments,omitempty"`
+	Layers      []semanticHistoryLayer      `json:"layers,omitempty"`
+	Padding     Padding                     `json:"padding"`
+	Router      Router                      `json:"router"`
 }
 
 type semanticHistoryLayer struct {
@@ -919,6 +1007,13 @@ type semanticHistoryEdge struct {
 	PortA uint32    `json:"port_a"`
 	PortB uint32    `json:"port_b"`
 	Style EdgeStyle `json:"style,omitzero"`
+}
+
+type semanticHistoryAttachment struct {
+	Node     uint32 `json:"node"`
+	Edge     uint32 `json:"edge"`
+	Position uint16 `json:"position"`
+	Anchor   Point  `json:"anchor"`
 }
 
 func semanticHistoryDigest(state layoutHistoryState) (string, error) {
@@ -972,6 +1067,20 @@ func semanticHistoryDigest(state layoutHistoryState) (string, error) {
 			PortB: portIDs[edge.PortB],
 			Style: state.edgeStyles[edgeID],
 		})
+	}
+	for _, attachment := range state.attachments {
+		if attachment == (Attachment{}) {
+			continue
+		}
+		semantic.Attachments = append(
+			semantic.Attachments,
+			semanticHistoryAttachment{
+				Node:     nodeIDs[attachment.NodeID],
+				Edge:     edgeIDs[attachment.EdgeID],
+				Position: attachment.Position,
+				Anchor:   attachment.Anchor,
+			},
+		)
 	}
 	for _, hit := range state.order {
 		layer := semanticHistoryLayer{Kind: hit.Kind}

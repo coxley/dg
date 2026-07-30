@@ -27,6 +27,11 @@ type Encoder struct {
 	lines         []layout.LabelLine
 }
 
+// OwnerAt returns the topmost object in the most recently encoded frame.
+func (e *Encoder) OwnerAt(point layout.Point) (layout.Hit, bool) {
+	return e.grid.OwnerAt(point)
+}
+
 // RasterizeEdge appends transient edge cells over the most recently encoded
 // frame.
 func (e *Encoder) RasterizeEdge(

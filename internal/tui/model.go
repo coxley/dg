@@ -4,11 +4,15 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"os"
 	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/internal/settings"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
@@ -106,8 +110,9 @@ type Model struct {
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
 
-	moveOrigins []layout.Point
-	focusNodes  []layout.Hit
+	moveOrigins   []layout.Point
+	focusNodes    []layout.Hit
+	candidateHits []layout.Hit
 }
 
 // Option configures model construction.
@@ -204,13 +209,19 @@ func Run(geo *layout.Layout, path string, options ...Option) error {
 	if err != nil {
 		return err
 	}
-	defer model.interruptInteraction()
-	_, err = tea.NewProgram(model).Run()
+	_, runErr := tea.NewProgram(model).Run()
+	model.interruptInteraction()
+	cleanupErr := resetLiveTint(os.Stdout)
+	return errors.Join(runErr, cleanupErr)
+}
+
+func resetLiveTint(writer io.Writer) error {
+	_, err := io.WriteString(writer, ansi.ResetModeLightDark)
 	return err
 }
 
 func (*Model) Init() tea.Cmd {
-	return tea.Batch(func() tea.Msg { return tea.RequestBackgroundColor() })
+	return tea.Raw(ansi.SetModeLightDark + ansi.RequestBackgroundColor)
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -230,6 +241,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			preferences.DarkTint,
 			preferences.LightTint,
 		))
+	case uv.DarkColorSchemeEvent, uv.LightColorSchemeEvent:
+		return m, requestBackgroundColor()
+	case tea.FocusMsg:
+		return m, requestBackgroundColor()
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
 		m.bindings.SetKeyDisambiguation(message.SupportsKeyDisambiguation())
@@ -283,6 +298,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateSidebarMotion(message)
 	}
 	return m, nil
+}
+
+func requestBackgroundColor() tea.Cmd {
+	return func() tea.Msg { return tea.RequestBackgroundColor() }
 }
 
 func (m *Model) applyTheme(theme Theme) {
@@ -513,6 +532,9 @@ func (m *Model) dragNode(nodeID uint32, cursorX, cursorY int64) {
 	offset := m.interaction.gesture.offset
 	dx := cursorX - int64(offset.X) - int64(previous.X)
 	dy := cursorY - int64(offset.Y) - int64(previous.Y)
+	if dx == 0 && dy == 0 {
+		return
+	}
 	rebase, err := m.rebaseSelectionMove(dx, dy, cursorX, cursorY)
 	if err != nil {
 		m.setError(err.Error())
@@ -521,8 +543,14 @@ func (m *Model) dragNode(nodeID uint32, cursorX, cursorY int64) {
 	cursorX += int64(rebase.X)
 	cursorY += int64(rebase.Y)
 	cursor := layout.NewPoint(uint32(cursorX), uint32(cursorY))
-	if _, err := m.moveSelectedNodes(dx, dy, cursor); err != nil {
+	moved, err := m.moveSelectedNodes(dx, dy, cursor)
+	if err != nil {
 		m.setError(err.Error())
+		return
+	}
+	if moved {
+		m.interaction.gesture.moved = true
+		m.refreshAttachmentCandidate(nodeID)
 	}
 }
 
@@ -949,11 +977,17 @@ func (m *Model) cancelTransaction() error {
 }
 
 func (m *Model) finishMove() {
-	var routeErr error
-	if m.interaction.movingRigidly() {
-		routeErr = m.rebuildSelection()
+	if err := m.applyNodeAttachment(); err != nil {
+		m.rejectMove(err)
+		return
 	}
-	err := errors.Join(routeErr, m.commitTransaction())
+	if m.interaction.movingRigidly() {
+		if err := m.rebuildSelection(); err != nil {
+			m.rejectMove(err)
+			return
+		}
+	}
+	err := m.commitTransaction()
 	m.interaction.resetGesture()
 	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 	if err != nil {
@@ -963,15 +997,32 @@ func (m *Model) finishMove() {
 	}
 }
 
+func (m *Model) rejectMove(cause error) {
+	rollbackErr := errors.Join(m.cancelTransaction(), m.render())
+	m.interaction.resetGesture()
+	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
+	m.refreshHits()
+	m.setError(fmt.Errorf(
+		"placement rejected: %w",
+		errors.Join(cause, rollbackErr),
+	).Error())
+}
+
 func (m *Model) interruptInteraction() {
 	m.clipboard.CancelPending()
 	if m.preferenceEdit {
 		m.cancelPreferences()
 	}
-	if m.history != nil {
-		m.history.Interrupt()
+	if m.interaction.gesture.kind == gestureMove {
+		placementErr, commitErr := m.interruptMove()
+		if placementErr != nil {
+			m.rejectMove(placementErr)
+		} else if commitErr != nil {
+			m.setError(commitErr.Error())
+		}
+	} else if err := m.commitTransaction(); err != nil {
+		m.setError(err.Error())
 	}
-	m.interaction.transaction = interactionTransaction{}
 	if m.interaction.session.kind == sessionLabelEdit {
 		m.finishLabelEdit()
 	} else {
@@ -982,6 +1033,18 @@ func (m *Model) interruptInteraction() {
 	m.cancelDuplicateDrag()
 	m.interaction.resetGesture()
 	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
+}
+
+func (m *Model) interruptMove() (placementErr, commitErr error) {
+	if err := m.applyNodeAttachment(); err != nil {
+		return err, nil
+	}
+	if m.interaction.movingRigidly() {
+		if err := m.rebuildSelection(); err != nil {
+			return err, nil
+		}
+	}
+	return nil, m.commitTransaction()
 }
 
 func (m *Model) undo() {

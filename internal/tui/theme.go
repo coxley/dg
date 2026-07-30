@@ -22,18 +22,19 @@ var (
 
 // Theme contains every terminal-facing visual style.
 type Theme struct {
-	Dark         bool
-	TintID       string
-	Canvas       canvasview.Styles
-	Navigation   nav.Styles
-	Modal        modalview.Styles
-	Confirmation modalview.ConfirmationStyles
-	Help         helpStyles
-	Sidebar      sidebarStyles
-	Status       statusStyles
-	Preferences  preferencesview.Styles
-	Save         saveStyles
-	ExportForm   chrome.FormStyles
+	Dark          bool
+	TintID        string
+	CandidateEdge lipgloss.Style
+	Canvas        canvasview.Styles
+	Navigation    nav.Styles
+	Modal         modalview.Styles
+	Confirmation  modalview.ConfirmationStyles
+	Help          helpStyles
+	Sidebar       sidebarStyles
+	Status        statusStyles
+	Preferences   preferencesview.Styles
+	Save          saveStyles
+	ExportForm    chrome.FormStyles
 }
 
 type helpStyles struct {
@@ -84,6 +85,7 @@ func convertTint(theme *tint.Tint) Theme {
 	muted := cmp.Or(theme.BrightWhite, theme.Black, theme.Fg)
 	port := cmp.Or(theme.BrightGreen, theme.Green, theme.Fg)
 	alert := cmp.Or(theme.BrightRed, theme.Red, theme.Fg)
+	candidate := cmp.Or(theme.BrightYellow, theme.Yellow, theme.Fg)
 	plain := lipgloss.NewStyle()
 	tab := lipgloss.NewStyle().
 		Faint(true).
@@ -166,8 +168,9 @@ func convertTint(theme *tint.Tint) Theme {
 		Error:        plain.Foreground(alert),
 	}
 	return Theme{
-		Dark:   theme.Dark,
-		TintID: theme.ID,
+		Dark:          theme.Dark,
+		TintID:        theme.ID,
+		CandidateEdge: lipgloss.NewStyle().Foreground(candidate).Bold(true),
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().
 				Background(focus).

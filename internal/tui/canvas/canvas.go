@@ -120,6 +120,15 @@ func (m Model) Frame(id FrameID) render.Frame {
 	return m.frames[id].frame
 }
 
+// OwnerAt returns the topmost object in a retained frame.
+func (m *Model) OwnerAt(id FrameID, point layout.Point) (layout.Hit, bool) {
+	encoder := &m.encoder
+	if id == DuplicateFrame {
+		encoder = &m.duplicateEncoder
+	}
+	return encoder.OwnerAt(point)
+}
+
 // Rows returns indexed rows for a retained frame.
 func (m Model) Rows(id FrameID) []Span {
 	return m.frames[id].rows

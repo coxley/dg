@@ -184,6 +184,58 @@ func TestHistoryRestoreKeepsSavedRenderAndRecoversRedoTail(t *testing.T) {
 	require.Equal(t, NewPoint(20, 30), restored.Nodes[restoredID].Rect.Min)
 }
 
+func TestHistoryRestoreRecoversAttachmentRedoTail(t *testing.T) {
+	t.Parallel()
+
+	store := newMapHistoryStore()
+	history, err := NewHistory(WithHistoryStore(store))
+	require.NoError(t, err)
+	geo, node := historyAttachmentLayout(t, history)
+	saved := mustAttachment(t, geo, node)
+	require.NoError(t, history.Store("diagram.json"))
+
+	require.NoError(t, geo.DetachNode(node))
+	require.NoError(t, history.Flush())
+
+	restoredHistory, err := NewHistory(WithHistoryStore(store))
+	require.NoError(t, err)
+	restored, restoredNode := historyAttachmentLayout(t, restoredHistory)
+	ok, err := restoredHistory.Restore("diagram.json")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, saved, mustAttachment(t, restored, restoredNode))
+
+	changed, err := restoredHistory.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	_, attached := restored.NodeAttachment(restoredNode)
+	require.False(t, attached)
+}
+
+func historyAttachmentLayout(
+	t testing.TB,
+	history *History,
+) (*Layout, uint32) {
+	t.Helper()
+
+	geo, err := New(WithHistory(history))
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(10, 10))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", NewPoint(60, 10))
+	require.NoError(t, err)
+	node, err := geo.NewNodeAt("tag", NewPoint(30, 20))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	point, err := attachmentPoint(geo.Edges[edge].Points, attachmentPositionMax/2)
+	require.NoError(t, err)
+	require.NoError(t, geo.PlaceNode(node, NewPoint(point.X-1, point.Y-1)))
+	require.NoError(t, geo.AttachNode(node, edge, point))
+	history.Clear()
+	return geo, node
+}
+
 func TestHistoryRestoreRecoversLayerRedoTail(t *testing.T) {
 	t.Parallel()
 

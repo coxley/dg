@@ -5,6 +5,7 @@ import (
 	"math"
 
 	tea "charm.land/bubbletea/v2"
+	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/coxley/dg/layout"
 )
@@ -183,8 +184,13 @@ func (m *Model) autoSizeDoubleClickedNode() bool {
 
 func (m *Model) prioritizeSelectedEdge() {
 	selection := m.geo.Selection()
+	owner, ok := m.canvas.OwnerAt(canvasview.BaseFrame, m.cursor)
 	for i, hit := range m.hits {
-		if hit.Kind == layout.HitEdge && selection.Contains(hit) {
+		if hit.Kind != layout.HitEdge || !selection.Contains(hit) {
+			continue
+		}
+		if (ok && hit == owner) ||
+			m.nearEdgeEndpoint(hit.ID, m.cursor) {
 			m.active = i
 			return
 		}

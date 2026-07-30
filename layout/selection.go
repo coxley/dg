@@ -18,6 +18,9 @@ type Selection struct {
 	edgeCount int
 	expanded  bool
 
+	attachmentEdge     uint32
+	attachmentExpanded bool
+
 	components        ir.Components
 	selectedComponent []bool
 }
@@ -34,6 +37,7 @@ func (s *Selection) Clear() {
 	s.nodeCount = 0
 	s.edgeCount = 0
 	s.expanded = false
+	s.attachmentExpanded = false
 }
 
 // Empty reports whether the selection contains no objects.
@@ -67,8 +71,23 @@ func (s *Selection) Contains(hit Hit) bool {
 // and cannot join a selection.
 func (s *Selection) SelectOnly(hit Hit) bool {
 	s.ensureCapacity()
+	collapseAttachments := hit.Kind == HitEdge &&
+		s.attachmentExpanded &&
+		s.attachmentEdge == hit.ID
 	s.Clear()
-	return s.selectHit(hit)
+	if !s.selectHit(hit) {
+		return false
+	}
+	if hit.Kind != HitEdge || collapseAttachments {
+		return true
+	}
+	for attachment := range s.layout.Attachments(hit.ID) {
+		if s.selectHit(Hit{ID: attachment.NodeID, Kind: HitNode}) {
+			s.attachmentExpanded = true
+			s.attachmentEdge = hit.ID
+		}
+	}
+	return true
 }
 
 // Toggle adds hit when unselected and removes it when selected. Ports remain
@@ -92,6 +111,7 @@ func (s *Selection) Toggle(hit Hit) bool {
 		return false
 	}
 	s.expanded = false
+	s.attachmentExpanded = false
 	return true
 }
 

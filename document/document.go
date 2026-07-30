@@ -20,12 +20,13 @@ var ErrUnsupportedVersion = errors.New("unsupported document version")
 
 // Document is the persisted representation of a diagram.
 type Document struct {
-	Version uint32  `json:"version"`
-	Nodes   []Node  `json:"nodes"`
-	Ports   []Port  `json:"ports"`
-	Edges   []Edge  `json:"edges"`
-	Layers  []Layer `json:"layers,omitempty"`
-	Options Options `json:"options"`
+	Version     uint32       `json:"version"`
+	Nodes       []Node       `json:"nodes"`
+	Ports       []Port       `json:"ports"`
+	Edges       []Edge       `json:"edges"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Layers      []Layer      `json:"layers,omitempty"`
+	Options     Options      `json:"options"`
 }
 
 // Node stores label, placement, and ordered port membership.
@@ -108,6 +109,14 @@ type Edge struct {
 	PortA uint32    `json:"port_a"`
 	PortB uint32    `json:"port_b"`
 	Style EdgeStyle `json:"style,omitzero"`
+}
+
+// Attachment stores a node's stable relative position along an edge.
+type Attachment struct {
+	Node     uint32 `json:"node"`
+	Edge     uint32 `json:"edge"`
+	Position uint16 `json:"position"`
+	Anchor   Point  `json:"anchor"`
 }
 
 // EdgeStyle stores endpoint arrow choices.
@@ -240,6 +249,21 @@ func FromLayout(geo *layout.Layout) Document {
 			Style: documentEdgeStyle(style),
 		})
 	}
+	for nodeID := range graph.Nodes {
+		if !graph.NodeExists(uint32(nodeID)) {
+			continue
+		}
+		attachment, ok := geo.NodeAttachment(uint32(nodeID))
+		if !ok {
+			continue
+		}
+		doc.Attachments = append(doc.Attachments, Attachment{
+			Node:     nodeIDs[attachment.NodeID],
+			Edge:     edgeIDs[attachment.EdgeID],
+			Position: attachment.Position,
+			Anchor:   Point{X: attachment.Anchor.X, Y: attachment.Anchor.Y},
+		})
+	}
 	for hit := range geo.DrawOrder() {
 		switch hit.Kind {
 		case layout.HitNode:
@@ -366,6 +390,41 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		if err := geo.SetEdgeStyle(uint32(edgeID), style); err != nil {
 			return nil, fmt.Errorf("style edge %d: %w", edgeID, err)
 		}
+	}
+	seenAttachments := make([]uint32, 0, len(d.Attachments))
+	attachments := make([]layout.Attachment, 0, len(d.Attachments))
+	for i, attachment := range d.Attachments {
+		if uint64(attachment.Node) >= uint64(len(d.Nodes)) {
+			return nil, fmt.Errorf(
+				"attachment %d references unknown node %d",
+				i,
+				attachment.Node,
+			)
+		}
+		if uint64(attachment.Edge) >= uint64(len(d.Edges)) {
+			return nil, fmt.Errorf(
+				"attachment %d references unknown edge %d",
+				i,
+				attachment.Edge,
+			)
+		}
+		if slices.Contains(seenAttachments, attachment.Node) {
+			return nil, fmt.Errorf(
+				"attachment %d duplicates node %d",
+				i,
+				attachment.Node,
+			)
+		}
+		seenAttachments = append(seenAttachments, attachment.Node)
+		attachments = append(attachments, layout.Attachment{
+			NodeID:   attachment.Node,
+			EdgeID:   attachment.Edge,
+			Position: attachment.Position,
+			Anchor:   layout.NewPoint(attachment.Anchor.X, attachment.Anchor.Y),
+		})
+	}
+	if err := geo.SetAttachments(attachments...); err != nil {
+		return nil, fmt.Errorf("restore attachments: %w", err)
 	}
 	if history := geo.History(); history != nil {
 		history.Clear()

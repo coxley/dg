@@ -41,6 +41,47 @@ slices are read-only by contract.
 Deletion preserves tombstones. Draw order contains each live node and edge
 exactly once, from back to front. New objects start at the front.
 
+## Attachments
+
+`Layout` owns attachment geometry; `ir.Graph` remains unaware of it.
+`Layout.attachments` aligns with node IDs, and the zero `Attachment` means the
+node is detached. Do not add a parallel presence slice or presence bit.
+
+`Attachment` contains:
+
+- `NodeID` and `EdgeID`, which reference live layout objects
+- `Position`, a `uint16` normalized distance along the host's complete
+  Manhattan route
+- `Anchor`, the attached edge cell's offset from the node origin
+
+Valid positions lie strictly between zero and `math.MaxUint16`. Endpoint
+positions would overlap a connecting node; rejecting them also makes the zero
+value unambiguously detached, including for node and edge ID zero. `Anchor`
+preserves the exact drag alignment. Node dimensions alone could only derive a
+canonical alignment such as centering and would make off-center drops jump.
+
+`AttachNode` derives `Position` and `Anchor` from a routed cell inside the node.
+`SetAttachment` updates one relationship, while `SetAttachments` restores a
+batch before the first route. Both build atomically. `DetachNode` removes the
+relationship and keeps the current absolute origin.
+
+Attachment builds alternate routing and attached-node placement until geometry
+stabilizes. The host edge ignores its attached nodes as obstacles; every other
+edge still routes around them. A node cannot attach to an incident edge.
+Dependency cycles that do not stabilize within the bounded build passes fail,
+and reusable rollback snapshots restore the previous buildable geometry.
+
+Clone, history, history cache, translation, deletion, and tombstone reuse must
+preserve these invariants. Deleting a host edge detaches its nodes in place.
+Deleting a node also removes attachments hosted by its incident edges.
+Duplication copies a relationship only when both the attached node and host
+edge are copied.
+
+Selecting an edge first selects its attached nodes too. Selecting the same edge
+again leaves only the edge selected. Raster ownership remains authoritative:
+an edge passing under an attached node must not claim or highlight the node's
+label cells.
+
 ## Routing
 
 `Router` is copyable configuration. `Layout` owns reusable route scratch and a

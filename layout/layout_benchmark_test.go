@@ -38,6 +38,31 @@ func BenchmarkLayoutBuild(b *testing.B) {
 	}
 }
 
+func BenchmarkLayoutBuildAttachment(b *testing.B) {
+	geo, err := New()
+	require.NoError(b, err)
+	source, err := geo.NewNodeAt("source", NewPoint(10, 10))
+	require.NoError(b, err)
+	destination, err := geo.NewNodeAt("destination", NewPoint(80, 10))
+	require.NoError(b, err)
+	node, err := geo.NewNodeAt("tag", NewPoint(40, 30))
+	require.NoError(b, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(b, geo.Build())
+	point, err := attachmentPoint(geo.Edges[edge].Points, attachmentPositionMax/2)
+	require.NoError(b, err)
+	require.NoError(b, geo.PlaceNode(node, NewPoint(point.X-1, point.Y-1)))
+	require.NoError(b, geo.AttachNode(node, edge, point))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := geo.Build(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkLayoutBuildSmartArrows(b *testing.B) {
 	geo, _ := newBenchmarkLayout(b)
 	for edgeID := range geo.Edges {

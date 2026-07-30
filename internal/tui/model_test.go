@@ -16,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/internal/settings"
@@ -1459,7 +1460,7 @@ func newHelpScenarioModel(
 	}
 	require.NoError(t, model.rebuild())
 	model.history.Clear()
-	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	updateModel(t, model, tea.WindowSizeMsg{Width: 200, Height: 30})
 	blank := layout.NewPoint(70, 20)
 	focusNode := func() {
 		updateModel(t, model, keyPress(tea.KeyTab, ""))
@@ -1973,6 +1974,309 @@ func TestBackgroundColorSelectsRegisteredLightTint(t *testing.T) {
 		model.preferences.draft.LightTint,
 	)
 	require.Equal(t, model.preferences.draft.LightTint, model.theme.TintID)
+}
+
+func TestLiveBackgroundCommandsAndFocusReporting(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	raw, ok := model.Init()().(tea.RawMsg)
+	require.True(t, ok)
+	require.Equal(
+		t,
+		ansi.SetModeLightDark+ansi.RequestBackgroundColor,
+		raw.Msg,
+	)
+
+	for _, message := range []tea.Msg{
+		uv.DarkColorSchemeEvent{},
+		uv.LightColorSchemeEvent{},
+		tea.FocusMsg{},
+	} {
+		command := updateModelCommand(t, model, message)
+		require.NotNil(t, command)
+		require.Equal(t, tea.RequestBackgroundColor(), command())
+	}
+	require.True(t, model.View().ReportFocus)
+
+	var cleanup strings.Builder
+	require.NoError(t, resetLiveTint(&cleanup))
+	require.Equal(t, ansi.ResetModeLightDark, cleanup.String())
+}
+
+func TestNodeDragAttachesHighlightsAndDetaches(t *testing.T) {
+	t.Parallel()
+
+	model, _, _, node, edge := newComponentModel(t)
+	require.NoError(t, model.geo.BringToFront(layout.Hit{
+		ID:   node,
+		Kind: layout.HitNode,
+	}))
+	require.NoError(t, model.render())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	point := modelEdgeMiddle(model.geo.Edges[edge].Points)
+	rect := model.geo.Nodes[node].Rect
+	click := model.geo.Nodes[node].LabelPoint
+	targetOrigin := layout.NewPoint(point.X-2, point.Y-1)
+	dx := int(targetOrigin.X) - int(rect.Min.X)
+	dy := int(targetOrigin.Y) - int(rect.Min.Y)
+
+	model.updateMouseClick(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y),
+		Button: tea.MouseLeft,
+	})
+	model.updateMouseMotion(tea.Mouse{
+		X:      int(click.X) + dx,
+		Y:      int(click.Y) + dy,
+		Button: tea.MouseLeft,
+	})
+
+	require.True(
+		t,
+		model.interaction.gesture.hasAttachment,
+		"gesture=%+v node=%+v edge=%+v point=%+v",
+		model.interaction.gesture,
+		model.geo.Nodes[node].Rect,
+		model.geo.Edges[edge].Points,
+		point,
+	)
+	require.Equal(t, edge, model.interaction.gesture.attachmentEdge)
+	require.NotEqual(
+		t,
+		highlightCandidateEdge,
+		model.highlightKindAt(point),
+		"the hovering node owns the attachment cell",
+	)
+	visibleEdgePoint, ok := visibleEdgePointOutside(
+		model,
+		edge,
+		model.geo.Nodes[node].Rect,
+	)
+	require.True(t, ok)
+	require.Equal(
+		t,
+		highlightCandidateEdge,
+		model.highlightKindAt(visibleEdgePoint),
+	)
+	require.Equal(
+		t,
+		model.theme.CandidateEdge,
+		model.highlightStyle(highlightCandidateEdge),
+	)
+
+	model.updateMouseRelease(tea.Mouse{
+		X:      int(click.X) + dx,
+		Y:      int(click.Y) + dy,
+		Button: tea.MouseLeft,
+	})
+	attachment, attached := model.geo.NodeAttachment(node)
+	require.True(t, attached)
+	require.Equal(t, edge, attachment.EdgeID)
+
+	attachmentCell := model.geo.Nodes[node].Rect.Min.Add(
+		attachment.Anchor.X,
+		attachment.Anchor.Y,
+	)
+	require.True(t, model.geo.Edges[edge].Contains(attachmentCell))
+	owner, ok := model.canvas.OwnerAt(canvasview.BaseFrame, attachmentCell)
+	require.True(t, ok)
+	require.Equal(t, layout.Hit{ID: node, Kind: layout.HitNode}, owner)
+	model.selectOnly(layout.Hit{ID: edge, Kind: layout.HitEdge})
+	require.False(
+		t,
+		model.highlightedPoint(attachmentCell),
+		"the selected edge must not style an attachment-owned label cell",
+	)
+	visibleEdgePoint, ok = visibleEdgePointOutside(
+		model,
+		edge,
+		model.geo.Nodes[node].Rect,
+	)
+	require.True(t, ok)
+	require.True(t, model.highlightedPoint(visibleEdgePoint))
+
+	route := slices.Clone(model.geo.Edges[edge].Points)
+	click = attachmentCell
+	model.updateMouseClick(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y),
+		Button: tea.MouseLeft,
+	})
+	model.updateMouseRelease(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y),
+		Button: tea.MouseLeft,
+	})
+	require.Equal(t, attachment, mustModelAttachment(t, model, node))
+	require.Equal(t, route, model.geo.Edges[edge].Points)
+	require.True(t, model.geo.Selection().Contains(layout.Hit{
+		ID:   node,
+		Kind: layout.HitNode,
+	}))
+	require.Equal(t, layout.Hit{ID: node, Kind: layout.HitNode}, model.target)
+
+	click = model.geo.Nodes[node].Rect.Min.Add(1, 0)
+	model.updateMouseClick(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y),
+		Button: tea.MouseLeft,
+	})
+	model.updateMouseMotion(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y) + 10,
+		Button: tea.MouseLeft,
+	})
+	model.updateMouseRelease(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y) + 10,
+		Button: tea.MouseLeft,
+	})
+	_, attached = model.geo.NodeAttachment(node)
+	require.False(
+		t,
+		attached,
+		"gesture=%+v status=%q node=%+v",
+		model.interaction.gesture,
+		model.status,
+		model.geo.Nodes[node].Rect,
+	)
+}
+
+func TestAltDragDuplicateAttachesOnRelease(t *testing.T) {
+	t.Parallel()
+
+	model, _, _, node, edge := newComponentModel(t)
+	require.NoError(t, model.geo.BringToFront(layout.Hit{
+		ID:   node,
+		Kind: layout.HitNode,
+	}))
+	require.NoError(t, model.render())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	point := modelEdgeMiddle(model.geo.Edges[edge].Points)
+	rect := model.geo.Nodes[node].Rect
+	click := model.geo.Nodes[node].LabelPoint
+	targetOrigin := layout.NewPoint(point.X-2, point.Y-1)
+	dx := int(targetOrigin.X) - int(rect.Min.X)
+	dy := int(targetOrigin.Y) - int(rect.Min.Y)
+
+	model.updateMouseClick(tea.Mouse{
+		X:      int(click.X),
+		Y:      int(click.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+	model.updateMouseMotion(tea.Mouse{
+		X:      int(click.X) + dx,
+		Y:      int(click.Y) + dy,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+
+	require.Equal(t, gestureDuplicate, model.interaction.gesture.kind)
+	require.True(t, model.interaction.gesture.hasAttachment)
+	require.Equal(t, edge, model.interaction.gesture.attachmentEdge)
+
+	model.updateMouseRelease(tea.Mouse{
+		X:      int(click.X) + dx,
+		Y:      int(click.Y) + dy,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModAlt,
+	})
+
+	duplicate, ok := model.geo.Selection().FirstNode()
+	require.True(t, ok)
+	require.NotEqual(t, node, duplicate)
+	require.Equal(t, edge, mustModelAttachment(t, model, duplicate).EdgeID)
+	_, originalAttached := model.geo.NodeAttachment(node)
+	require.False(t, originalAttached)
+
+	model.undo()
+	require.True(t, model.geo.NodeExists(node))
+	require.False(t, model.geo.NodeExists(duplicate))
+}
+
+func mustModelAttachment(
+	t testing.TB,
+	model *Model,
+	nodeID uint32,
+) layout.Attachment {
+	t.Helper()
+	attachment, ok := model.geo.NodeAttachment(nodeID)
+	require.True(t, ok)
+	return attachment
+}
+
+func visibleEdgePointOutside(
+	model *Model,
+	edgeID uint32,
+	rect layout.Rect,
+) (layout.Point, bool) {
+	points := model.geo.Edges[edgeID].Points
+	for i := 1; i < len(points); i++ {
+		a, b := points[i-1], points[i]
+		length := max(a.X, b.X) - min(a.X, b.X) +
+			max(a.Y, b.Y) - min(a.Y, b.Y)
+		for offset := range length + 1 {
+			var point layout.Point
+			switch {
+			case a.X == b.X && b.Y >= a.Y:
+				point = layout.NewPoint(a.X, a.Y+offset)
+			case a.X == b.X:
+				point = layout.NewPoint(a.X, a.Y-offset)
+			case b.X >= a.X:
+				point = layout.NewPoint(a.X+offset, a.Y)
+			default:
+				point = layout.NewPoint(a.X-offset, a.Y)
+			}
+			if rect.Contains(point) {
+				continue
+			}
+			owner, ok := model.canvas.OwnerAt(canvasview.BaseFrame, point)
+			if ok && owner == (layout.Hit{ID: edgeID, Kind: layout.HitEdge}) {
+				return point, true
+			}
+		}
+	}
+	return layout.Point{}, false
+}
+
+func TestRejectedRigidDropsDoNotPoisonUndo(t *testing.T) {
+	t.Parallel()
+
+	model, left, right, blocker := newComponentModelWithBlocker(t)
+	initial := model.geo.Nodes[left].Rect.Min
+	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
+	model.shiftSelection(1, 0)
+	committed := model.geo.Nodes[left].Rect.Min
+	require.NotEqual(t, initial, committed)
+
+	for range 2 {
+		model.clearSelection()
+		model.geo.Selection().Toggle(layout.Hit{ID: left, Kind: layout.HitNode})
+		model.geo.Selection().Toggle(layout.Hit{ID: right, Kind: layout.HitNode})
+		model.target = layout.Hit{ID: left, Kind: layout.HitNode}
+		model.beginTransaction(transactionPointerMove)
+		model.interaction.gesture = pointerGesture{
+			kind:   gestureMove,
+			target: model.target,
+			rigid:  true,
+		}
+		dx := int64(model.geo.Nodes[blocker].Rect.Min.X) -
+			int64(model.geo.Nodes[left].Rect.Min.X) + 2
+		dy := int64(model.geo.Nodes[blocker].Rect.Min.Y) -
+			int64(model.geo.Nodes[left].Rect.Min.Y) + 2
+		require.NoError(t, model.geo.MoveSelection(dx, dy))
+
+		model.finishMove()
+
+		require.Equal(t, committed, model.geo.Nodes[left].Rect.Min)
+		require.Contains(t, model.status, "placement rejected")
+		require.NoError(t, model.geo.Build())
+	}
+
+	model.undo()
+	require.Equal(t, initial, model.geo.Nodes[left].Rect.Min)
 }
 
 func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
@@ -3707,6 +4011,60 @@ func newComponentModel(t testing.TB) (*Model, uint32, uint32, uint32, uint32) {
 	model, err := New(geo, testModelSettings())
 	require.NoError(t, err)
 	return model, left, connected, isolated, edgeID
+}
+
+func newComponentModelWithBlocker(
+	t testing.TB,
+) (*Model, uint32, uint32, uint32) {
+	t.Helper()
+
+	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	geo, err := layout.New(layout.WithHistory(history))
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("left", layout.NewPoint(2, 2))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", layout.NewPoint(20, 2))
+	require.NoError(t, err)
+	blocker, err := geo.NewNodeAt("blocker", layout.NewPoint(30, 15))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(blocker, layout.Size{
+		Width:  50,
+		Height: 20,
+	}))
+	geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, geo.Build())
+	history.Clear()
+	model, err := New(geo, testModelSettings())
+	require.NoError(t, err)
+	return model, left, right, blocker
+}
+
+func modelEdgeMiddle(points []layout.Point) layout.Point {
+	var total uint64
+	for i := 1; i < len(points); i++ {
+		total += pointDistance(points[i-1], points[i])
+	}
+	distance := total / 2
+	for i := 1; i < len(points); i++ {
+		a, b := points[i-1], points[i]
+		segment := pointDistance(a, b)
+		if distance > segment {
+			distance -= segment
+			continue
+		}
+		switch {
+		case a.X == b.X && b.Y >= a.Y:
+			return layout.NewPoint(a.X, a.Y+uint32(distance))
+		case a.X == b.X:
+			return layout.NewPoint(a.X, a.Y-uint32(distance))
+		case b.X >= a.X:
+			return layout.NewPoint(a.X+uint32(distance), a.Y)
+		default:
+			return layout.NewPoint(a.X-uint32(distance), a.Y)
+		}
+	}
+	return points[len(points)-1]
 }
 
 func selectionContains(model *Model, kind layout.HitKind, id uint32) bool {
