@@ -297,6 +297,7 @@ type routeScratch struct {
 	candidate []Point
 	expanded  []Point
 	relaxed   []Point
+	segment   []Point
 	arrowPort []bool
 }
 
@@ -315,6 +316,7 @@ func (s *routeScratch) reset(
 	}
 	s.candidate = s.candidate[:0]
 	s.relaxed = s.relaxed[:0]
+	s.segment = s.segment[:0]
 	s.arrowPort = slices.Grow(
 		s.arrowPort[:0],
 		portCount,
@@ -956,9 +958,23 @@ func (r Router) findRoute(
 	search *routeSearch,
 	path []Point,
 ) ([]Point, error) {
+	route := l.routeEdge(edgeID)
+	if uint64(edgeID) < uint64(len(l.edgeBends)) &&
+		len(l.edgeBends[edgeID]) != 0 {
+		return r.findRouteThroughBends(
+			l,
+			route,
+			a,
+			b,
+			l.edgeBends[edgeID],
+			occupancy,
+			search,
+			path,
+		)
+	}
 	return r.findRouteFor(
 		l,
-		l.routeEdge(edgeID),
+		route,
 		a,
 		b,
 		occupancy,

@@ -113,6 +113,9 @@ func (m *Model) activeTool() nav.Tool {
 
 func (m *Model) activeFrame() canvasview.FrameID {
 	switch {
+	case m.interaction.session.kind == sessionBend &&
+		m.interaction.gesture.kind == gestureBend:
+		return canvasview.ConnectionFrame
 	case m.interaction.session.kind == sessionConnection &&
 		m.interaction.session.connection.reconnect &&
 		m.interaction.gesture.connectionActive():
@@ -628,8 +631,15 @@ func (m *Model) usablePortAt(point layout.Point) (uint32, bool) {
 func (m *Model) connectionPreviewConnections(
 	point layout.Point,
 ) (layout.Connections, bool) {
+	return rasterConnections(m.interaction.render.connectionRaster, point)
+}
+
+func rasterConnections(
+	raster []layout.RasterCell,
+	point layout.Point,
+) (layout.Connections, bool) {
 	index, ok := slices.BinarySearchFunc(
-		m.interaction.render.connectionRaster,
+		raster,
 		point,
 		func(cell layout.RasterCell, point layout.Point) int {
 			if order := cmp.Compare(cell.Point.Y, point.Y); order != 0 {
@@ -641,7 +651,7 @@ func (m *Model) connectionPreviewConnections(
 	if !ok {
 		return 0, false
 	}
-	return m.interaction.render.connectionRaster[index].Connections, true
+	return raster[index].Connections, true
 }
 
 func (m *Model) refreshConnectionPreview() {
@@ -705,6 +715,54 @@ func (m *Model) refreshConnectionPreview() {
 	}
 }
 
+func (m *Model) refreshBendPreview() {
+	if m.interaction.session.kind != sessionBend {
+		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
+		m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+		return
+	}
+	session := &m.interaction.session.bend
+	preview, err := m.geo.PreviewPinnedBends(
+		m.interaction.render.bendPreview[:0],
+		session.edge,
+		session.bends,
+	)
+	if err != nil {
+		session.valid = false
+		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
+		m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+		m.status = err.Error()
+		return
+	}
+	portA, portB, err := m.geo.EdgePorts(session.edge)
+	if err != nil {
+		session.valid = false
+		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
+		m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+		m.status = err.Error()
+		return
+	}
+	m.interaction.render.bendPreview = preview
+	m.interaction.render.bendRaster, err = m.canvas.RasterizeEdge(
+		m.interaction.render.bendRaster[:0],
+		m.geo,
+		layout.RasterEdge{
+			Points: preview,
+			PortA:  portA,
+			PortB:  portB,
+		},
+	)
+	if err != nil {
+		session.valid = false
+		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
+		m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+		m.status = err.Error()
+		return
+	}
+	session.valid = true
+	m.status = ""
+}
+
 func (m *Model) primaryHighlight() (layout.Hit, bool) {
 	switch m.interaction.session.kind {
 	case sessionLabelEdit:
@@ -764,7 +822,8 @@ func appendHighlightedSpaces(
 ) []byte {
 	if model == nil ||
 		model.interaction.gesture.kind != gestureAreaSelection &&
-			model.interaction.session.kind != sessionConnection {
+			model.interaction.session.kind != sessionConnection &&
+			model.interaction.session.kind != sessionBend {
 		return appendSpaces(dst, count)
 	}
 	styledStart := -1
@@ -815,21 +874,38 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 		return 0, false
 	}
 	point := layout.NewPoint(uint32(x), uint32(y))
-	connections, ok := model.connectionPreviewConnections(point)
+	points, raster, style := model.activeEdgePreview()
+	connections, ok := rasterConnections(raster, point)
 	if !ok {
 		return 0, false
 	}
 	if glyph, ok := render.ArrowGlyphAt(
-		model.interaction.render.connectionPreview,
-		model.connectionPreviewStyle(),
+		points,
+		style,
 		point,
 	); ok {
 		return glyph, true
 	}
 	return render.StrokeGlyph(
 		connections,
-		model.connectionPreviewStyle().Stroke,
+		style.Stroke,
 	), true
+}
+
+func (m *Model) activeEdgePreview() (
+	[]layout.Point,
+	[]layout.RasterCell,
+	layout.EdgeStyle,
+) {
+	if m.interaction.session.kind == sessionBend {
+		style, _ := m.geo.EdgeStyle(m.interaction.session.bend.edge)
+		return m.interaction.render.bendPreview,
+			m.interaction.render.bendRaster,
+			style
+	}
+	return m.interaction.render.connectionPreview,
+		m.interaction.render.connectionRaster,
+		m.connectionPreviewStyle()
 }
 
 func (m *Model) connectionPreviewStyle() layout.EdgeStyle {

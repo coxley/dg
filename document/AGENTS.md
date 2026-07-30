@@ -13,6 +13,7 @@
 - node origins and optional explicit sizes
 - node border, stroke, and text alignment
 - edge stroke and endpoint arrows
+- ordered pinned edge bends
 - symmetric padding and router configuration
 - back-to-front layers
 
@@ -25,8 +26,9 @@ Export compacts runtime tombstones and remaps every node, port, edge, and layer
 reference. Import recreates independent runtime slices and validates enum
 values, offsets, IDs, and layers.
 
-Do not persist routes, raster cells, selection, free lists, geometry scratch,
-history, or frontend state. Layout rebuilds those values.
+Persist routing constraints, but not computed routes, raster cells, selection,
+free lists, geometry scratch, history, or frontend state. Layout rebuilds
+derived values.
 
 Schema structs intentionally mirror JSON rather than runtime storage. Keep
 conversion explicit so schema evolution does not leak into engine types.

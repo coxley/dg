@@ -293,7 +293,7 @@ func TestHistoryRestoreRecoversLayerRedoTail(t *testing.T) {
 	require.Equal(t, unsavedOrder, slices.Collect(restored.DrawOrder()))
 }
 
-func TestHistoryRestoreRecoversStyleRedoTail(t *testing.T) {
+func TestHistoryRestoreRecoversStyleAndBendRedoTail(t *testing.T) {
 	t.Parallel()
 
 	store := newMapHistoryStore()
@@ -313,8 +313,14 @@ func TestHistoryRestoreRecoversStyleRedoTail(t *testing.T) {
 		PortAArrow: ArrowOpen,
 		PortBArrow: ArrowFilled,
 	}
+	bends := []PinnedBend{{
+		Point:    NewPoint(12, 3),
+		Incoming: East,
+		Outgoing: South,
+	}}
 	require.NoError(t, geo.SetNodeStyle(left, nodeStyle))
 	require.NoError(t, geo.SetEdgeStyle(edgeID, edgeStyle))
+	require.NoError(t, geo.SetPinnedBends(edgeID, bends))
 	require.NoError(t, history.Flush())
 
 	restoredHistory, err := NewHistory(WithHistoryStore(store))
@@ -346,6 +352,12 @@ func TestHistoryRestoreRecoversStyleRedoTail(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, edgeStyle, mustEdgeStyle(t, restored, restoredEdge))
+	changed, err = restoredHistory.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	restoredBends, err := restored.PinnedBends(restoredEdge)
+	require.NoError(t, err)
+	require.Equal(t, bends, restoredBends)
 }
 
 func TestHistoryRestoreRecoversExactDeletedSlots(t *testing.T) {

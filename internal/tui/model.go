@@ -905,6 +905,17 @@ func (m *Model) cancelMode() {
 		m.refreshHits()
 		return
 	}
+	if m.interaction.session.kind == sessionBend {
+		err := errors.Join(m.cancelTransaction(), m.render())
+		m.clearBendDrag()
+		m.refreshHits()
+		if err != nil {
+			m.setError(err.Error())
+		} else {
+			m.status = ""
+		}
+		return
+	}
 	m.interaction.tool = toolNavigate
 	if m.interaction.session.kind == sessionLabelEdit {
 		m.commitLabelEdit()
@@ -980,7 +991,9 @@ func (m *Model) interruptInteraction() {
 	if m.preferenceEdit {
 		m.cancelPreferences()
 	}
-	if m.interaction.gesture.kind == gestureMove {
+	if m.interaction.gesture.kind == gestureBend {
+		m.finishBendDrag()
+	} else if m.interaction.gesture.kind == gestureMove {
 		placementErr, commitErr := m.interruptMove()
 		if placementErr != nil {
 			m.rejectMove(placementErr)
@@ -992,7 +1005,7 @@ func (m *Model) interruptInteraction() {
 	}
 	if m.interaction.session.kind == sessionLabelEdit {
 		m.finishLabelEdit()
-	} else {
+	} else if m.interaction.session.kind != sessionBend {
 		m.interaction.session = interactionSession{}
 	}
 	m.interaction.tool = toolNavigate
@@ -1066,6 +1079,18 @@ func (m *Model) clearConnection() {
 	m.interaction.render.connectionRaster = m.interaction.render.connectionRaster[:0]
 }
 
+func (m *Model) clearBendDrag() {
+	if m.interaction.session.kind == sessionBend {
+		m.interaction.session = interactionSession{}
+	}
+	if m.interaction.gesture.kind == gestureBend {
+		m.interaction.resetGesture()
+	}
+	m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
+	m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+	m.canvas.Clear(canvasview.ConnectionFrame)
+}
+
 func (m *Model) rebuild() error {
 	if err := m.geo.Build(); err != nil {
 		return fmt.Errorf("build layout: %w", err)
@@ -1101,6 +1126,18 @@ func (m *Model) renderConnectionBase() error {
 	)
 	if err != nil {
 		return fmt.Errorf("render connection base: %w", err)
+	}
+	return nil
+}
+
+func (m *Model) renderBendBase() error {
+	err := m.canvas.RenderWithoutEdge(
+		canvasview.ConnectionFrame,
+		m.geo,
+		m.interaction.session.bend.edge,
+	)
+	if err != nil {
+		return fmt.Errorf("render bend base: %w", err)
 	}
 	return nil
 }

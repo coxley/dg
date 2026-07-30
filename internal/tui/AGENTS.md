@@ -11,7 +11,7 @@ semantics must remain outside this package.
 The root `Model` owns editor coordination:
 
 - viewport, cursor, active tool, focus, workspace surfaces, and dialog state
-- mouse, drag, resize, label-edit, and reconnect interactions
+- mouse, drag, resize, edge-bend, label-edit, and reconnect interactions
 - save, preference transactions, document selection export, and notices
 
 Composable presentation models live in sub-packages:
@@ -51,7 +51,11 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - a line press and release snap to the closest usable port within two Manhattan
   cells
 - right drag resizes from the nearest corner
+- right drag within three Manhattan cells of a visible edge corner pins and
+  moves that bend along one dominant axis; selected edges win ambiguous bend
+  hits
 - double-click restores automatic node sizing
+- double-clicking an edge clears all of its pinned bends
 - Alt-drag duplicates selected nodes and their internal edges
 - Ctrl-click toggles non-contiguous selection
 - Ctrl-A expands to connected components, then selects everything
@@ -67,7 +71,9 @@ viewport together.
 
 ## Performance
 
-Node-only duplicate previews layer over committed frames without routing.
+Connection and bend previews reuse a retained frame with the edited edge
+removed, then rasterize only the draft route over it. Node-only duplicate
+previews layer over committed frames without routing.
 Rigid committed moves skip routing when static edges cannot be affected.
 Keep preview geometry separate from committed geometry.
 

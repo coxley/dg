@@ -31,6 +31,7 @@ const (
 	historySetEdgeStyle
 	historySetRouter
 	historySetAttachment
+	historySetPinnedBends
 )
 
 type historyPort struct {
@@ -42,6 +43,7 @@ type historyEdge struct {
 	ID    uint32
 	Edge  ir.Edge
 	Style EdgeStyle
+	Bends []PinnedBend
 }
 
 type historyLayer struct {
@@ -89,6 +91,8 @@ type historyChange struct {
 	beforeAttached    bool
 	afterAttached     bool
 	beforeAttachments []Attachment
+	beforeBends       []PinnedBend
+	afterBends        []PinnedBend
 }
 
 type historyEntry struct {
@@ -309,7 +313,8 @@ func (h *History) coalesce(change historyChange) bool {
 		change.kind != historySetNodeStyle &&
 		change.kind != historySetEdgeStyle &&
 		change.kind != historySetRouter &&
-		change.kind != historySetAttachment {
+		change.kind != historySetAttachment &&
+		change.kind != historySetPinnedBends {
 		return false
 	}
 	if change.kind == historySetLayer {
@@ -390,6 +395,9 @@ func coalesceChange(previous *historyChange, change historyChange) bool {
 			(!previous.beforeAttached ||
 				previous.beforeAttachment == previous.afterAttachment) &&
 			previous.beforePoint == previous.afterPoint
+	case historySetPinnedBends:
+		previous.afterBends = slices.Clone(change.afterBends)
+		return slices.Equal(previous.beforeBends, previous.afterBends)
 	default:
 		return false
 	}
@@ -514,6 +522,7 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 				change.id,
 				change.afterEdge,
 				change.afterEdgeStyle,
+				change.afterBends,
 				int(change.afterLayer),
 			)
 		}
@@ -526,6 +535,7 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 			change.id,
 			change.beforeEdge,
 			change.beforeEdgeStyle,
+			change.beforeBends,
 			int(change.beforeLayer),
 		); err != nil {
 			return err
@@ -536,14 +546,22 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 		return nil
 	case historyReconnectEdge:
 		edge := change.beforeEdge
+		bends := change.beforeBends
 		if forward {
 			edge = change.afterEdge
+			bends = change.afterBends
 		}
 		style := change.beforeEdgeStyle
 		if forward {
 			style = change.afterEdgeStyle
 		}
-		return h.layout.restoreHistoryEdge(change.id, edge, style, -1)
+		return h.layout.restoreHistoryEdge(
+			change.id,
+			edge,
+			style,
+			bends,
+			-1,
+		)
 	case historySetLayer:
 		index := change.beforeLayer
 		if forward {
@@ -556,12 +574,8 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 			style = change.afterNodeStyle
 		}
 		return h.layout.SetNodeStyle(change.id, style)
-	case historySetEdgeStyle:
-		style := change.beforeEdgeStyle
-		if forward {
-			style = change.afterEdgeStyle
-		}
-		return h.layout.SetEdgeStyle(change.id, style)
+	case historySetEdgeStyle, historySetPinnedBends:
+		return h.applyEdgeProperty(change, forward)
 	case historySetRouter:
 		router := change.beforeRouter
 		if forward {
@@ -585,12 +599,35 @@ func (h *History) applyChange(change historyChange, forward bool) error {
 	}
 }
 
+func (h *History) applyEdgeProperty(
+	change historyChange,
+	forward bool,
+) error {
+	switch change.kind {
+	case historySetEdgeStyle:
+		style := change.beforeEdgeStyle
+		if forward {
+			style = change.afterEdgeStyle
+		}
+		return h.layout.SetEdgeStyle(change.id, style)
+	case historySetPinnedBends:
+		bends := change.beforeBends
+		if forward {
+			bends = change.afterBends
+		}
+		return h.layout.SetPinnedBends(change.id, bends)
+	default:
+		return fmt.Errorf("unknown edge history change %d", change.kind)
+	}
+}
+
 type layoutHistoryState struct {
 	graph       ir.Graph
 	origins     []Point
 	sizes       []Size
 	nodeStyles  []NodeStyle
 	edgeStyles  []EdgeStyle
+	edgeBends   [][]PinnedBend
 	order       []Hit
 	padding     Padding
 	router      Router
@@ -604,6 +641,7 @@ func (l *Layout) historyState() layoutHistoryState {
 		sizes:       slices.Clone(l.explicitSizes),
 		nodeStyles:  slices.Clone(l.nodeStyles),
 		edgeStyles:  slices.Clone(l.edgeStyles),
+		edgeBends:   clonePinnedBends(l.edgeBends),
 		order:       slices.Clone(l.drawOrder),
 		padding:     l.padding,
 		router:      l.router,
@@ -622,6 +660,7 @@ func (l *Layout) restoreHistoryState(state layoutHistoryState) error {
 	l.explicitSizes = slices.Clone(state.sizes)
 	l.nodeStyles = slices.Clone(state.nodeStyles)
 	l.edgeStyles = slices.Clone(state.edgeStyles)
+	l.edgeBends = clonePinnedBends(state.edgeBends)
 	l.attachments = slices.Clone(state.attachments)
 	for nodeID := range l.graph.Nodes {
 		if !l.graph.NodeExists(uint32(nodeID)) {
@@ -665,6 +704,7 @@ func (l *Layout) historyNode(nodeID uint32) historyNode {
 				ID:    uint32(edgeID),
 				Edge:  l.graph.Edges[edgeID],
 				Style: l.edgeStyles[edgeID],
+				Bends: slices.Clone(l.edgeBends[edgeID]),
 			})
 		}
 	}
@@ -719,6 +759,7 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	l.portUsable = growTo(l.portUsable, len(l.graph.Ports))
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
+	l.edgeBends = growTo(l.edgeBends, len(l.graph.Edges))
 	l.explicitSizes[node.ID] = node.Size
 	l.nodeStyles[node.ID] = node.Style
 	resolved, err := l.prepareNode(node.ID, node.Label, node.Origin)
@@ -731,6 +772,7 @@ func (l *Layout) restoreHistoryNode(node historyNode) error {
 	for _, edge := range node.Edges {
 		l.Edges[edge.ID] = Edge{}
 		l.edgeStyles[edge.ID] = edge.Style
+		l.edgeBends[edge.ID] = slices.Clone(edge.Bends)
 	}
 	if len(node.Layers) == 0 {
 		l.appendLayer(Hit{ID: node.ID, Kind: HitNode})
@@ -749,6 +791,7 @@ func (l *Layout) restoreHistoryEdge(
 	edgeID uint32,
 	edge ir.Edge,
 	style EdgeStyle,
+	bends []PinnedBend,
 	layer int,
 ) error {
 	if !l.graph.PortExists(edge.PortA) || !l.graph.PortExists(edge.PortB) {
@@ -759,8 +802,10 @@ func (l *Layout) restoreHistoryEdge(
 	l.graph = l.graph.Clone()
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
+	l.edgeBends = growTo(l.edgeBends, len(l.graph.Edges))
 	l.Edges[edgeID] = Edge{}
 	l.edgeStyles[edgeID] = style
+	l.edgeBends[edgeID] = slices.Clone(bends)
 	hit := Hit{ID: edgeID, Kind: HitEdge}
 	if !l.hasLayer(hit) {
 		if layer < 0 {

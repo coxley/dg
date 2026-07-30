@@ -19,6 +19,7 @@ const (
 	sessionNone sessionKind = iota
 	sessionLabelEdit
 	sessionConnection
+	sessionBend
 )
 
 type connectionSession struct {
@@ -28,9 +29,26 @@ type connectionSession struct {
 	reconnect bool
 }
 
+type bendSession struct {
+	edge  uint32
+	index int
+	bends []layout.PinnedBend
+	valid bool
+	axis  bendDragAxis
+}
+
+type bendDragAxis uint8
+
+const (
+	bendAxisNone bendDragAxis = iota
+	bendAxisHorizontal
+	bendAxisVertical
+)
+
 type interactionSession struct {
 	kind       sessionKind
 	connection connectionSession
+	bend       bendSession
 }
 
 type gestureKind uint8
@@ -39,6 +57,7 @@ const (
 	gestureNone gestureKind = iota
 	gestureMove
 	gestureResize
+	gestureBend
 	gestureRectangle
 	gestureDuplicatePending
 	gestureDuplicate
@@ -81,6 +100,8 @@ type clickTracker struct {
 type interactionRenderCache struct {
 	connectionPreview  []layout.Point
 	connectionRaster   []layout.RasterCell
+	bendPreview        []layout.Point
+	bendRaster         []layout.RasterCell
 	duplicateLayout    *layout.Layout
 	duplicateHighlight []bool
 	selectionHighlight []bool
@@ -100,6 +121,7 @@ const (
 	transactionKeyboardMove
 	transactionPointerMove
 	transactionResize
+	transactionBend
 	transactionRectangle
 	transactionDuplicate
 	transactionLabelEdit
@@ -131,7 +153,7 @@ func (s interactionState) mode() mode {
 		return modeEditLabel
 	case sessionConnection:
 		return modeConnect
-	case sessionNone:
+	case sessionNone, sessionBend:
 	}
 	switch s.tool {
 	case toolRectangle:

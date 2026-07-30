@@ -148,6 +148,7 @@ type Layout struct {
 	// int64 with each entry representing styles for 8 nodes / edges at once?
 	nodeStyles  []NodeStyle
 	edgeStyles  []EdgeStyle
+	edgeBends   [][]PinnedBend
 	padding     Padding
 	router      Router
 	scratch     routeScratch
@@ -356,6 +357,13 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		if err := l.SetEdgeStyle(duplicateID, l.edgeStyles[edgeID]); err != nil {
 			return err
 		}
+		duplicateBends, ok := offsetPinnedBends(l.edgeBends[edgeID], dx, dy)
+		if !ok {
+			return errors.New("duplicate bend outside coordinate space")
+		}
+		if err := l.SetPinnedBends(duplicateID, duplicateBends); err != nil {
+			return err
+		}
 		points := slices.Grow(
 			l.Edges[duplicateID].Points[:0],
 			len(l.Edges[edgeID].Points),
@@ -393,6 +401,22 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		}
 	}
 	return nil
+}
+
+func offsetPinnedBends(
+	bends []PinnedBend,
+	dx, dy int64,
+) ([]PinnedBend, bool) {
+	result := make([]PinnedBend, len(bends))
+	for i, bend := range bends {
+		point, ok := offsetPoint(bend.Point, dx, dy)
+		if !ok {
+			return nil, false
+		}
+		result[i] = bend
+		result[i].Point = point
+	}
+	return result, true
 }
 
 func offsetPoint(point Point, dx, dy int64) (Point, bool) {
@@ -533,6 +557,11 @@ func (l *Layout) MoveSelection(dx, dy int64) error {
 				return errors.New("selection route outside coordinate space")
 			}
 		}
+		for _, bend := range l.edgeBends[id] {
+			if _, ok := offsetPoint(bend.Point, dx, dy); !ok {
+				return errors.New("selection bend outside coordinate space")
+			}
+		}
 	}
 	for nodeID := range l.selection.Nodes() {
 		point, _ := offsetPoint(l.origins[nodeID], dx, dy)
@@ -547,6 +576,15 @@ func (l *Layout) MoveSelection(dx, dy int64) error {
 		}
 		for i, point := range l.Edges[id].Points {
 			l.Edges[id].Points[i], _ = offsetPoint(point, dx, dy)
+		}
+		if len(l.edgeBends[id]) != 0 {
+			bends := slices.Clone(l.edgeBends[id])
+			for i := range bends {
+				bends[i].Point, _ = offsetPoint(bends[i].Point, dx, dy)
+			}
+			if err := l.SetPinnedBends(id, bends); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -579,6 +617,11 @@ func (l *Layout) Translate(dx, dy uint32) error {
 				return errors.New("layout route outside coordinate space")
 			}
 		}
+		for _, bend := range l.edgeBends[edgeID] {
+			if _, ok := offsetPoint(bend.Point, int64(dx), int64(dy)); !ok {
+				return errors.New("layout bend outside coordinate space")
+			}
+		}
 	}
 	for nodeID := range l.Nodes {
 		id := uint32(nodeID)
@@ -596,6 +639,19 @@ func (l *Layout) Translate(dx, dy uint32) error {
 		}
 		for i, point := range edge.Points {
 			edge.Points[i], _ = offsetPoint(point, int64(dx), int64(dy))
+		}
+		if len(l.edgeBends[edgeID]) != 0 {
+			bends := slices.Clone(l.edgeBends[edgeID])
+			for i := range bends {
+				bends[i].Point, _ = offsetPoint(
+					bends[i].Point,
+					int64(dx),
+					int64(dy),
+				)
+			}
+			if err := l.SetPinnedBends(uint32(edgeID), bends); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -638,8 +694,10 @@ func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) 
 	edgeID := l.graph.ConnectNodes(nodeA, sideA, sideB, nodeB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
+	l.edgeBends = growTo(l.edgeBends, len(l.graph.Edges))
 	if !existed {
 		l.edgeStyles[edgeID] = EdgeStyle{}
+		l.edgeBends[edgeID] = l.edgeBends[edgeID][:0]
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
@@ -677,8 +735,10 @@ func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
 	edgeID := l.graph.ConnectPorts(portA, portB)
 	l.Edges = growTo(l.Edges, len(l.graph.Edges))
 	l.edgeStyles = growTo(l.edgeStyles, len(l.graph.Edges))
+	l.edgeBends = growTo(l.edgeBends, len(l.graph.Edges))
 	if !existed {
 		l.edgeStyles[edgeID] = EdgeStyle{}
+		l.edgeBends[edgeID] = l.edgeBends[edgeID][:0]
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
@@ -719,6 +779,7 @@ func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
 	l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 	if l.history != nil && previous != l.graph.Edges[edgeID] {
 		style := l.edgeStyles[edgeID]
+		bends := slices.Clone(l.edgeBends[edgeID])
 		l.history.record(historyChange{
 			kind:            historyReconnectEdge,
 			id:              edgeID,
@@ -726,6 +787,8 @@ func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
 			afterEdge:       l.graph.Edges[edgeID],
 			beforeEdgeStyle: style,
 			afterEdgeStyle:  style,
+			beforeBends:     bends,
+			afterBends:      slices.Clone(bends),
 		})
 	}
 	return nil
@@ -738,6 +801,7 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 	}
 	previous := l.graph.Edges[edgeID]
 	previousStyle := l.edgeStyles[edgeID]
+	previousBends := slices.Clone(l.edgeBends[edgeID])
 	var previousAttachments []Attachment
 	for attachment := range l.Attachments(edgeID) {
 		previousAttachments = append(previousAttachments, attachment)
@@ -755,6 +819,7 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 	}
 	l.Edges[edgeID] = Edge{}
 	l.edgeStyles[edgeID] = EdgeStyle{}
+	l.edgeBends[edgeID] = l.edgeBends[edgeID][:0]
 	if len(previousAttachments) != 0 {
 		if err := l.Build(); err != nil {
 			if restoreErr := l.restoreHistoryState(rollback); restoreErr != nil {
@@ -774,6 +839,7 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 			id:                edgeID,
 			beforeEdge:        previous,
 			beforeEdgeStyle:   previousStyle,
+			beforeBends:       previousBends,
 			beforeLayer:       uint32(layer),
 			beforeAttachments: previousAttachments,
 		})
@@ -991,6 +1057,9 @@ func (l *Layout) Clone() (*Layout, error) {
 			if err := cloned.SetEdgeStyle(id, l.edgeStyles[id]); err != nil {
 				return nil, err
 			}
+			if err := cloned.SetPinnedBends(id, l.edgeBends[id]); err != nil {
+				return nil, err
+			}
 		}
 	}
 	cloned.attachments = slices.Clone(l.attachments)
@@ -1188,6 +1257,7 @@ func (l *Layout) initializeGeometry() error {
 	l.initializePortLookup()
 	l.Edges = make([]Edge, len(l.graph.Edges))
 	l.edgeStyles = make([]EdgeStyle, len(l.graph.Edges))
+	l.edgeBends = make([][]PinnedBend, len(l.graph.Edges))
 	if err := l.initializeDrawOrder(); err != nil {
 		return err
 	}

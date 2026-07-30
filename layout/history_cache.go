@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	historyCacheVersion = 2
+	historyCacheVersion = 3
 	defaultCacheDelay   = 100 * time.Millisecond
 )
 
@@ -433,10 +433,11 @@ type historyCachePort struct {
 }
 
 type historyCacheEdge struct {
-	Live  bool      `json:"live"`
-	PortA uint32    `json:"port_a"`
-	PortB uint32    `json:"port_b"`
-	Style EdgeStyle `json:"style,omitzero"`
+	Live  bool         `json:"live"`
+	PortA uint32       `json:"port_a"`
+	PortB uint32       `json:"port_b"`
+	Style EdgeStyle    `json:"style,omitzero"`
+	Bends []PinnedBend `json:"bends,omitempty"`
 }
 
 type historyCacheAttachment struct {
@@ -503,10 +504,11 @@ type historyCacheHPort struct {
 }
 
 type historyCacheHEdge struct {
-	ID    uint32    `json:"id"`
-	PortA uint32    `json:"port_a"`
-	PortB uint32    `json:"port_b"`
-	Style EdgeStyle `json:"style,omitzero"`
+	ID    uint32       `json:"id"`
+	PortA uint32       `json:"port_a"`
+	PortB uint32       `json:"port_b"`
+	Style EdgeStyle    `json:"style,omitzero"`
+	Bends []PinnedBend `json:"bends,omitempty"`
 }
 
 func (h *History) marshalCache() ([]byte, error) {
@@ -622,7 +624,7 @@ func cacheLayout(state layoutHistoryState) historyCacheLayout {
 	}
 	for i, edge := range state.graph.Edges {
 		if state.graph.EdgeExists(uint32(i)) {
-			cache.Edges[i] = cacheEdge(edge, state.edgeStyles[i])
+			cache.Edges[i] = cacheEdge(edge, state.edgeStyles[i], state.edgeBends[i])
 		}
 	}
 	for nodeID, attachment := range state.attachments {
@@ -647,6 +649,7 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 		sizes:       make([]Size, len(c.Nodes)),
 		nodeStyles:  make([]NodeStyle, len(c.Nodes)),
 		edgeStyles:  make([]EdgeStyle, len(c.Edges)),
+		edgeBends:   make([][]PinnedBend, len(c.Edges)),
 		order:       make([]Hit, len(c.Layers)),
 		padding:     c.Padding,
 		router:      c.Router,
@@ -690,11 +693,12 @@ func (c historyCacheLayout) layoutState() (layoutHistoryState, bool) {
 	}
 	for i, edge := range c.Edges {
 		if edge.Live {
-			if !edge.Style.Valid() {
+			if !edge.Style.Valid() || !validPinnedBends(edge.Bends) {
 				return layoutHistoryState{}, false
 			}
 			state.graph.Edges[i] = ir.Edge{PortA: edge.PortA, PortB: edge.PortB}
 			state.edgeStyles[i] = edge.Style
+			state.edgeBends[i] = slices.Clone(edge.Bends)
 		}
 	}
 	for _, cached := range c.Attachments {
@@ -749,8 +753,8 @@ func cacheChange(change historyChange) historyCacheChange {
 		AfterSize:         change.afterSize,
 		BeforeLabel:       change.beforeLabel,
 		AfterLabel:        change.afterLabel,
-		BeforeEdge:        cacheEdge(change.beforeEdge, change.beforeEdgeStyle),
-		AfterEdge:         cacheEdge(change.afterEdge, change.afterEdgeStyle),
+		BeforeEdge:        cacheEdge(change.beforeEdge, change.beforeEdgeStyle, change.beforeBends),
+		AfterEdge:         cacheEdge(change.afterEdge, change.afterEdgeStyle, change.afterBends),
 		BeforeNodeStyle:   change.beforeNodeStyle,
 		AfterNodeStyle:    change.afterNodeStyle,
 		BeforeEdgeStyle:   change.beforeEdgeStyle,
@@ -785,12 +789,13 @@ func (c historyCacheAttachment) attachment() Attachment {
 	return Attachment(c)
 }
 
-func cacheEdge(edge ir.Edge, style EdgeStyle) historyCacheEdge {
+func cacheEdge(edge ir.Edge, style EdgeStyle, bends []PinnedBend) historyCacheEdge {
 	return historyCacheEdge{
 		Live:  !edge.Empty(),
 		PortA: edge.PortA,
 		PortB: edge.PortB,
 		Style: style,
+		Bends: slices.Clone(bends),
 	}
 }
 
@@ -826,6 +831,7 @@ func cacheHistoryNode(node historyNode) historyCacheHNode {
 			PortA: edge.Edge.PortA,
 			PortB: edge.Edge.PortB,
 			Style: edge.Style,
+			Bends: slices.Clone(edge.Bends),
 		}
 	}
 	return cached
@@ -847,12 +853,13 @@ func (c historyCacheFile) historyEntries() ([]historyEntry, bool) {
 }
 
 func (c historyCacheChange) historyChange() (historyChange, bool) {
-	if c.Kind < historyCreateNode || c.Kind > historySetAttachment {
+	if c.Kind < historyCreateNode || c.Kind > historySetPinnedBends {
 		return historyChange{}, false
 	}
 	if !c.BeforeNodeStyle.Valid() || !c.AfterNodeStyle.Valid() ||
 		!c.BeforeEdgeStyle.Valid() || !c.AfterEdgeStyle.Valid() ||
-		!c.BeforeEdge.Style.Valid() || !c.AfterEdge.Style.Valid() {
+		!c.BeforeEdge.Style.Valid() || !c.AfterEdge.Style.Valid() ||
+		!validPinnedBends(c.BeforeEdge.Bends) || !validPinnedBends(c.AfterEdge.Bends) {
 		return historyChange{}, false
 	}
 	node, ok := c.Node.historyNode()
@@ -878,6 +885,8 @@ func (c historyCacheChange) historyChange() (historyChange, bool) {
 		afterNodeStyle:    c.AfterNodeStyle,
 		beforeEdgeStyle:   c.BeforeEdgeStyle,
 		afterEdgeStyle:    c.AfterEdgeStyle,
+		beforeBends:       slices.Clone(c.BeforeEdge.Bends),
+		afterBends:        slices.Clone(c.AfterEdge.Bends),
 		beforeRouter:      c.BeforeRouter,
 		afterRouter:       c.AfterRouter,
 		layerHit:          layerHit,
@@ -932,13 +941,14 @@ func (c historyCacheHNode) historyNode() (historyNode, bool) {
 		}
 	}
 	for i, edge := range c.Edges {
-		if !edge.Style.Valid() {
+		if !edge.Style.Valid() || !validPinnedBends(edge.Bends) {
 			return historyNode{}, false
 		}
 		node.Edges[i] = historyEdge{
 			ID:    edge.ID,
 			Edge:  ir.Edge{PortA: edge.PortA, PortB: edge.PortB},
 			Style: edge.Style,
+			Bends: slices.Clone(edge.Bends),
 		}
 	}
 	for i, layer := range c.Layers {
@@ -1004,9 +1014,10 @@ type semanticHistoryPort struct {
 }
 
 type semanticHistoryEdge struct {
-	PortA uint32    `json:"port_a"`
-	PortB uint32    `json:"port_b"`
-	Style EdgeStyle `json:"style,omitzero"`
+	PortA uint32       `json:"port_a"`
+	PortB uint32       `json:"port_b"`
+	Style EdgeStyle    `json:"style,omitzero"`
+	Bends []PinnedBend `json:"bends,omitempty"`
 }
 
 type semanticHistoryAttachment struct {
@@ -1066,6 +1077,7 @@ func semanticHistoryDigest(state layoutHistoryState) (string, error) {
 			PortA: portIDs[edge.PortA],
 			PortB: portIDs[edge.PortB],
 			Style: state.edgeStyles[edgeID],
+			Bends: state.edgeBends[edgeID],
 		})
 	}
 	for _, attachment := range state.attachments {

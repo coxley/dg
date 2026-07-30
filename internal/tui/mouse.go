@@ -33,6 +33,9 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		m.interaction.click.valid = false
 		m.cursor = point
 		m.refreshHits()
+		if m.beginBendDrag(point) {
+			return
+		}
 		m.beginResize(point)
 		return
 	}
@@ -44,11 +47,8 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.cursor = point
 	m.refreshHits()
 	m.prioritizeSelectedEdge()
-	if repeated && m.interaction.idle() && m.autoSizeDoubleClickedNode() {
+	if repeated && m.handleRepeatedClick() {
 		return
-	}
-	if repeated {
-		m.cycleHit(1)
 	}
 
 	if m.interaction.session.kind == sessionLabelEdit {
@@ -115,6 +115,21 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		offset: layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y),
 		rigid:  m.geo.SelectionMovesRigidly(),
 	}
+}
+
+func (m *Model) handleRepeatedClick() bool {
+	if m.interaction.gesture.kind == gestureConnectionPending {
+		m.interaction.resetGesture()
+	}
+	if m.interaction.idle() && m.resetDoubleClickedObject() {
+		return true
+	}
+	m.cycleHit(1)
+	return false
+}
+
+func (m *Model) resetDoubleClickedObject() bool {
+	return m.autoSizeDoubleClickedNode() || m.resetDoubleClickedEdge()
 }
 
 func (m *Model) beginResize(point layout.Point) {
@@ -248,6 +263,11 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 				m.resizeNode(point)
 			}
 		}
+	case gestureBend:
+		if mouse.Button == tea.MouseRight {
+			x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+			m.updateBendDrag(clampDocumentPoint(x, y))
+		}
 	case gestureRectangle:
 		m.updateRectangleMotion(mouse)
 	case gestureDuplicatePending, gestureDuplicate:
@@ -376,6 +396,12 @@ func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 	case gestureResize:
 		if mouse.Button == tea.MouseRight {
 			m.finishMove()
+		}
+	case gestureBend:
+		if mouse.Button == tea.MouseRight {
+			x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+			m.updateBendDrag(clampDocumentPoint(x, y))
+			m.finishBendDrag()
 		}
 	case gestureAreaSelection:
 		x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)

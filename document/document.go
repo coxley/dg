@@ -104,12 +104,30 @@ type Port struct {
 	Offset float32 `json:"offset"`
 }
 
-// Edge stores two port indices.
+// Edge stores two port indices and ordered routing constraints.
 type Edge struct {
-	PortA uint32    `json:"port_a"`
-	PortB uint32    `json:"port_b"`
-	Style EdgeStyle `json:"style,omitzero"`
+	PortA uint32       `json:"port_a"`
+	PortB uint32       `json:"port_b"`
+	Style EdgeStyle    `json:"style,omitzero"`
+	Bends []PinnedBend `json:"bends,omitempty"`
 }
+
+// PinnedBend fixes one orthogonal turn in an edge route.
+type PinnedBend struct {
+	Point    Point     `json:"point"`
+	Incoming Direction `json:"incoming"`
+	Outgoing Direction `json:"outgoing"`
+}
+
+// Direction identifies cardinal travel through a pinned bend.
+type Direction string
+
+const (
+	DirectionNorth Direction = "north"
+	DirectionEast  Direction = "east"
+	DirectionSouth Direction = "south"
+	DirectionWest  Direction = "west"
+)
 
 // Attachment stores a node's stable relative position along an edge.
 type Attachment struct {
@@ -242,11 +260,13 @@ func FromLayout(geo *layout.Layout) Document {
 		}
 		edge := graph.Edges[edgeID]
 		style, _ := geo.EdgeStyle(uint32(edgeID))
+		bends, _ := geo.PinnedBends(uint32(edgeID))
 		edgeIDs[edgeID] = uint32(len(doc.Edges))
 		doc.Edges = append(doc.Edges, Edge{
 			PortA: portIDs[edge.PortA],
 			PortB: portIDs[edge.PortB],
 			Style: documentEdgeStyle(style),
+			Bends: documentPinnedBends(bends),
 		})
 	}
 	for nodeID := range graph.Nodes {
@@ -390,6 +410,13 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		if err := geo.SetEdgeStyle(uint32(edgeID), style); err != nil {
 			return nil, fmt.Errorf("style edge %d: %w", edgeID, err)
 		}
+		bends, err := edge.layoutPinnedBends()
+		if err != nil {
+			return nil, fmt.Errorf("bend edge %d: %w", edgeID, err)
+		}
+		if err := geo.SetPinnedBends(uint32(edgeID), bends); err != nil {
+			return nil, fmt.Errorf("bend edge %d: %w", edgeID, err)
+		}
 	}
 	seenAttachments := make([]uint32, 0, len(d.Attachments))
 	attachments := make([]layout.Attachment, 0, len(d.Attachments))
@@ -519,6 +546,74 @@ func documentEdgeStyle(style layout.EdgeStyle) EdgeStyle {
 		PortAArrow: documentArrowStyle(style.PortAArrow),
 		PortBArrow: documentArrowStyle(style.PortBArrow),
 		Stroke:     documentStrokeStyle(style.Stroke),
+	}
+}
+
+func documentPinnedBends(bends []layout.PinnedBend) []PinnedBend {
+	if len(bends) == 0 {
+		return nil
+	}
+	result := make([]PinnedBend, len(bends))
+	for i, bend := range bends {
+		result[i] = PinnedBend{
+			Point:    Point{X: bend.Point.X, Y: bend.Point.Y},
+			Incoming: documentDirection(bend.Incoming),
+			Outgoing: documentDirection(bend.Outgoing),
+		}
+	}
+	return result
+}
+
+func documentDirection(direction layout.Connections) Direction {
+	switch direction {
+	case layout.North:
+		return DirectionNorth
+	case layout.East:
+		return DirectionEast
+	case layout.South:
+		return DirectionSouth
+	case layout.West:
+		return DirectionWest
+	default:
+		return ""
+	}
+}
+
+func (e Edge) layoutPinnedBends() ([]layout.PinnedBend, error) {
+	if len(e.Bends) == 0 {
+		return nil, nil
+	}
+	result := make([]layout.PinnedBend, len(e.Bends))
+	for i, bend := range e.Bends {
+		incoming, err := bend.Incoming.layoutConnection()
+		if err != nil {
+			return nil, fmt.Errorf("bend %d incoming: %w", i, err)
+		}
+		outgoing, err := bend.Outgoing.layoutConnection()
+		if err != nil {
+			return nil, fmt.Errorf("bend %d outgoing: %w", i, err)
+		}
+		result[i] = layout.PinnedBend{
+			Point:    layout.NewPoint(bend.Point.X, bend.Point.Y),
+			Incoming: incoming,
+			Outgoing: outgoing,
+		}
+	}
+	return result, nil
+}
+
+func (d Direction) layoutConnection() (layout.Connections, error) {
+	switch d {
+	case DirectionNorth:
+		return layout.North, nil
+	case DirectionEast:
+		return layout.East, nil
+	case DirectionSouth:
+		return layout.South, nil
+	case DirectionWest:
+		return layout.West, nil
+	default:
+		return 0, fmt.Errorf("unknown direction %q", d)
 	}
 }
 

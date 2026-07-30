@@ -31,8 +31,8 @@ ports. Apply this rule to every offset, including user-defined ports.
 ## Storage and mutation
 
 `Layout.Nodes`, `Layout.Ports`, and `Layout.Edges` align with the corresponding
-IR IDs. Origins, explicit sizes, styles, and selection membership also use
-index-aligned slices.
+IR IDs. Origins, explicit sizes, styles, pinned edge bends, and selection
+membership also use index-aligned slices.
 
 Mutations update semantic and derived state in place. `Build` resolves labels
 and routes edges. `WithGraph` clones external initial IR. Exported geometry
@@ -100,16 +100,19 @@ Routing proceeds in this order:
 2. Seed route occupancy. A full build starts empty and adds edges in ID order.
    A selection build first adds unrelated committed edges. A preview adds every
    committed edge except its explicit exclusion.
-3. Derive endpoint-node exemptions and finite search bounds for one edge.
-4. Run A* from `Port.Exit` to `Port.Exit`. Each state contains a point and the
+3. Split a constrained edge at each ordered `PinnedBend`. Virtual ports force
+   the specified incoming and outgoing unit segments at every pinned point.
+4. Derive endpoint-node exemptions and finite search bounds for each part.
+5. Run A* from `Port.Exit` to `Port.Exit`. Each state contains a point and the
    arrival direction because bend cost depends on direction.
-5. Reject moves that violate arrow clearance, coordinate bounds, node
+6. Reject moves that violate arrow clearance, coordinate bounds, node
    obstacles, sharing rules, or edge-touch rules.
-6. Score legal moves by step, sharing, bend, crossing, and endpoint-node costs.
-7. Reconstruct the winning route as a cell-by-cell path and add it to
+7. Score legal moves by step, sharing, bend, crossing, and endpoint-node costs.
+8. Reconstruct each winning route part as a cell-by-cell path, join the parts
+   at their pinned points, and add the complete route to
    occupancy.
-8. During a full build, reconsider crossing edges for at most `ReroutePasses`.
-9. Compact committed routes to endpoints and bend vertices in `Edge.Points`.
+9. During a full build, reconsider crossing edges for at most `ReroutePasses`.
+10. Compact committed routes to endpoints and bend vertices in `Edge.Points`.
 
 Occupancy always uses expanded, cell-by-cell paths. Committed routes remain
 compact. Expand a committed route before adding it to occupancy, including
@@ -165,6 +168,13 @@ lower-scoring valid result.
 methods reuse scratch and do not mutate committed geometry or history. A
 coordinate index resolves a cursor on a usable port without scanning the
 ID-aligned port slice; overlapping ports retain the lowest live ID.
+
+`PinnedBend` is a hard, ordered route constraint. Its incoming and outgoing
+directions must be perpendicular. `PreviewPinnedBends` checks a draft without
+mutating the edge. Pins translate with the complete layout and with duplicated
+or rigidly moved components. Moving only one endpoint keeps pins fixed; reject
+the operation when no route can satisfy them. Clearing all pins restores fully
+automatic routing.
 
 ### Performance controls and fallbacks
 

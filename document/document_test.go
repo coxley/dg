@@ -128,6 +128,73 @@ func TestRoundTripMultilineLabelAndExplicitSize(t *testing.T) {
 	require.Equal(t, doc, decoded)
 }
 
+func TestRoundTripPinnedBends(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", layout.NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", layout.NewPoint(30, 14))
+	require.NoError(t, err)
+	edgeID := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	bends := []layout.PinnedBend{
+		{
+			Point:    layout.NewPoint(15, 5),
+			Incoming: layout.East,
+			Outgoing: layout.South,
+		},
+		{
+			Point:    layout.NewPoint(15, 15),
+			Incoming: layout.South,
+			Outgoing: layout.East,
+		},
+	}
+	require.NoError(t, geo.SetPinnedBends(edgeID, bends))
+	require.NoError(t, geo.Build())
+
+	data, err := Marshal(geo)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"bends"`)
+	doc, err := Unmarshal(data)
+	require.NoError(t, err)
+	require.Equal(t, []PinnedBend{
+		{
+			Point:    Point{X: 15, Y: 5},
+			Incoming: DirectionEast,
+			Outgoing: DirectionSouth,
+		},
+		{
+			Point:    Point{X: 15, Y: 15},
+			Incoming: DirectionSouth,
+			Outgoing: DirectionEast,
+		},
+	}, doc.Edges[0].Bends)
+
+	loaded, err := doc.Layout()
+	require.NoError(t, err)
+	got, err := loaded.PinnedBends(0)
+	require.NoError(t, err)
+	require.Equal(t, bends, got)
+	second, err := Marshal(loaded)
+	require.NoError(t, err)
+	require.Equal(t, data, second)
+}
+
+func TestDocumentRejectsInvalidPinnedBendDirection(t *testing.T) {
+	t.Parallel()
+
+	doc := validDocument()
+	doc.Edges[0].Bends = []PinnedBend{{
+		Point:    Point{X: 5, Y: 5},
+		Incoming: "diagonal",
+		Outgoing: DirectionSouth,
+	}}
+
+	_, err := doc.Layout()
+	require.ErrorContains(t, err, `unknown direction "diagonal"`)
+}
+
 func TestRoundTripAttachment(t *testing.T) {
 	t.Parallel()
 
@@ -685,7 +752,9 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 		maxEdges := min(portCount*(portCount-1)/2, 12)
 		doc.Edges = append(
 			doc.Edges,
-			rapid.SliceOfNDistinct(edge, 0, maxEdges, rapid.ID[Edge]).
+			rapid.SliceOfNDistinct(edge, 0, maxEdges, func(edge Edge) uint64 {
+				return uint64(edge.PortA)<<32 | uint64(edge.PortB)
+			}).
 				Draw(t, "edges")...,
 		)
 		for i := range doc.Edges {

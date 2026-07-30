@@ -3881,6 +3881,81 @@ func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
 	require.False(t, explicit)
 }
 
+func TestModelRightDragPinsMultipleEdgeBendsAndDoubleClickResets(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 30})
+	require.NoError(t, model.geo.PlaceNode(right, layout.NewPoint(28, 14)))
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, model.rebuild())
+	model.history.Clear()
+
+	pinBend := func(excluded []layout.PinnedBend) layout.PinnedBend {
+		t.Helper()
+		var bend layout.PinnedBend
+		found := false
+		for i := 1; i+1 < len(model.geo.Edges[edgeID].Points); i++ {
+			candidate := bendAt(model.geo.Edges[edgeID].Points, i)
+			if candidate.Valid() && !slices.Contains(excluded, candidate) {
+				bend = candidate
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "route=%v excluded=%v", model.geo.Edges[edgeID].Points, excluded)
+		nearestEdge, _, _, nearest := model.nearestEdgeBend(bend.Point)
+		require.True(t, nearest, "route=%v bend=%v", model.geo.Edges[edgeID].Points, bend)
+		require.Equal(t, edgeID, nearestEdge)
+		click := modelMouseAt(model, bend.Point, tea.MouseRight)
+		documentPoint, visible := model.documentPoint(click.X, click.Y)
+		require.True(t, visible)
+		require.Equal(t, bend.Point, documentPoint)
+		model.updateMouseClick(click)
+		require.Equal(t, gestureBend, model.interaction.gesture.kind)
+		require.Equal(t, transactionBend, model.interaction.transaction.owner)
+
+		target := bend.Point.Add(2, 0)
+		drag := modelMouseAt(model, target, tea.MouseRight)
+		model.updateMouseMotion(drag)
+		require.True(t, model.interaction.session.bend.valid, model.status)
+		model.updateMouseRelease(drag)
+		require.Equal(t, gestureNone, model.interaction.gesture.kind)
+
+		pins, err := model.geo.PinnedBends(edgeID)
+		require.NoError(t, err)
+		for _, pin := range pins {
+			if pin.Point == target {
+				return pin
+			}
+		}
+		require.FailNow(t, "dragged bend was not pinned", "pins=%v target=%v", pins, target)
+		return layout.PinnedBend{}
+	}
+
+	first := pinBend(nil)
+	second := pinBend([]layout.PinnedBend{first})
+	pins, err := model.geo.PinnedBends(edgeID)
+	require.NoError(t, err)
+	require.Len(t, pins, 2)
+	require.Contains(t, pins, first)
+	require.Contains(t, pins, second)
+
+	resetPoint := pins[0].Point
+	mouse := modelMouseAt(model, resetPoint, tea.MouseLeft)
+	model.updateMouseClick(mouse)
+	model.updateMouseRelease(mouse)
+	model.updateMouseClick(mouse)
+	pins, err = model.geo.PinnedBends(edgeID)
+	require.NoError(t, err)
+	require.Empty(t, pins)
+
+	updateModel(t, model, keyPress('u', "u"))
+	pins, err = model.geo.PinnedBends(edgeID)
+	require.NoError(t, err)
+	require.Len(t, pins, 2)
+}
+
 func TestModelBlurCommitsResize(t *testing.T) {
 	t.Parallel()
 
@@ -4048,6 +4123,15 @@ func newTwoNodeModel(t testing.TB) (*Model, uint32, uint32) {
 	model, err := New(geo, testModelSettings())
 	require.NoError(t, err)
 	return model, left, right
+}
+
+func modelMouseAt(model *Model, point layout.Point, button tea.MouseButton) tea.Mouse {
+	host := model.workspace.Geometry().Canvas
+	return tea.Mouse{
+		X:      int(point.X-model.viewport.X) + host.X,
+		Y:      int(point.Y-model.viewport.Y) + host.Y,
+		Button: button,
+	}
 }
 
 func newComponentModel(t testing.TB) (*Model, uint32, uint32, uint32, uint32) {
