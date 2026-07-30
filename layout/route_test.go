@@ -34,6 +34,38 @@ func TestRouteQueueOrdersByPriorityThenInsertion(t *testing.T) {
 	}
 }
 
+func TestRouteOccupancyCanShare(t *testing.T) {
+	t.Parallel()
+
+	edges := []ir.Edge{
+		{PortA: 0, PortB: 1},
+		{PortA: 0, PortB: 2},
+		{PortA: 3, PortB: 4},
+	}
+	occupancy := newRouteOccupancy()
+	path := []Point{NewPoint(1, 1), NewPoint(2, 1)}
+	occupancy.addExpanded(0, path)
+
+	require.True(t, occupancy.canShare(
+		routeEdge{id: 1, ports: edges[1], hasPorts: true},
+		edges,
+	))
+	require.False(t, occupancy.canShare(
+		routeEdge{id: 2, ports: edges[2], hasPorts: true},
+		edges,
+	))
+	require.False(t, occupancy.canShare(
+		routeEdge{id: 0, ports: edges[0], hasPorts: true},
+		edges,
+	))
+
+	occupancy.removeExpanded(0, path)
+	require.False(t, occupancy.canShare(
+		routeEdge{id: 1, ports: edges[1], hasPorts: true},
+		edges,
+	))
+}
+
 func TestFindRouteAvoidsObstacle(t *testing.T) {
 	t.Parallel()
 
@@ -71,6 +103,48 @@ func TestFindRouteAvoidsObstacle(t *testing.T) {
 	}
 }
 
+func TestObstacleIndexMatchesLinearScan(t *testing.T) {
+	t.Parallel()
+
+	largeLimitX := uint32(100 +
+		(maxObstacleBucketsPerNode+1)<<obstacleBucketShift)
+	nodes := []Node{
+		{
+			Rect: Rect{
+				Min:  NewPoint(3, 4),
+				Size: Size{Width: 5, Height: 3},
+			},
+		},
+		{
+			Rect: Rect{
+				Min: NewPoint(100, 100),
+				Size: Size{
+					Width:  largeLimitX - 100,
+					Height: 3,
+				},
+			},
+		},
+		{},
+	}
+	geo := Layout{Nodes: nodes}
+	geo.scratch.obstacles.reset(nodes)
+
+	for _, point := range []Point{
+		NewPoint(3, 4),
+		NewPoint(7, 6),
+		NewPoint(8, 6),
+		NewPoint(99, 101),
+		NewPoint(100, 101),
+		NewPoint(largeLimitX-1, 102),
+	} {
+		indexed := geo.blocked(point)
+		geo.scratch.obstacles.ready = false
+		linear := geo.blocked(point)
+		geo.scratch.obstacles.ready = true
+		require.Equal(t, linear, indexed, "point %+v", point)
+	}
+}
+
 func TestStepCostSharesOnlyCommonPortSegments(t *testing.T) {
 	t.Parallel()
 
@@ -90,7 +164,7 @@ func TestStepCostSharesOnlyCommonPortSegments(t *testing.T) {
 		},
 	}
 	occupancy := newRouteOccupancy()
-	occupancy.add(0, []Point{{X: 1, Y: 1}, {X: 2, Y: 1}})
+	occupancy.addExpanded(0, []Point{{X: 1, Y: 1}, {X: 2, Y: 1}})
 	router := DefaultRouter()
 
 	cost, crossings, ok := router.stepCost(
@@ -126,7 +200,7 @@ func TestPreviewStepCostSharesDestinationPort(t *testing.T) {
 		},
 	}
 	occupancy := newRouteOccupancy()
-	occupancy.add(0, []Point{NewPoint(18, 1), NewPoint(19, 1)})
+	occupancy.addExpanded(0, []Point{NewPoint(18, 1), NewPoint(19, 1)})
 	router := DefaultRouter()
 	preview := routeEdge{
 		id:       math.MaxUint32,
@@ -162,7 +236,7 @@ func TestStepCostRejectsEarlyCommonEndpointMerge(t *testing.T) {
 		},
 	}
 	occupancy := newRouteOccupancy()
-	occupancy.add(0, []Point{NewPoint(1, 2), NewPoint(2, 2)})
+	occupancy.addExpanded(0, []Point{NewPoint(1, 2), NewPoint(2, 2)})
 
 	_, _, ok := DefaultRouter().stepCost(
 		&geo,
@@ -183,7 +257,7 @@ func TestStepCostChargesUnrelatedCrossing(t *testing.T) {
 	}}
 	geo := Layout{graph: graph}
 	occupancy := newRouteOccupancy()
-	occupancy.add(0, []Point{
+	occupancy.addExpanded(0, []Point{
 		{X: 2, Y: 1},
 		{X: 2, Y: 2},
 		{X: 2, Y: 3},
@@ -212,7 +286,7 @@ func TestStepCostRejectsUnrelatedTouch(t *testing.T) {
 	}}
 	geo := Layout{graph: graph}
 	occupancy := newRouteOccupancy()
-	occupancy.add(0, []Point{
+	occupancy.addExpanded(0, []Point{
 		{X: 2, Y: 2},
 		{X: 2, Y: 3},
 	})
@@ -258,7 +332,7 @@ func TestRerouteCrossingsReconsidersEarlierEdges(t *testing.T) {
 		},
 	}
 	for i := range paths {
-		geo.scratch.occupancy.add(uint32(i), paths[i])
+		geo.scratch.occupancy.addExpanded(uint32(i), paths[i])
 	}
 	router := Router{
 		Costs: Costs{
@@ -276,6 +350,60 @@ func TestRerouteCrossingsReconsidersEarlierEdges(t *testing.T) {
 		0,
 		geo.scratch.paths[0],
 		&geo.scratch.occupancy,
+	)
+	require.True(t, ok)
+	require.Zero(t, crossings)
+}
+
+func TestBuildSelectionAccountsForCompactUnrelatedRoutes(t *testing.T) {
+	t.Parallel()
+
+	router := DefaultRouter()
+	router.Costs.Crossing = 1_000
+	router.ReroutePasses = 0
+	geo, err := New(WithRouter(router))
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("l", NewPoint(2, 10))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("r", NewPoint(20, 10))
+	require.NoError(t, err)
+	top, err := geo.NewNodeAt("t", NewPoint(11, 1))
+	require.NoError(t, err)
+	bottom, err := geo.NewNodeAt("b", NewPoint(11, 18))
+	require.NoError(t, err)
+	horizontal := geo.ConnectNodes(
+		left,
+		ir.RightSide,
+		ir.LeftSide,
+		right,
+	)
+	vertical := geo.ConnectNodes(top, ir.Bottom, ir.Top, bottom)
+	require.NoError(t, geo.Build())
+
+	require.True(t, geo.Selection().SelectOnly(Hit{
+		ID:   vertical,
+		Kind: HitEdge,
+	}))
+	require.NoError(t, geo.BuildSelection())
+
+	var expanded []Point
+	expanded, err = appendExpandedPath(
+		expanded[:0],
+		geo.Edges[horizontal].Points,
+	)
+	require.NoError(t, err)
+	occupancy := newRouteOccupancy()
+	occupancy.addExpanded(horizontal, expanded)
+	expanded, err = appendExpandedPath(
+		expanded[:0],
+		geo.Edges[vertical].Points,
+	)
+	require.NoError(t, err)
+	_, crossings, ok := router.scorePath(
+		geo,
+		vertical,
+		expanded,
+		&occupancy,
 	)
 	require.True(t, ok)
 	require.Zero(t, crossings)

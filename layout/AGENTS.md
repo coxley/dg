@@ -87,6 +87,41 @@ label cells.
 `Router` is copyable configuration. `Layout` owns reusable route scratch and a
 concrete allocation-free heap.
 
+### Route pipeline
+
+`Build`, `BuildSelection`, and preview routing share the same search machinery.
+They differ in which committed routes seed occupancy and which results they
+commit.
+
+Routing proceeds in this order:
+
+1. Reset retained scratch, build the node obstacle index, and mark ports that
+   need smart-arrow clearance.
+2. Seed route occupancy. A full build starts empty and adds edges in ID order.
+   A selection build first adds unrelated committed edges. A preview adds every
+   committed edge except its explicit exclusion.
+3. Derive endpoint-node exemptions and finite search bounds for one edge.
+4. Run A* from `Port.Exit` to `Port.Exit`. Each state contains a point and the
+   arrival direction because bend cost depends on direction.
+5. Reject moves that violate arrow clearance, coordinate bounds, node
+   obstacles, sharing rules, or edge-touch rules.
+6. Score legal moves by step, sharing, bend, crossing, and endpoint-node costs.
+7. Reconstruct the winning route as a cell-by-cell path and add it to
+   occupancy.
+8. During a full build, reconsider crossing edges for at most `ReroutePasses`.
+9. Compact committed routes to endpoints and bend vertices in `Edge.Points`.
+
+Occupancy always uses expanded, cell-by-cell paths. Committed routes remain
+compact. Expand a committed route before adding it to occupancy, including
+routes preserved by `BuildSelection`.
+
+Full builds route live edges in stable ID order. The queue breaks equal
+priorities by crossing count and insertion order. These rules make route shapes
+deterministic, so heuristic changes can affect visible geometry even when they
+preserve total cost.
+
+### Search costs and heuristic
+
 Default costs provide these reference points:
 
 - `Step = 10`: ordinary path length
@@ -103,13 +138,69 @@ Only edges with a common endpoint may share segments. Sharing starts where the
 common endpoint is nearer than both distinct endpoints. Unrelated edges may
 cross, but they may not share a segment or touch another edge's endpoint.
 
+The A* heuristic is Manhattan distance multiplied by the cheapest step the
+current route can take:
+
+- use `Step` when no occupied edge shares either exact endpoint port
+- use `min(Step, SharedStep)` when sharing is possible
+
+This is a lower bound. It excludes bend, crossing, endpoint, and obstacle
+penalties. Add a term only when it remains a lower bound for every route-specific
+exemption and occupancy state. Also run route and renderer snapshots because a
+stronger admissible heuristic can change equal-cost route shapes.
+
+Landmark or differential distances must use a graph relaxation that every edge
+may traverse. Node obstacles are route-specific because endpoints and host-edge
+attachments receive exemptions. Only explore landmarks when queue and
+search-map work dominates after the current bounds and minimum-step checks.
+
 Smart-arrow routes prefer two straight cells before a bend. Keep that clearance
 when it does not lengthen the route. Permit shorter clearance when the extra
-cell would force a much worse route.
+cell would force a much worse route. The router first searches with full
+clearance. It then searches with relaxed clearance when needed and keeps the
+lower-scoring valid result.
 
 `PreviewRoute` treats a point as a roaming port.
 `PreviewRouteWithoutEdge` omits a relocated edge from occupancy. Preview
 methods reuse scratch and do not mutate committed geometry or history.
+
+### Performance controls and fallbacks
+
+Use the existing controls before adding another index or cache:
+
+- `BuildSelection` limits routing to selected edges and edges incident to
+  selected nodes
+- `BuildSelection` preserves a selected internal route when it remains clear
+  and legal against static occupancy
+- rigid selection moves skip routing when static geometry cannot be affected
+- `PreviewRouteWithoutEdge` excludes the edge being relocated
+- `ReroutePasses` bounds the optional crossing-improvement work
+- `routeScratch` retains maps, slices, paths, and the concrete heap across
+  builds
+- the obstacle index groups ordinary nodes into 16 by 16 cell buckets
+- nodes that cover more than 64 buckets stay in a direct-scan list, which
+  prevents unusually large nodes from expanding the index without bound
+- route occupancy tracks active edge IDs so the heuristic only assumes
+  `SharedStep` when exact-port sharing is possible
+
+Profile `BenchmarkLayoutStress` before changing these controls. Its 200
+three-node clusters exercise preview and commit, selection movement,
+attachment, label editing, CPU, allocations, and retained live bytes.
+
+Use profile children to choose the next change:
+
+- high `blockedForRoute` or `nodeBlocksRoute` means obstacle lookup dominates;
+  inspect bucket density, large-node count, and node dimensions
+- high `stepCostFor` or occupancy map access means dense edge interaction,
+  sharing, touching, or crossing checks dominate
+- high route queue or search-map time means A* visits too many states; inspect
+  bounds and the route-aware minimum step before adding a stronger heuristic
+- high `addCompact` or `appendExpandedPath` means partial builds spend time
+  expanding preserved routes; measure the live-byte cost before caching
+  expanded paths
+- high `routeBounds` means the per-edge obstacle bounds scan has become visible
+- new allocations usually mean retained scratch stopped covering a hot path;
+  check both `B/op` and live bytes before growing scratch further
 
 ## Raster, hits, selection, and layers
 

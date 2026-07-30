@@ -2,10 +2,19 @@ package layout
 
 import (
 	"math"
+	"runtime"
 	"testing"
 
 	"github.com/coxley/dg/ir"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	benchmarkClusterCount   = 200
+	benchmarkClusterColumns = 20
+	benchmarkClusterWidth   = 24
+	benchmarkClusterHeight  = 16
+	benchmarkClusterNodes   = 3
 )
 
 var (
@@ -238,6 +247,171 @@ func BenchmarkRasterizePreviewEdge(b *testing.B) {
 	benchmarkRaster = raster
 }
 
+func BenchmarkLayoutStress(b *testing.B) {
+	b.Run("footprint", func(b *testing.B) {
+		runtime.GC()
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+
+		geo := newStressBenchmarkLayout(b)
+
+		runtime.GC()
+		var after runtime.MemStats
+		runtime.ReadMemStats(&after)
+		runtime.KeepAlive(geo)
+
+		liveBytes := uint64(0)
+		if after.HeapAlloc > before.HeapAlloc {
+			liveBytes = after.HeapAlloc - before.HeapAlloc
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			runtime.KeepAlive(geo)
+		}
+		b.ReportMetric(float64(liveBytes), "live-B")
+	})
+
+	b.Run("connect_clusters", func(b *testing.B) {
+		geo := newStressBenchmarkLayout(b)
+		source := stressNodeID(0, 2)
+		destination := stressNodeID(1, 0)
+		sourcePort, ok := geo.graph.PickCenterPort(source, ir.RightSide)
+		require.True(b, ok)
+		destinationPort, ok := geo.graph.PickCenterPort(
+			destination,
+			ir.LeftSide,
+		)
+		require.True(b, ok)
+		destinationPoint := geo.Ports[destinationPort].Anchor
+		middle := NewPoint(
+			(geo.Ports[sourcePort].Anchor.X+destinationPoint.X)/2,
+			(geo.Ports[sourcePort].Anchor.Y+destinationPoint.Y)/2,
+		)
+		cursors := [...]Point{
+			geo.Ports[sourcePort].Exit,
+			middle,
+			destinationPoint,
+		}
+		var preview []Point
+
+		connect := func() uint32 {
+			for _, cursor := range cursors {
+				var err error
+				preview, err = geo.PreviewRoute(
+					preview[:0],
+					sourcePort,
+					cursor,
+				)
+				require.NoError(b, err)
+			}
+			edgeID, err := geo.ConnectPorts(sourcePort, destinationPort)
+			require.NoError(b, err)
+			require.NoError(b, geo.Build())
+			return edgeID
+		}
+
+		edgeID := connect()
+		require.NoError(b, geo.DeleteEdge(edgeID))
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			edgeID = connect()
+			b.StopTimer()
+			require.NoError(b, geo.DeleteEdge(edgeID))
+			b.StartTimer()
+		}
+		runtime.KeepAlive(geo)
+		benchmarkPreview = preview
+	})
+
+	b.Run("select_and_move_cluster", func(b *testing.B) {
+		geo := newStressBenchmarkLayout(b)
+		nodeID := stressNodeID(benchmarkClusterCount/2, 0)
+		dx := int64(1)
+
+		move := func() {
+			require.True(b, geo.Selection().SelectOnly(Hit{
+				ID:   nodeID,
+				Kind: HitNode,
+			}))
+			geo.Selection().Expand()
+			require.NoError(b, geo.MoveSelection(dx, 0))
+			require.NoError(b, geo.BuildSelection())
+			dx = -dx
+		}
+		move()
+		move()
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			move()
+		}
+		runtime.KeepAlive(geo)
+	})
+
+	b.Run("attach_new_node", func(b *testing.B) {
+		geo := newStressBenchmarkLayout(b)
+		const edgeID = uint32(0)
+		point, err := attachmentPoint(
+			geo.Edges[edgeID].Points,
+			attachmentPositionMax/4,
+		)
+		require.NoError(b, err)
+		origin := NewPoint(point.X-1, point.Y-1)
+
+		attach := func() uint32 {
+			nodeID, err := geo.NewNodeAt("x", origin)
+			require.NoError(b, err)
+			require.NoError(b, geo.AttachNode(nodeID, edgeID, point))
+			return nodeID
+		}
+		nodeID := attach()
+		require.NoError(b, geo.DeleteNode(nodeID))
+
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			nodeID = attach()
+			b.StopTimer()
+			require.NoError(b, geo.DeleteNode(nodeID))
+			b.StartTimer()
+		}
+		runtime.KeepAlive(geo)
+	})
+
+	b.Run("edit_label_character", func(b *testing.B) {
+		geo := newStressBenchmarkLayout(b)
+		const original = "foo"
+		const edited = "foo edited"
+		nodeID := stressNodeID(0, 0)
+		labels := make([]string, 0, 2*(len(edited)-len(original)))
+		for end := len(original) + 1; end <= len(edited); end++ {
+			labels = append(labels, edited[:end])
+		}
+		for end := len(edited) - 1; end >= len(original); end-- {
+			labels = append(labels, edited[:end])
+		}
+
+		require.NoError(b, geo.SetNodeLabel(nodeID, edited))
+		require.NoError(b, geo.Build())
+		require.NoError(b, geo.SetNodeLabel(nodeID, original))
+		require.NoError(b, geo.Build())
+
+		index := 0
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			require.NoError(b, geo.SetNodeLabel(nodeID, labels[index]))
+			require.NoError(b, geo.Build())
+			index = (index + 1) % len(labels)
+		}
+		runtime.KeepAlive(geo)
+	})
+}
+
 func TestLayoutBuildReusesScratch(t *testing.T) {
 	geo, _ := newBenchmarkLayout(t)
 	require.NoError(t, geo.Build())
@@ -272,4 +446,52 @@ func newBenchmarkLayout(tb testing.TB) (*Layout, uint32) {
 		sink,
 	)
 	return geo, moving
+}
+
+func newStressBenchmarkLayout(tb testing.TB) *Layout {
+	tb.Helper()
+
+	geo, err := New()
+	require.NoError(tb, err)
+	foo, err := geo.NewNodeAt("foo", NewPoint(4, 0))
+	require.NoError(tb, err)
+	bar, err := geo.NewNodeAt("bar", NewPoint(12, 0))
+	require.NoError(tb, err)
+	sink, err := geo.NewNodeAt("sinks", NewPoint(7, 6))
+	require.NoError(tb, err)
+	geo.ConnectNodes(foo, ir.Bottom, ir.Top, sink)
+	geo.ConnectNodes(bar, ir.Bottom, ir.Top, sink)
+	require.NoError(tb, geo.Build())
+
+	require.True(tb, geo.Selection().SelectOnly(Hit{ID: foo, Kind: HitNode}))
+	require.True(tb, geo.Selection().Toggle(Hit{ID: bar, Kind: HitNode}))
+	require.True(tb, geo.Selection().Toggle(Hit{ID: sink, Kind: HitNode}))
+	for cluster := 1; cluster < benchmarkClusterCount; cluster++ {
+		previous := stressClusterOrigin(cluster - 1)
+		current := stressClusterOrigin(cluster)
+		require.NoError(tb, geo.DuplicateSelection(
+			int64(current.X)-int64(previous.X),
+			int64(current.Y)-int64(previous.Y),
+		))
+	}
+	geo.Selection().Clear()
+
+	require.Len(
+		tb,
+		geo.Nodes,
+		benchmarkClusterCount*benchmarkClusterNodes,
+	)
+	require.Len(tb, geo.Edges, benchmarkClusterCount*2)
+	return geo
+}
+
+func stressClusterOrigin(cluster int) Point {
+	return NewPoint(
+		uint32(cluster%benchmarkClusterColumns)*benchmarkClusterWidth,
+		uint32(cluster/benchmarkClusterColumns)*benchmarkClusterHeight,
+	)
+}
+
+func stressNodeID(cluster, offset int) uint32 {
+	return uint32(cluster*benchmarkClusterNodes + offset)
 }

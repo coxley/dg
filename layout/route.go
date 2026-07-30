@@ -144,14 +144,18 @@ const (
 	west
 )
 
+// routeState includes arrival direction because bends affect future cost.
 type routeState struct {
 	point Point
 	dir   direction
 }
 
+// routeEdge caches route-specific obstacle and arrow constraints.
 type routeEdge struct {
 	id            uint32
 	ports         ir.Edge
+	endpointNodes [2]uint32
+	endpointCount uint8
 	hasPorts      bool
 	straightStart bool
 	straightEnd   bool
@@ -243,13 +247,30 @@ type routeOwner struct {
 	next uint32
 }
 
+// routeOccupancy indexes every cell and unit segment of expanded routes.
 type routeOccupancy struct {
 	segments    map[routeSegment]uint32
 	cells       map[Point]uint32
 	segmentUses []routeOwner
 	cellUses    []routeUse
+	edgeUses    []uint32
 }
 
+type obstacleUse struct {
+	node uint32
+	next uint32
+}
+
+// obstacleIndex uses 16 by 16 cell buckets without rasterizing covered cells.
+// It scans nodes larger than 64 buckets directly to bound index storage.
+type obstacleIndex struct {
+	buckets map[Point]uint32
+	uses    []obstacleUse
+	large   []uint32
+	ready   bool
+}
+
+// routeSearch retains A* scores, predecessors, and its priority queue.
 type routeSearch struct {
 	scores   map[routeState]routeScore
 	previous map[routeState]routeState
@@ -267,8 +288,10 @@ func (s *routeSearch) reset() {
 	s.queue = s.queue[:0]
 }
 
+// routeScratch retains all routing work buffers across builds.
 type routeScratch struct {
 	occupancy routeOccupancy
+	obstacles obstacleIndex
 	search    routeSearch
 	paths     [][]Point
 	candidate []Point
@@ -277,8 +300,12 @@ type routeScratch struct {
 	arrowPort []bool
 }
 
-func (s *routeScratch) reset(edgeCount, portCount int) {
+func (s *routeScratch) reset(
+	edgeCount, portCount int,
+	nodes []Node,
+) {
 	s.occupancy.reset()
+	s.obstacles.reset(nodes)
 	if cap(s.paths) < edgeCount {
 		s.paths = slices.Grow(s.paths, edgeCount-len(s.paths))
 	}
@@ -293,6 +320,53 @@ func (s *routeScratch) reset(edgeCount, portCount int) {
 		portCount,
 	)[:portCount]
 	clear(s.arrowPort)
+}
+
+const (
+	obstacleBucketShift       = 4
+	maxObstacleBucketsPerNode = 64
+)
+
+func (i *obstacleIndex) reset(nodes []Node) {
+	if i.buckets == nil {
+		i.buckets = make(map[Point]uint32)
+	} else {
+		clear(i.buckets)
+	}
+	i.uses = i.uses[:0]
+	i.large = i.large[:0]
+	for nodeID, node := range nodes {
+		if node.Empty() {
+			continue
+		}
+		limit := node.Rect.Max()
+		first := obstacleBucket(node.Rect.Min)
+		last := obstacleBucket(Point{X: limit.X - 1, Y: limit.Y - 1})
+		width := uint64(last.X-first.X) + 1
+		height := uint64(last.Y-first.Y) + 1
+		if width*height > maxObstacleBucketsPerNode {
+			i.large = append(i.large, uint32(nodeID))
+			continue
+		}
+		for y := first.Y; y <= last.Y; y++ {
+			for x := first.X; x <= last.X; x++ {
+				bucket := Point{X: x, Y: y}
+				i.uses = append(i.uses, obstacleUse{
+					node: uint32(nodeID),
+					next: i.buckets[bucket],
+				})
+				i.buckets[bucket] = uint32(len(i.uses))
+			}
+		}
+	}
+	i.ready = true
+}
+
+func obstacleBucket(point Point) Point {
+	return Point{
+		X: point.X >> obstacleBucketShift,
+		Y: point.Y >> obstacleBucketShift,
+	}
 }
 
 func newRouteOccupancy() routeOccupancy {
@@ -311,9 +385,24 @@ func (o *routeOccupancy) reset() {
 	}
 	o.segmentUses = o.segmentUses[:0]
 	o.cellUses = o.cellUses[:0]
+	clear(o.edgeUses)
 }
 
-func (o *routeOccupancy) add(edgeID uint32, path []Point) {
+// addExpanded adds a path that lists every traversed cell.
+func (o *routeOccupancy) addExpanded(edgeID uint32, path []Point) {
+	if len(path) == 0 {
+		return
+	}
+	if uint64(edgeID) >= uint64(len(o.edgeUses)) {
+		oldLen := len(o.edgeUses)
+		o.edgeUses = slices.Grow(
+			o.edgeUses,
+			int(edgeID)+1-oldLen,
+		)[:int(edgeID)+1]
+		clear(o.edgeUses[oldLen:])
+	}
+	o.edgeUses[edgeID]++
+
 	for i := 1; i < len(path); i++ {
 		segment := newRouteSegment(path[i-1], path[i])
 		head := o.segments[segment]
@@ -328,6 +417,20 @@ func (o *routeOccupancy) add(edgeID uint32, path []Point) {
 	for i, point := range path {
 		o.addCellUse(point, edgeID, connectionsAt(path, i))
 	}
+}
+
+// addCompact expands bend vertices into occupancy and reuses dst for the path.
+func (o *routeOccupancy) addCompact(
+	edgeID uint32,
+	dst []Point,
+	path []Point,
+) ([]Point, error) {
+	expanded, err := appendExpandedPath(dst[:0], path)
+	if err != nil {
+		return dst, err
+	}
+	o.addExpanded(edgeID, expanded)
+	return expanded, nil
 }
 
 func (o *routeOccupancy) addCellUse(
@@ -351,7 +454,16 @@ func (o *routeOccupancy) addCellUse(
 	o.cells[point] = uint32(len(o.cellUses))
 }
 
-func (o *routeOccupancy) remove(edgeID uint32, path []Point) {
+// removeExpanded removes a path that lists every traversed cell.
+func (o *routeOccupancy) removeExpanded(edgeID uint32, path []Point) {
+	if len(path) == 0 {
+		return
+	}
+	if uint64(edgeID) < uint64(len(o.edgeUses)) &&
+		o.edgeUses[edgeID] > 0 {
+		o.edgeUses[edgeID]--
+	}
+
 	for i := 1; i < len(path); i++ {
 		segment := newRouteSegment(path[i-1], path[i])
 		head := o.removeSegmentOwner(o.segments[segment], edgeID)
@@ -414,6 +526,24 @@ func (o *routeOccupancy) removeCellUse(head, edgeID uint32) uint32 {
 	return head
 }
 
+// canShare reports whether an active edge shares an exact endpoint port.
+func (o *routeOccupancy) canShare(route routeEdge, edges []ir.Edge) bool {
+	if !route.hasPorts {
+		return false
+	}
+	for edgeID, uses := range o.edgeUses {
+		if uses == 0 ||
+			uint32(edgeID) == route.id ||
+			edgeID >= len(edges) {
+			continue
+		}
+		if route.ports.SharesPort(edges[edgeID]) {
+			return true
+		}
+	}
+	return false
+}
+
 func connectionsAt(path []Point, index int) Connections {
 	var connections Connections
 	if index > 0 {
@@ -472,19 +602,20 @@ func (l *Layout) previewRoute(
 	scratch := &l.scratch
 	occupancy := &scratch.occupancy
 	occupancy.reset()
+	scratch.obstacles.reset(l.Nodes)
 	for edgeID, edge := range l.Edges {
 		if uint32(edgeID) == excludedEdge || edge.Empty() {
 			continue
 		}
 		var err error
-		scratch.expanded, err = appendExpandedPath(
-			scratch.expanded[:0],
+		scratch.expanded, err = occupancy.addCompact(
+			uint32(edgeID),
+			scratch.expanded,
 			edge.Points,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("expand edge %d: %w", edgeID, err)
 		}
-		occupancy.add(uint32(edgeID), scratch.expanded)
 	}
 
 	var destinations [4]Port
@@ -568,6 +699,7 @@ func (l *Layout) previewRoute(
 	return dst, nil
 }
 
+// appendExpandedPath expands endpoint and bend vertices into traversed cells.
 func appendExpandedPath(dst, path []Point) ([]Point, error) {
 	if len(path) == 0 {
 		return dst, nil
@@ -584,10 +716,15 @@ func appendExpandedPath(dst, path []Point) ([]Point, error) {
 	return dst, nil
 }
 
+// route computes and commits all live edge routes:
+//  1. Reset scratch and derive arrow-clearance requirements.
+//  2. Route edges in ID order and add expanded paths to occupancy.
+//  3. Reconsider crossing routes for the configured number of passes.
+//  4. Compact expanded paths to endpoint and bend vertices.
 func (r Router) route(l *Layout) error {
 	g := &l.graph
 	scratch := &l.scratch
-	scratch.reset(len(g.Edges), len(g.Ports))
+	scratch.reset(len(g.Edges), len(g.Ports), l.Nodes)
 	for edgeID, edge := range g.Edges {
 		if !g.EdgeExists(uint32(edgeID)) ||
 			uint64(edgeID) >= uint64(len(l.edgeStyles)) {
@@ -620,7 +757,7 @@ func (r Router) route(l *Layout) error {
 			return fmt.Errorf("edge %d: %w", i, err)
 		}
 		scratch.paths[i] = path
-		occupancy.add(uint32(i), path)
+		occupancy.addExpanded(uint32(i), path)
 	}
 
 	for range r.ReroutePasses {
@@ -639,10 +776,15 @@ func (r Router) route(l *Layout) error {
 	return nil
 }
 
+// routeSelection computes and commits only affected routes:
+//  1. Seed occupancy with expanded routes outside the selection.
+//  2. Preserve legal internal routes whose endpoints moved together.
+//  3. Route the remaining affected edges against current occupancy.
+//  4. Compact and commit only affected paths.
 func (r Router) routeSelection(l *Layout) error {
 	g := &l.graph
 	scratch := &l.scratch
-	scratch.reset(len(g.Edges), len(g.Ports))
+	scratch.reset(len(g.Edges), len(g.Ports), l.Nodes)
 	for edgeID, edge := range g.Edges {
 		id := uint32(edgeID)
 		if !g.EdgeExists(id) {
@@ -660,7 +802,15 @@ func (r Router) routeSelection(l *Layout) error {
 			l.Edges[edgeID].Points...,
 		)
 		if !l.edgeSelectedForRouting(id) {
-			scratch.occupancy.add(id, scratch.paths[edgeID])
+			var err error
+			scratch.expanded, err = scratch.occupancy.addCompact(
+				id,
+				scratch.expanded,
+				scratch.paths[edgeID],
+			)
+			if err != nil {
+				return fmt.Errorf("expand edge %d: %w", edgeID, err)
+			}
 		}
 	}
 
@@ -688,7 +838,7 @@ func (r Router) routeSelection(l *Layout) error {
 				)
 			}
 			if valid {
-				scratch.occupancy.add(id, scratch.paths[edgeID])
+				scratch.occupancy.addExpanded(id, expanded)
 				continue
 			}
 		}
@@ -705,7 +855,7 @@ func (r Router) routeSelection(l *Layout) error {
 			return fmt.Errorf("edge %d: %w", edgeID, err)
 		}
 		scratch.paths[edgeID] = path
-		scratch.occupancy.add(id, path)
+		scratch.occupancy.addExpanded(id, path)
 	}
 	for edgeID := range g.Edges {
 		id := uint32(edgeID)
@@ -744,6 +894,7 @@ func (l *Layout) edgeSelectedForRouting(edgeID uint32) bool {
 		l.selection.Contains(Hit{ID: nodeB, Kind: HitNode})
 }
 
+// rerouteCrossings replaces crossing routes only when score improves.
 func (r Router) rerouteCrossings(
 	l *Layout,
 ) (bool, error) {
@@ -757,14 +908,14 @@ func (r Router) rerouteCrossings(
 		if !g.EdgeExists(edgeID) {
 			continue
 		}
-		occupancy.remove(edgeID, paths[i])
+		occupancy.removeExpanded(edgeID, paths[i])
 
 		oldCost, oldCrossings, ok := r.scorePath(l, edgeID, paths[i], occupancy)
 		if !ok {
 			return false, fmt.Errorf("score edge %d", i)
 		}
 		if oldCrossings == 0 {
-			occupancy.add(edgeID, paths[i])
+			occupancy.addExpanded(edgeID, paths[i])
 			continue
 		}
 
@@ -798,7 +949,7 @@ func (r Router) rerouteCrossings(
 		} else {
 			scratch.candidate = candidate[:0]
 		}
-		occupancy.add(edgeID, paths[i])
+		occupancy.addExpanded(edgeID, paths[i])
 	}
 	return changed, nil
 }
@@ -822,6 +973,8 @@ func (r Router) findRoute(
 	)
 }
 
+// findRouteFor prefers full smart-arrow clearance, then compares a relaxed
+// search when full clearance fails or lengthens the route.
 func (r Router) findRouteFor(
 	l *Layout,
 	route routeEdge,
@@ -830,6 +983,19 @@ func (r Router) findRouteFor(
 	search *routeSearch,
 	path []Point,
 ) ([]Point, error) {
+	route.endpointCount = 0
+	if route.hasPorts {
+		for _, portID := range [...]uint32{
+			route.ports.PortA,
+			route.ports.PortB,
+		} {
+			if uint64(portID) >= uint64(len(l.graph.Ports)) {
+				continue
+			}
+			route.endpointNodes[route.endpointCount] = l.graph.Ports[portID].Node
+			route.endpointCount++
+		}
+	}
 	result, err := r.findRouteForClearance(
 		l,
 		route,
@@ -890,6 +1056,7 @@ func (r Router) findRouteFor(
 	return append(path[:0], relaxed...), nil
 }
 
+// findRouteForClearance runs bounded A* over point and arrival direction.
 func (r Router) findRouteForClearance(
 	l *Layout,
 	route routeEdge,
@@ -919,11 +1086,18 @@ func (r Router) findRouteForClearance(
 
 	start := routeState{point: a.Exit, dir: startDir}
 	startClearance, hasStartClearance := move(a.Exit, startDir)
+	// SharedStep is legal only when an occupied route shares an exact port.
+	minimumStep := r.Costs.Step
+	if occupancy != nil &&
+		r.Costs.SharedStep < minimumStep &&
+		occupancy.canShare(route, l.graph.Edges) {
+		minimumStep = r.Costs.SharedStep
+	}
 	search.reset()
 	search.scores[start] = routeScore{}
 	search.queue.push(routeItem{
 		state:    start,
-		priority: r.heuristic(a.Exit, b.Exit, occupancy != nil),
+		priority: routeHeuristic(start.point, b.Exit, minimumStep),
 	})
 
 	var goal routeState
@@ -1012,9 +1186,12 @@ func (r Router) findRouteForClearance(
 			search.scores[next] = nextScore
 			search.previous[next] = item.state
 			search.queue.push(routeItem{
-				state:     next,
-				cost:      nextScore.cost,
-				priority:  addCost(nextScore.cost, r.heuristic(nextPoint, b.Exit, occupancy != nil)),
+				state: next,
+				cost:  nextScore.cost,
+				priority: addCost(
+					nextScore.cost,
+					routeHeuristic(next.point, b.Exit, minimumStep),
+				),
 				crossings: nextScore.crossings,
 				order:     order,
 			})
@@ -1064,12 +1241,13 @@ func routeEndDirectionAllowed(
 	return dir == endDir && (!extraClearance || previousDir == endDir)
 }
 
-func (r Router) heuristic(a, b Point, sharing bool) uint64 {
-	step := r.Costs.Step
-	if sharing {
-		step = min(step, r.Costs.SharedStep)
-	}
-	return multiplyCost(manhattan(a, b), uint64(step))
+// routeHeuristic returns an admissible Manhattan lower bound.
+func routeHeuristic(
+	point Point,
+	goal Point,
+	step uint32,
+) uint64 {
+	return multiplyCost(manhattan(point, goal), uint64(step))
 }
 
 func (r Router) stepCost(
@@ -1275,6 +1453,7 @@ func (r Router) endpointStepCostFor(
 	return 0
 }
 
+// routeBounds encloses both ports and every obstacle with a two-cell margin.
 func (l *Layout) routeBounds(a, b Port) (Rect, error) {
 	minX, maxX := min(a.Exit.X, b.Exit.X), max(a.Exit.X, b.Exit.X)
 	minY, maxY := min(a.Exit.Y, b.Exit.Y), max(a.Exit.Y, b.Exit.Y)
@@ -1315,33 +1494,79 @@ func (l *Layout) routeEdge(edgeID uint32) routeEdge {
 	}
 }
 
+// blockedForRoute checks indexed node obstacles with endpoint and host-edge
+// attachment exemptions.
 func (l *Layout) blockedForRoute(route routeEdge, p Point) bool {
 	if !route.hasPorts {
 		return l.blocked(p)
 	}
-	var endpointNodes [2]uint32
-	endpointCount := 0
-	for _, portID := range [...]uint32{route.ports.PortA, route.ports.PortB} {
-		if uint64(portID) >= uint64(len(l.graph.Ports)) {
-			continue
+	obstacles := &l.scratch.obstacles
+	if obstacles.ready {
+		for index := obstacles.buckets[obstacleBucket(p)]; index != 0; {
+			use := obstacles.uses[index-1]
+			if l.nodeBlocksRoute(route, use.node, p) {
+				return true
+			}
+			index = use.next
 		}
-		endpointNodes[endpointCount] = l.graph.Ports[portID].Node
-		endpointCount++
+		for _, nodeID := range obstacles.large {
+			if l.nodeBlocksRoute(route, nodeID, p) {
+				return true
+			}
+		}
+		return false
 	}
+	// Direct searches may run before routing prepares the obstacle index.
 	for nodeID, node := range l.Nodes {
-		// Endpoint nodes may overlap. Their edge can traverse the overlap and
-		// the raster layer later hides the covered part of the route.
-		attachment, attached := l.NodeAttachment(uint32(nodeID))
-		if (!attached || attachment.EdgeID != route.id) &&
-			!slices.Contains(endpointNodes[:endpointCount], uint32(nodeID)) &&
-			node.Rect.Contains(p) {
+		if !node.Empty() && l.nodeBlocksRoute(route, uint32(nodeID), p) {
 			return true
 		}
 	}
 	return false
 }
 
+func (l *Layout) nodeBlocksRoute(
+	route routeEdge,
+	nodeID uint32,
+	point Point,
+) bool {
+	if !l.Nodes[nodeID].Rect.Contains(point) {
+		return false
+	}
+	// Endpoint nodes may overlap. Their edge can traverse the overlap and
+	// the raster layer later hides the covered part of the route.
+	for i := range route.endpointCount {
+		if route.endpointNodes[i] == nodeID {
+			return false
+		}
+	}
+	if uint64(nodeID) < uint64(len(l.attachments)) {
+		attachment := l.attachments[nodeID]
+		if attachment != (Attachment{}) && attachment.EdgeID == route.id {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *Layout) blocked(p Point) bool {
+	obstacles := &l.scratch.obstacles
+	if obstacles.ready {
+		for index := obstacles.buckets[obstacleBucket(p)]; index != 0; {
+			use := obstacles.uses[index-1]
+			if l.Nodes[use.node].Rect.Contains(p) {
+				return true
+			}
+			index = use.next
+		}
+		for _, nodeID := range obstacles.large {
+			if l.Nodes[nodeID].Rect.Contains(p) {
+				return true
+			}
+		}
+		return false
+	}
+	// Direct searches may run before routing prepares the obstacle index.
 	for obstacle := range l.Obstacles() {
 		if obstacle.Contains(p) {
 			return true
@@ -1423,6 +1648,7 @@ func reverse(points []Point) {
 	}
 }
 
+// compact removes collinear interior cells and keeps endpoints and bends.
 func compact(dst, points []Point) []Point {
 	if len(points) < 3 {
 		return append(dst, points...)
