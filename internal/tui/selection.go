@@ -62,7 +62,14 @@ func (m *Model) expandSelection() {
 			m.selectOnly(hit)
 		}
 	}
+	beforeNodes, beforeEdges := m.selectedCounts()
 	m.geo.Selection().Expand()
+	afterNodes, afterEdges := m.selectedCounts()
+	if beforeNodes == afterNodes &&
+		beforeEdges == afterEdges &&
+		afterNodes+afterEdges < m.liveObjectCount() {
+		m.geo.Selection().Expand()
+	}
 	m.status = ""
 }
 

@@ -9,7 +9,7 @@ import (
 
 const (
 	transitionFramesPerSecond = 60
-	springFrequency           = 18.0
+	springFrequency           = 120
 	springDamping             = 1.0
 	settledPosition           = 0.001
 	settledVelocity           = 0.01

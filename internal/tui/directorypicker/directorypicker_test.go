@@ -3,9 +3,11 @@ package directorypicker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -16,7 +18,7 @@ func TestPickerRetainsBoundedLifecycleAndValue(t *testing.T) {
 	t.Parallel()
 
 	directory := t.TempDir()
-	picker := New(Config{Title: testTitle, Value: directory}, Styles{Dark: true})
+	picker := New(Config{Title: testTitle, Value: directory}, Styles{})
 	picker.SetBounds(40, 10)
 	picker.Open()
 	require.True(t, picker.Opened())
@@ -52,6 +54,37 @@ func TestPickerShowsOnlyVisibleDirectories(t *testing.T) {
 	require.Contains(t, view, "beta")
 	require.NotContains(t, view, ".hidden")
 	require.NotContains(t, view, "diagram.json")
+}
+
+func TestPickerRendersInjectedVisualStates(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(directory, "alpha"), 0o700))
+	require.NoError(t, os.Mkdir(filepath.Join(directory, "beta"), 0o700))
+	styles := Styles{
+		Container: lipgloss.NewStyle().Border(lipgloss.NormalBorder()),
+		Title: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#111111")),
+		Item: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#222222")),
+		HoveredItem: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#333333")),
+		SelectedItem: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#444444")),
+	}
+	picker := New(Config{Title: testTitle, Value: directory}, styles)
+	picker.SetBounds(40, 8)
+	picker.Open()
+	_, _ = picker.Update(tea.MouseMotionMsg{X: 2, Y: 3})
+
+	view := picker.View().Content
+	require.Contains(t, view, styles.Title.Render(testTitle))
+	require.Contains(t, view, styles.SelectedItem.Render("> alpha"))
+	require.Contains(t, view, styles.HoveredItem.Render("  beta"))
+	require.True(t, strings.HasPrefix(ansi.Strip(view), "┌"))
+	require.Equal(t, 40, lipgloss.Width(view))
+	require.Equal(t, 8, lipgloss.Height(view))
 }
 
 func TestPickerNavigatesAndSelectsDirectories(t *testing.T) {

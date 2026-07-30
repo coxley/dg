@@ -32,11 +32,14 @@ const (
 
 // Styles defines all modal-owned appearance.
 type Styles struct {
-	Container lipgloss.Style
-	Notice    lipgloss.Style
-	Body      lipgloss.Style
-	Tab       lipgloss.Style
-	ActiveTab lipgloss.Style
+	Container       lipgloss.Style
+	ActiveContainer lipgloss.Style
+	Notice          lipgloss.Style
+	NoticeText      lipgloss.Style
+	Body            lipgloss.Style
+	Tab             lipgloss.Style
+	HoveredTab      lipgloss.Style
+	ActiveTab       lipgloss.Style
 }
 
 type geometry struct {
@@ -100,6 +103,8 @@ type Model struct {
 	variant      Variant
 	tabs         []Tab
 	activeTab    TabID
+	hoveredTab   TabID
+	tabHovered   bool
 	visible      bool
 	fullscreen   bool
 
@@ -285,6 +290,16 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 			m.dragOffsetY = message.Y - m.overlay.Top
 		}
 	case tea.MouseMotionMsg:
+		var hoveredTab TabID
+		tabHovered := false
+		if message.Y == m.overlay.ContentTop {
+			hoveredTab, tabHovered = m.tabAt(message.X)
+		}
+		if m.tabHovered != tabHovered || tabHovered && m.hoveredTab != hoveredTab {
+			m.hoveredTab = hoveredTab
+			m.tabHovered = tabHovered
+			m.layout()
+		}
 		if m.resize.pending && message.Button == tea.MouseRight {
 			m.resize.pending = false
 			m.resize.active = true
@@ -304,10 +319,14 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 			m.layout()
 		}
 	case tea.MouseReleaseMsg:
+		wasActive := m.dragging || m.resize.active
 		m.dragPending = false
 		m.dragging = false
 		m.resize.pending = false
 		m.resize.active = false
+		if wasActive {
+			m.layout()
+		}
 	}
 	return m, nil
 }
@@ -325,8 +344,13 @@ func (m *Model) layout() {
 	style, geo := m.styles.Container, m.normal
 	if m.variant == Notice {
 		style, geo = m.styles.Notice, m.notice
+	} else if m.dragging || m.resize.active {
+		style = m.styles.ActiveContainer
 	}
 	content := m.content
+	if m.variant == Notice {
+		content = m.styles.NoticeText.Render(content)
+	}
 	if len(m.tabs) != 0 {
 		content = lipgloss.JoinVertical(
 			lipgloss.Left,
@@ -439,8 +463,11 @@ func (m Model) tabsView() string {
 	rendered := make([]string, 0, len(m.tabs))
 	for _, tab := range m.tabs {
 		style := m.styles.Tab
-		if tab.ID == m.activeTab {
+		switch {
+		case tab.ID == m.activeTab:
 			style = m.styles.ActiveTab
+		case m.tabHovered && tab.ID == m.hoveredTab:
+			style = m.styles.HoveredTab
 		}
 		rendered = append(rendered, style.Render(tab.Label))
 	}
@@ -450,10 +477,14 @@ func (m Model) tabsView() string {
 func (m Model) tabAt(x int) (TabID, bool) {
 	x -= m.overlay.ContentLeft
 	for _, tab := range m.tabs {
-		width := lipgloss.Width(m.styles.Tab.Render(tab.Label))
-		if tab.ID == m.activeTab {
-			width = lipgloss.Width(m.styles.ActiveTab.Render(tab.Label))
+		style := m.styles.Tab
+		switch {
+		case tab.ID == m.activeTab:
+			style = m.styles.ActiveTab
+		case m.tabHovered && tab.ID == m.hoveredTab:
+			style = m.styles.HoveredTab
 		}
+		width := lipgloss.Width(style.Render(tab.Label))
 		if x >= 0 && x < width {
 			return tab.ID, true
 		}

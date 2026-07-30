@@ -78,8 +78,6 @@ func BenchmarkModelMoveCommittedDuplicate(b *testing.B) {
 	require.NoError(b, model.geo.DuplicateSelection(30, 10))
 	require.NoError(b, model.rebuild())
 	updateModel(b, model, tea.WindowSizeMsg{Width: 120, Height: 40})
-	model.beginMove()
-	require.Equal(b, modeMove, model.interaction.mode())
 
 	keys := [...]tea.KeyPressMsg{
 		keyPress(tea.KeyRight, ""),

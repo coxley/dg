@@ -253,18 +253,13 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 
 func (m *Model) updateAreaSelectionMotion(mouse tea.Mouse) {
 	if mouse.Button == tea.MouseLeft {
-		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
-			m.updateAreaSelection(point)
-		}
+		x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+		m.updateAreaSelection(clampDocumentPoint(x, y))
 	}
 }
 
 func (m *Model) updateLabelPressMotion(mouse tea.Mouse) {
 	if mouse.Button != tea.MouseLeft {
-		return
-	}
-	point, ok := m.documentPoint(mouse.X, mouse.Y)
-	if !ok {
 		return
 	}
 	gesture := m.interaction.gesture
@@ -277,7 +272,8 @@ func (m *Model) updateLabelPressMotion(mouse tea.Mouse) {
 		offset: gesture.offset,
 		rigid:  m.geo.SelectionMovesRigidly(),
 	}
-	m.dragNode(nodeID, point)
+	x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+	m.dragNode(nodeID, x, y)
 }
 
 func (m *Model) updateMoveMotion(mouse tea.Mouse) {
@@ -285,11 +281,8 @@ func (m *Model) updateMoveMotion(mouse tea.Mouse) {
 	if mouse.Button != tea.MouseLeft || !m.geo.NodeExists(target.ID) {
 		return
 	}
-	point, ok := m.documentPoint(mouse.X, mouse.Y)
-	if !ok {
-		return
-	}
-	m.dragNode(target.ID, point)
+	x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+	m.dragNode(target.ID, x, y)
 }
 
 func (m *Model) updateConnectionMotion(mouse tea.Mouse) {
@@ -375,9 +368,8 @@ func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 			m.finishMove()
 		}
 	case gestureAreaSelection:
-		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
-			m.updateAreaSelection(point)
-		}
+		x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+		m.updateAreaSelection(clampDocumentPoint(x, y))
 		m.finishAreaSelection()
 	case gestureMove:
 		if mouse.Button == tea.MouseLeft {
@@ -563,6 +555,19 @@ func (m *Model) documentPoint(x, y int) (layout.Point, bool) {
 		return layout.Point{}, false
 	}
 	return layout.NewPoint(uint32(documentX), uint32(documentY)), true
+}
+
+func (m *Model) unboundedDocumentPoint(x, y int) (int64, int64) {
+	canvas := m.workspace.Geometry().Canvas
+	return int64(m.viewport.X) + int64(x) - int64(canvas.X),
+		int64(m.viewport.Y) + int64(y) - int64(canvas.Y)
+}
+
+func clampDocumentPoint(x, y int64) layout.Point {
+	return layout.NewPoint(
+		uint32(min(max(x, 0), int64(math.MaxUint32))),
+		uint32(min(max(y, 0), int64(math.MaxUint32))),
+	)
 }
 
 func scrollCoordinate(value uint32, delta int) uint32 {

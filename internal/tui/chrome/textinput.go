@@ -11,10 +11,13 @@ import (
 
 // TextInputStyles defines geometry-stable text input states.
 type TextInputStyles struct {
-	Text        lipgloss.Style
-	FocusedText lipgloss.Style
-	Placeholder lipgloss.Style
-	Cursor      lipgloss.Style
+	Text               lipgloss.Style
+	HoveredText        lipgloss.Style
+	FocusedText        lipgloss.Style
+	SelectedText       lipgloss.Style
+	Placeholder        lipgloss.Style
+	HoveredPlaceholder lipgloss.Style
+	Cursor             lipgloss.Style
 }
 
 // TextInput retains one single-line value, caret, and visible cell window.
@@ -24,6 +27,7 @@ type TextInput struct {
 	cursor      int
 	width       int
 	focused     bool
+	hovered     bool
 	selectAll   bool
 	styles      TextInputStyles
 }
@@ -83,6 +87,11 @@ func (i *TextInput) Blur() {
 	i.focused = false
 }
 
+// SetHovered controls pointer emphasis while the input is not focused.
+func (i *TextInput) SetHovered(hovered bool) {
+	i.hovered = hovered
+}
+
 // Click moves the caret to the nearest visible cell.
 func (i *TextInput) Click(x int) {
 	i.selectAll = false
@@ -106,15 +115,29 @@ func (i *TextInput) View() string {
 		return ""
 	}
 	if len(i.value) == 0 && !i.focused {
+		style := i.styles.Placeholder
+		if i.hovered {
+			style = i.styles.HoveredPlaceholder
+		}
 		return padLine(
-			i.styles.Placeholder.Render(ansi.Truncate(i.placeholder, i.width, "")),
+			style.Render(ansi.Truncate(i.placeholder, i.width, "")),
 			i.width,
 		)
 	}
 	start := i.visibleStart()
 	before := strings.Join(i.value[start:i.cursor], "")
 	if !i.focused {
-		text := i.styles.Text.Render(ansi.Truncate(strings.Join(i.value[start:], ""), i.width, ""))
+		style := i.styles.Text
+		if i.hovered {
+			style = i.styles.HoveredText
+		}
+		text := style.Render(ansi.Truncate(strings.Join(i.value[start:], ""), i.width, ""))
+		return padLine(text, i.width)
+	}
+	if i.selectAll {
+		text := i.styles.SelectedText.Render(
+			ansi.Truncate(strings.Join(i.value[start:], ""), i.width, ""),
+		)
 		return padLine(text, i.width)
 	}
 	cursor := " "

@@ -103,6 +103,7 @@ func newTestConfirmation() *Confirmation {
 			Actions: chrome.FormStyles{
 				Buttons: chrome.ButtonListStyles{
 					Button:        lipgloss.NewStyle().Padding(0, 1),
+					HoveredButton: lipgloss.NewStyle().Padding(0, 1),
 					FocusedButton: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
 				},
 			},

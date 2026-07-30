@@ -34,7 +34,87 @@ func TestFormEditsDeclaredFieldsWithinBounds(t *testing.T) {
 	_, _ = form.Update(formKey(tea.KeyLeft, ""))
 	selected, ok := form.Selected("select")
 	require.True(t, ok)
-	require.Equal(t, "two", selected)
+	require.Equal(t, viewportTwo, selected)
+}
+
+func TestFormNumberFlashDoesNotExposeANSIMarkup(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		key   rune
+		value string
+	}{
+		{name: "decrement", key: tea.KeyLeft, value: "0"},
+		{name: "increment", key: tea.KeyRight, value: "2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			styles := testFormStyles()
+			styles.Number.FocusedValue = styles.Number.FocusedValue.Underline(true)
+			styles.Number.ActiveDecrement = lipgloss.NewStyle().Reverse(true)
+			styles.Number.ActiveIncrement = lipgloss.NewStyle().Reverse(true)
+			form := NewForm(testFormDeclaration(), styles)
+			form.SetBounds(Rect{Width: 40, Height: 8})
+
+			_, _ = form.Update(formKey(test.key, ""))
+
+			line := strings.Split(ansi.Strip(form.View().Content), "\n")[0]
+			require.Equal(t, "Number"+strings.Repeat(" ", 29)+"⇽ "+test.value+" ⇾", line)
+		})
+	}
+}
+
+func TestFormRendersIndependentNumberControlStates(t *testing.T) {
+	t.Parallel()
+
+	styles := testFormStyles()
+	styles.Number.FocusedDecrement = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#111111"))
+	styles.Number.ActiveDecrement = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#222222"))
+	styles.Number.FocusedIncrement = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#333333"))
+	styles.Number.ActiveIncrement = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#444444"))
+
+	form := NewForm(testFormDeclaration(), styles)
+	form.SetBounds(Rect{Width: 40, Height: 8})
+	require.Contains(t, form.View().Content, styles.Number.FocusedDecrement.Render("⇽"))
+	require.Contains(t, form.View().Content, styles.Number.FocusedIncrement.Render("⇾"))
+
+	_, _ = form.Update(formKey(tea.KeyLeft, ""))
+	require.Contains(t, form.View().Content, styles.Number.ActiveDecrement.Render("⇽"))
+	require.Contains(t, form.View().Content, styles.Number.FocusedIncrement.Render("⇾"))
+
+	form = NewForm(testFormDeclaration(), styles)
+	form.SetBounds(Rect{Width: 40, Height: 8})
+	_, _ = form.Update(formKey(tea.KeyRight, ""))
+	require.Contains(t, form.View().Content, styles.Number.FocusedDecrement.Render("⇽"))
+	require.Contains(t, form.View().Content, styles.Number.ActiveIncrement.Render("⇾"))
+}
+
+func TestFormRendersPointerHoverStates(t *testing.T) {
+	t.Parallel()
+
+	styles := testFormStyles()
+	styles.HoveredLabel = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#111111"))
+	styles.HoveredValue = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#222222"))
+	styles.Buttons.HoveredButton = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#333333")).
+		Padding(0, 1)
+	form := NewForm(testFormDeclaration(), styles)
+	form.SetBounds(Rect{Width: 40, Height: 8})
+
+	field := form.Plan().Fields[1].Rect
+	_, _ = form.Update(tea.MouseMotionMsg{X: field.X, Y: field.Y})
+	require.Contains(t, form.View().Content, styles.HoveredLabel.Render("Select"))
+	require.Contains(t, form.View().Content, styles.HoveredValue.Render("  One  "))
+
+	button := form.Plan().Buttons[0].Rect
+	_, _ = form.Update(tea.MouseMotionMsg{X: button.X, Y: button.Y})
+	require.Contains(t, form.View().Content, styles.Buttons.HoveredButton.Render("Save"))
 }
 
 func TestFormFlashExpiresByGeneration(t *testing.T) {
@@ -209,8 +289,8 @@ func testFormDeclaration() FormDeclaration {
 			{
 				ID: "select", Label: "Select", Kind: SelectField,
 				Options: []FormOption{
-					{Label: "One", Value: "one"},
-					{Label: "Two", Value: "two"},
+					{Label: "One", Value: viewportOne},
+					{Label: "Two", Value: viewportTwo},
 				},
 			},
 			{ID: "directory", Label: "Directory", Kind: DirectoryField},
@@ -229,12 +309,23 @@ func testFormDeclaration() FormDeclaration {
 func testFormStyles() FormStyles {
 	return FormStyles{
 		Label:        lipgloss.NewStyle(),
+		HoveredLabel: lipgloss.NewStyle(),
 		FocusedLabel: lipgloss.NewStyle().Bold(true),
 		Value:        lipgloss.NewStyle(),
+		HoveredValue: lipgloss.NewStyle(),
 		FocusedValue: lipgloss.NewStyle().Bold(true),
-		ActiveValue:  lipgloss.NewStyle().Bold(true),
+		Number: NumberFieldStyles{
+			Value:            lipgloss.NewStyle(),
+			HoveredValue:     lipgloss.NewStyle(),
+			FocusedValue:     lipgloss.NewStyle().Bold(true),
+			FocusedDecrement: lipgloss.NewStyle().Bold(true),
+			ActiveDecrement:  lipgloss.NewStyle().Reverse(true),
+			FocusedIncrement: lipgloss.NewStyle().Bold(true),
+			ActiveIncrement:  lipgloss.NewStyle().Reverse(true),
+		},
 		Buttons: ButtonListStyles{
 			Button:        lipgloss.NewStyle().Padding(0, 1),
+			HoveredButton: lipgloss.NewStyle().Padding(0, 1),
 			FocusedButton: lipgloss.NewStyle().Bold(true).Padding(0, 1),
 		},
 		TextInput: testTextInputStyles(),

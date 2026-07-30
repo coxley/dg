@@ -16,6 +16,7 @@ func TestModelActivatesAndHighlightsTools(t *testing.T) {
 		Container: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			Padding(1),
+		Item:   lipgloss.NewStyle().Italic(true),
 		Active: lipgloss.NewStyle().Bold(true),
 		Hover:  lipgloss.NewStyle().Underline(true),
 	}, []Item{
@@ -24,6 +25,7 @@ func TestModelActivatesAndHighlightsTools(t *testing.T) {
 		{ID: "line", Tool: Line, Label: " Line "},
 	})
 	model.SetWidth(60)
+	require.Contains(t, model.View(), lipgloss.NewStyle().Italic(true).Render(" Rectangle "))
 
 	left, row, ok := model.Cell(Rectangle)
 	require.True(t, ok)

@@ -32,14 +32,6 @@ func TestInteractionStateProjectsToolAndSessionModes(t *testing.T) {
 			want:  modeConnect,
 		},
 		{
-			name: "keyboard move session",
-			state: interactionState{
-				tool:    toolConnect,
-				session: interactionSession{kind: sessionKeyboardMove},
-			},
-			want: modeMove,
-		},
-		{
 			name: "label session",
 			state: interactionState{
 				tool:    toolRectangle,

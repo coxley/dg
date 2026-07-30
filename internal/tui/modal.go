@@ -77,11 +77,18 @@ func newDialogController(
 	clipboard *clipboardview.Model,
 	preferenceValue preferenceDialogValue,
 ) dialogController {
+	preferenceWidth := minimumSettingsModalWidth -
+		theme.Modal.Container.GetHorizontalFrameSize() -
+		theme.Modal.Body.GetHorizontalFrameSize()
 	return dialogController{
-		shell:       modalview.New(theme.Modal),
-		preferences: newPreferenceDialogBody(preferenceValue, theme),
-		save:        newSaveDialogBody(theme),
-		export:      exportDialogBody{clipboard: clipboard},
+		shell: modalview.New(theme.Modal),
+		preferences: newPreferenceDialogBody(
+			preferenceValue,
+			preferenceWidth,
+			theme.Preferences,
+		),
+		save:   newSaveDialogBody(theme.Save),
+		export: exportDialogBody{clipboard: clipboard},
 	}
 }
 
@@ -305,9 +312,9 @@ func (d *dialogController) hide() {
 
 func (d *dialogController) SetStyles(theme Theme) {
 	d.shell.SetStyles(theme.Modal)
-	d.preferences.SetStyles(theme)
-	d.save.SetStyles(theme)
-	d.export.SetStyles(theme)
+	d.preferences.SetStyles(theme.Preferences)
+	d.save.SetStyles(theme.Save)
+	d.export.SetStyles(theme.ExportForm)
 }
 
 func (d *dialogController) activeBody() dialogBody {
@@ -400,8 +407,8 @@ func (b *exportDialogBody) View() string {
 	return b.clipboard.View().Content
 }
 
-func (b *exportDialogBody) SetStyles(theme Theme) {
-	b.clipboard.SetStyles(theme.formStyles())
+func (b *exportDialogBody) SetStyles(styles chrome.FormStyles) {
+	b.clipboard.SetStyles(styles)
 }
 
 type noticeDismissedMsg struct {

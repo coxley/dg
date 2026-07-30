@@ -133,7 +133,7 @@ func newLabModel(scenario string) *labModel {
 	if err != nil {
 		panic(err)
 	}
-	resolver.SetSuperAvailable(true)
+	resolver.SetKeyDisambiguation(true)
 	focus := chrome.NewFocusRegistry()
 	focus.Register("field", []chrome.FocusTarget{{ID: "text", Enabled: true}})
 	focus.Open("field")
@@ -170,19 +170,33 @@ func newLabModel(scenario string) *labModel {
 		},
 	}, chrome.FormStyles{
 		Label:        lipgloss.NewStyle(),
+		HoveredLabel: lipgloss.NewStyle(),
 		FocusedLabel: lipgloss.NewStyle().Bold(true),
 		Value:        lipgloss.NewStyle(),
+		HoveredValue: lipgloss.NewStyle(),
 		FocusedValue: lipgloss.NewStyle().Bold(true),
-		ActiveValue:  lipgloss.NewStyle().Reverse(true),
+		Number: chrome.NumberFieldStyles{
+			Value:            lipgloss.NewStyle(),
+			HoveredValue:     lipgloss.NewStyle(),
+			FocusedValue:     lipgloss.NewStyle().Bold(true),
+			FocusedDecrement: lipgloss.NewStyle().Bold(true),
+			ActiveDecrement:  lipgloss.NewStyle().Reverse(true),
+			FocusedIncrement: lipgloss.NewStyle().Bold(true),
+			ActiveIncrement:  lipgloss.NewStyle().Reverse(true),
+		},
 		Buttons: chrome.ButtonListStyles{
 			Button:        lipgloss.NewStyle().Padding(0, 1),
+			HoveredButton: lipgloss.NewStyle().Padding(0, 1),
 			FocusedButton: lipgloss.NewStyle().Reverse(true).Padding(0, 1),
 		},
 		TextInput: chrome.TextInputStyles{
-			Text:        lipgloss.NewStyle(),
-			FocusedText: lipgloss.NewStyle().Bold(true),
-			Placeholder: lipgloss.NewStyle().Faint(true),
-			Cursor:      lipgloss.NewStyle().Reverse(true),
+			Text:               lipgloss.NewStyle(),
+			HoveredText:        lipgloss.NewStyle(),
+			FocusedText:        lipgloss.NewStyle().Bold(true),
+			SelectedText:       lipgloss.NewStyle().Reverse(true),
+			Placeholder:        lipgloss.NewStyle().Faint(true),
+			HoveredPlaceholder: lipgloss.NewStyle().Faint(true),
+			Cursor:             lipgloss.NewStyle().Reverse(true),
 		},
 	})
 	return &labModel{

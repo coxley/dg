@@ -89,6 +89,7 @@ func testButtonListDeclaration() ButtonListDeclaration {
 func testButtonListStyles() ButtonListStyles {
 	return ButtonListStyles{
 		Button:        lipgloss.NewStyle().Padding(0, 1),
+		HoveredButton: lipgloss.NewStyle().Padding(0, 1),
 		FocusedButton: lipgloss.NewStyle().Bold(true).Padding(0, 1),
 	}
 }

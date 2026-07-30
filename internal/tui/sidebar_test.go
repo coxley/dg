@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,10 +104,10 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 		require.Equal(t, 100-position, geometry.Canvas.Width)
 		require.Equal(t, chrome.Rect{
 			X:     -sidebarPreferredWidth + position,
-			Width: sidebarPreferredWidth, Height: geometry.Main.Height,
+			Width: sidebarPreferredWidth, Height: geometry.Terminal.Height,
 		}, sidebar.Content)
 		require.Equal(t, chrome.Rect{
-			Width: position, Height: geometry.Main.Height,
+			Width: position, Height: geometry.Terminal.Height,
 		}, sidebar.Rect)
 		require.Equal(t, sidebarPreferredWidth, model.sidebar.pane.Plan().Bounds.Width)
 		require.Equal(t, sidebarExtent, model.sidebar.viewport.Plan().Extent)
@@ -241,6 +243,145 @@ func TestSidebarPaneUsesApplicationHeaderBodyAndFooter(t *testing.T) {
 	require.Contains(t, ansi.Strip(lines[0]), "SIDEBAR")
 	require.Contains(t, ansi.Strip(strings.Join(lines[1:len(lines)-1], "\n")), "Overview")
 	require.Contains(t, ansi.Strip(lines[len(lines)-1]), "Esc canvas")
+}
+
+func TestDockedSidebarDoesNotBoundNodeDrag(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(2, 8)))
+	staticID, err := model.geo.NewNodeAt("static", layout.NewPoint(20, 8))
+	require.NoError(t, err)
+	require.NoError(t, model.rebuild())
+
+	updateModelCommand(t, model, sidebarKey())
+	advanceSidebar(t, model)
+	canvas := model.workspace.Geometry().Canvas
+	require.Positive(t, canvas.X)
+
+	staticBefore := model.geo.Nodes[staticID].Rect.Min
+	label := model.geo.Nodes[nodeID].LabelPoint
+	y := canvas.Y + int(label.Y-model.viewport.Y)
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      canvas.X + int(label.X-model.viewport.X),
+		Y:      y,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      0,
+		Y:      y,
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      0,
+		Y:      y,
+		Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, uint32(0), model.geo.Nodes[nodeID].Rect.Min.X)
+	require.Less(
+		t,
+		int64(canvas.X)+
+			int64(model.geo.Nodes[nodeID].Rect.Min.X)-
+			int64(model.viewport.X),
+		int64(0),
+	)
+	staticAfter := model.geo.Nodes[staticID].Rect.Min
+	require.Equal(t, staticBefore.X, staticAfter.X-model.viewport.X)
+	require.Equal(t, staticBefore.Y, staticAfter.Y-model.viewport.Y)
+}
+
+func TestDockedSidebarDoesNotBoundAreaSelection(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(2, 8)))
+	require.NoError(t, model.rebuild())
+
+	updateModelCommand(t, model, sidebarKey())
+	advanceSidebar(t, model)
+	canvas := model.workspace.Geometry().Canvas
+	start := layout.NewPoint(15, 12)
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      canvas.X + int(start.X-model.viewport.X),
+		Y:      canvas.Y + int(start.Y-model.viewport.Y),
+		Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      0,
+		Y:      canvas.Y + int(model.geo.Nodes[nodeID].Rect.Min.Y-model.viewport.Y),
+		Button: tea.MouseLeft,
+	})
+
+	require.True(t, model.highlightedPoint(model.geo.Nodes[nodeID].Rect.Min))
+
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X:      0,
+		Y:      canvas.Y + int(model.geo.Nodes[nodeID].Rect.Min.Y-model.viewport.Y),
+		Button: tea.MouseLeft,
+	})
+
+	require.True(t, selectionContains(model, layout.HitNode, nodeID))
+}
+
+func TestDockedSidebarPushesStatusLineToCanvas(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	updateModelCommand(t, model, sidebarKey())
+	advanceSidebar(t, model)
+
+	workspace := model.workspace.Geometry()
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+	status := lines[workspace.Footer.Y]
+	sidebar := ansi.Cut(status, 0, workspace.Canvas.X)
+	require.Contains(t, sidebar, "Esc canvas")
+	require.Equal(t, "│", ansi.Cut(sidebar, workspace.Canvas.X-2, workspace.Canvas.X-1))
+	require.Contains(t, ansi.Cut(status, workspace.Canvas.X, workspace.Terminal.Width), "selected  nodes 1")
+}
+
+func TestSidebarScrollbarSupportsPointerDrag(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	for i := range 20 {
+		model.sidebar.declaration.Items = append(
+			model.sidebar.declaration.Items,
+			sidebarItem{
+				ID:    chrome.FocusID("extra-" + strconv.Itoa(i)),
+				Label: "Extra " + strconv.Itoa(i),
+			},
+		)
+	}
+	model.sidebar.render()
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 16})
+	updateModelCommand(t, model, sidebarKey())
+	advanceSidebar(t, model)
+	surface, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	plan := model.sidebar.viewport.Plan()
+	require.NotEmpty(t, plan.VerticalThumb)
+
+	x := surface.Content.X + plan.VerticalThumb.X
+	y := surface.Content.Y + plan.VerticalThumb.Y
+	updateModel(t, model, tea.MouseClickMsg{
+		X: x, Y: y, Button: tea.MouseLeft,
+	})
+	require.Equal(t, surfaceSidebar, model.workspace.CaptureID())
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      x,
+		Y:      surface.Content.Y + plan.VerticalBar.Bottom() - 1,
+		Button: tea.MouseLeft,
+	})
+	require.Positive(t, model.sidebar.viewport.Plan().Offset.Y)
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X: x, Y: y, Button: tea.MouseLeft,
+	})
+	require.Empty(t, model.workspace.CaptureID())
 }
 
 func TestSidebarFooterUsesShortcutVocabulary(t *testing.T) {

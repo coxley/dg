@@ -56,13 +56,17 @@ type sidebarMotionMsg struct {
 func newSidebar(declaration sidebarDeclaration, styles sidebarStyles) sidebarState {
 	viewport := chrome.NewViewport("sidebar-body")
 	viewport.SetScrollbars(chrome.ScrollbarNever, chrome.ScrollbarAutomatic)
+	viewport.SetScrollbarStyles(styles.Scrollbar)
 	pane := chrome.NewPane("sidebar-pane", viewport)
+	pane.SetStyle(styles.Container)
 	focus := chrome.NewFocusRegistry()
 	targets := make([]chrome.FocusTarget, len(declaration.Items))
 	for i, item := range declaration.Items {
 		targets[i] = chrome.FocusTarget{ID: item.ID, Enabled: true}
 	}
-	focus.Register(scopeCanvas, []chrome.FocusTarget{{ID: "canvas", Enabled: true}})
+	focus.Register(scopeCanvas, []chrome.FocusTarget{{
+		ID: chrome.FocusID(surfaceCanvas), Enabled: true,
+	}})
 	focus.Register(scopeSidebar, targets)
 	focus.Open(scopeCanvas)
 	sidebar := sidebarState{
@@ -92,6 +96,8 @@ func (s *sidebarState) priority() int {
 
 func (s *sidebarState) setStyles(styles sidebarStyles) {
 	s.styles = styles
+	s.pane.SetStyle(styles.Container)
+	s.viewport.SetScrollbarStyles(styles.Scrollbar)
 	s.render()
 }
 
@@ -155,6 +161,9 @@ func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) {
 		X: point.X - surface.Content.X,
 		Y: point.Y - surface.Content.Y,
 	}
+	if s.viewport.BeginScrollbarDrag(local) {
+		return
+	}
 	body := s.pane.Plan().Body
 	if !body.Contains(local) {
 		return
@@ -174,11 +183,38 @@ func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) {
 	s.render()
 }
 
+func (s *sidebarState) motion(point chrome.Point, surface chrome.SurfacePlan) {
+	local := chrome.Point{
+		X: point.X - surface.Content.X,
+		Y: point.Y - surface.Content.Y,
+	}
+	s.viewport.HoverScrollbar(local)
+	s.viewport.DragScrollbar(local)
+}
+
+func (s *sidebarState) release() {
+	s.viewport.EndScrollbarDrag()
+}
+
+func (s *sidebarState) clearHover() {
+	s.viewport.ClearScrollbarHover()
+}
+
+func (s *sidebarState) capturesPointer() bool {
+	return s.viewport.ScrollbarDragging()
+}
+
 func (s *sidebarState) scroll(delta int) {
 	s.viewport.Scroll(0, delta)
 }
 
 func (s *sidebarState) render() {
+	container := s.styles.Container
+	if s.focused {
+		container = s.styles.FocusedContainer
+	}
+	s.pane.SetStyle(container)
+	s.viewport.SetFocused(s.focused)
 	s.pane.SetHeader([]string{s.styles.Header.Render(s.declaration.Header)})
 	s.pane.SetFooter([]string{s.styles.Footer.Render(s.declaration.Footer)})
 	_, focused := s.focus.Current()

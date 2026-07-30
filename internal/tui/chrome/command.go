@@ -6,10 +6,11 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+const escapeChord = "esc"
 
 // ScopeID identifies a command and focus scope.
 type ScopeID string
@@ -79,10 +80,10 @@ const (
 	VocabularyMac
 )
 
-// Chord is a normalized physical key chord.
+// Chord is a normalized logical key chord.
 type Chord string
 
-// Keys normalizes physical chord declarations.
+// Keys normalizes logical chord declarations.
 func Keys(chords ...string) []Chord {
 	result := make([]Chord, len(chords))
 	for i, chord := range chords {
@@ -166,9 +167,9 @@ func (e CollisionError) Unwrap() error {
 
 // Resolver projects bindings for active scope precedence.
 type Resolver struct {
-	bindings []Binding
-	profile  KeyProfile
-	super    bool
+	bindings     []Binding
+	profile      KeyProfile
+	disambiguate bool
 }
 
 // NewResolver validates and returns a binding resolver.
@@ -185,9 +186,10 @@ func (r *Resolver) SetProfile(profile KeyProfile) {
 	r.profile = profile
 }
 
-// SetSuperAvailable controls whether projected Super chords are advertised.
-func (r *Resolver) SetSuperAvailable(available bool) {
-	r.super = available
+// SetKeyDisambiguation controls whether chords that require enhanced key
+// reporting are advertised.
+func (r *Resolver) SetKeyDisambiguation(available bool) {
+	r.disambiguate = available
 }
 
 // ResolveKey returns the first command matching a key in active scope order.
@@ -314,13 +316,13 @@ func (r *Resolver) validate() error {
 }
 
 func (r *Resolver) project(chord Chord) (Chord, bool) {
-	return projectChord(chord, r.profile, r.super)
+	return projectChord(chord, r.profile, r.disambiguate)
 }
 
-func projectChord(chord Chord, profile KeyProfile, super bool) (Chord, bool) {
+func projectChord(chord Chord, profile KeyProfile, disambiguate bool) (Chord, bool) {
 	value := string(chord)
 	if !strings.HasPrefix(value, "primary+") {
-		if strings.HasPrefix(value, "super+") && !super {
+		if chordRequiresDisambiguation(chord) && !disambiguate {
 			return "", false
 		}
 		return chord, true
@@ -328,12 +330,19 @@ func projectChord(chord Chord, profile KeyProfile, super bool) (Chord, bool) {
 	key := strings.TrimPrefix(value, "primary+")
 	profile = effectiveProfile(profile)
 	if profile == ProfileMac {
-		if !super {
+		if !disambiguate {
 			return "", false
 		}
 		return Chord("super+" + key), true
 	}
 	return Chord("ctrl+" + key), true
+}
+
+func chordRequiresDisambiguation(chord Chord) bool {
+	value := string(chord)
+	return strings.HasPrefix(value, "super+") ||
+		value == "ctrl+enter" ||
+		strings.Contains(value, "ctrl+shift+")
 }
 
 func effectiveProfile(profile KeyProfile) KeyProfile {
@@ -348,10 +357,10 @@ func effectiveProfile(profile KeyProfile) KeyProfile {
 
 func keyChord(message tea.KeyPressMsg) Chord {
 	key := message.Key()
-	if key.Mod == tea.ModShift && key.Text != "" && !unicode.IsLetter(key.Code) {
-		return normalizeChord(key.Text)
-	}
-	return normalizeChord(message.Keystroke())
+	// Keystroke prefers the PC-101 BaseCode when present, which would bind
+	// shortcuts to QWERTY key positions instead of the active keyboard layout.
+	key.BaseCode = 0
+	return normalizeChord(key.Keystroke())
 }
 
 func normalizeChord(chord string) Chord {
@@ -386,6 +395,6 @@ func normalizeChord(chord string) Chord {
 
 func typableChord(chord Chord) bool {
 	value := string(chord)
-	return !strings.Contains(value, "+") && value != "esc" &&
+	return !strings.Contains(value, "+") && value != escapeChord &&
 		value != "enter" && value != "tab" && value != "backspace"
 }

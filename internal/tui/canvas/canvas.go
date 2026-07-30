@@ -23,7 +23,6 @@ const (
 type Styles struct {
 	Selection lipgloss.Style
 	Port      lipgloss.Style
-	Error     lipgloss.Style
 }
 
 // Span bounds one encoded frame row.

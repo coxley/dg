@@ -25,7 +25,6 @@ type resizeCorner uint8
 
 const (
 	modeNavigate mode = iota
-	modeMove
 	modeEditLabel
 	modeConnect
 	modeRectangle
@@ -46,8 +45,6 @@ func (m mode) String() string {
 	switch m {
 	case modeNavigate:
 		return "navigate"
-	case modeMove:
-		return "move"
 	case modeEditLabel:
 		return "edit label"
 	case modeConnect:
@@ -147,10 +144,10 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 		history:       geo.History(),
 		path:          path,
 		theme:         DefaultTheme(true),
-		helpInspector: newHelpInspector(),
 		styledRuns:    make(map[styledRunKey]string),
 		settingsStore: configured.store,
 	}
+	m.helpInspector = newHelpInspector(m.theme.Help)
 	resolver, err := chrome.NewResolver(applicationBindings)
 	if err != nil {
 		return nil, fmt.Errorf("configure bindings: %w", err)
@@ -166,11 +163,11 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 			{ID: "document", Label: "Document"},
 		},
 		Footer: "Esc canvas",
-	}, m.theme.sidebarStyles())
+	}, m.theme.Sidebar)
 	m.syncSidebarShortcut()
-	m.clipboard = clipboardview.New(m.theme.formStyles())
+	m.clipboard = clipboardview.New(m.theme.ExportForm)
 	m.dialogs = newDialogController(m.theme, m.clipboard, m.preferenceValue())
-	m.nav = nav.New(m.theme.Nav, []nav.Item{
+	m.nav = nav.New(m.theme.Navigation, []nav.Item{
 		{ID: "cursor", Tool: nav.Cursor, Label: " Cursor "},
 		{ID: "rectangle", Tool: nav.Rectangle, Label: " Rectangle "},
 		{ID: "line", Tool: nav.Line, Label: " Line "},
@@ -178,6 +175,7 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	m.canvas = canvasview.New(m.theme.Canvas)
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
+	m.clearSelection()
 	for i := range geo.Nodes {
 		if !geo.Nodes[i].Empty() {
 			m.cursor = geo.Nodes[i].LabelPoint
@@ -196,7 +194,6 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	if err := m.rebuild(); err != nil {
 		return nil, err
 	}
-	m.refreshHits()
 	m.syncWorkspace()
 	return m, nil
 }
@@ -235,7 +232,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		))
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
-		m.bindings.SetSuperAvailable(message.SupportsKeyDisambiguation())
+		m.bindings.SetKeyDisambiguation(message.SupportsKeyDisambiguation())
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:
@@ -290,10 +287,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) applyTheme(theme Theme) {
 	m.theme = theme
-	m.nav.SetStyles(theme.Nav)
+	m.nav.SetStyles(theme.Navigation)
 	m.dialogs.SetStyles(theme)
 	m.canvas.SetStyles(theme.Canvas)
-	m.sidebar.setStyles(theme.sidebarStyles())
+	m.helpInspector.setStyles(theme.Help)
+	m.sidebar.setStyles(theme.Sidebar)
 	clear(m.styledRuns)
 }
 
@@ -474,20 +472,8 @@ func (m *Model) selectedLayer() (layout.Hit, bool) {
 }
 
 func (m *Model) move(dx, dy int) {
-	if m.interaction.session.kind == sessionKeyboardMove {
-		m.moveNode(dx, dy)
+	if m.interaction.idle() && m.moveSelectionBy(dx, dy) {
 		return
-	}
-	if m.interaction.idle() {
-		nodes, edges := m.selectedCounts()
-		if nodes > 0 && nodes+edges > 1 {
-			m.shiftSelection(dx, dy)
-			return
-		}
-		if hit, ok := m.focusedNode(); ok {
-			m.shiftFocusedNode(hit, dx, dy)
-			return
-		}
 	}
 	point, ok := movePoint(m.cursor, dx, dy)
 	if !ok {
@@ -502,22 +488,22 @@ func (m *Model) move(dx, dy int) {
 	m.status = ""
 }
 
-func (m *Model) moveNode(dx, dy int) {
-	if m.target.Kind != layout.HitNode || !m.geo.NodeExists(m.target.ID) {
-		m.interaction.session = interactionSession{}
-		m.setError("selected node no longer exists")
-		return
+func (m *Model) moveSelectionBy(dx, dy int) bool {
+	nodes, edges := m.selectedCounts()
+	if nodes == 0 {
+		return false
 	}
-	cursor, ok := movePoint(m.cursor, dx, dy)
-	if !ok {
-		return
+	if nodes == 1 && edges == 0 {
+		if hit, ok := m.focusedNode(); ok {
+			m.shiftFocusedNode(hit, dx, dy)
+			return true
+		}
 	}
-	if _, err := m.moveSelectedNodes(int64(dx), int64(dy), cursor); err != nil {
-		m.setError(err.Error())
-	}
+	m.shiftSelection(dx, dy)
+	return true
 }
 
-func (m *Model) dragNode(nodeID uint32, cursor layout.Point) {
+func (m *Model) dragNode(nodeID uint32, cursorX, cursorY int64) {
 	if !m.geo.Selection().Contains(
 		layout.Hit{ID: nodeID, Kind: layout.HitNode},
 	) {
@@ -525,14 +511,16 @@ func (m *Model) dragNode(nodeID uint32, cursor layout.Point) {
 	}
 	previous := m.geo.Nodes[nodeID].Rect.Min
 	offset := m.interaction.gesture.offset
-	dx := int64(cursor.X) - int64(offset.X) - int64(previous.X)
-	dy := int64(cursor.Y) - int64(offset.Y) - int64(previous.Y)
-	rebase, err := m.rebaseSelectionMove(dx, dy, cursor)
+	dx := cursorX - int64(offset.X) - int64(previous.X)
+	dy := cursorY - int64(offset.Y) - int64(previous.Y)
+	rebase, err := m.rebaseSelectionMove(dx, dy, cursorX, cursorY)
 	if err != nil {
 		m.setError(err.Error())
 		return
 	}
-	cursor = cursor.Add(rebase.X, rebase.Y)
+	cursorX += int64(rebase.X)
+	cursorY += int64(rebase.Y)
+	cursor := layout.NewPoint(uint32(cursorX), uint32(cursorY))
 	if _, err := m.moveSelectedNodes(dx, dy, cursor); err != nil {
 		m.setError(err.Error())
 	}
@@ -540,7 +528,7 @@ func (m *Model) dragNode(nodeID uint32, cursor layout.Point) {
 
 func (m *Model) rebaseSelectionMove(
 	dx, dy int64,
-	cursor layout.Point,
+	cursorX, cursorY int64,
 ) (layout.Point, error) {
 	var shift layout.Point
 	include := func(point layout.Point) {
@@ -565,14 +553,16 @@ func (m *Model) rebaseSelectionMove(
 			include(point)
 		}
 	}
-	if shift == (layout.Point{}) {
-		return shift, nil
-	}
-	if cursor.X > math.MaxUint32-shift.X ||
-		cursor.Y > math.MaxUint32-shift.Y ||
+	cursorX += int64(shift.X)
+	cursorY += int64(shift.Y)
+	if cursorX < 0 || cursorX > math.MaxUint32 ||
+		cursorY < 0 || cursorY > math.MaxUint32 ||
 		m.viewport.X > math.MaxUint32-shift.X ||
 		m.viewport.Y > math.MaxUint32-shift.Y {
 		return layout.Point{}, errors.New("viewport outside coordinate space")
+	}
+	if shift == (layout.Point{}) {
+		return shift, nil
 	}
 	if err := m.geo.Translate(shift.X, shift.Y); err != nil {
 		return layout.Point{}, err
@@ -625,7 +615,6 @@ func (m *Model) moveSelectedNodes(
 	m.cursor = cursor
 	m.refreshHits()
 	m.selectTarget()
-	m.ensureCursorVisible()
 	m.status = ""
 	return true, nil
 }
@@ -639,37 +628,6 @@ func (m *Model) restoreMovedNodes() error {
 		)
 	}
 	return errors.Join(restoreErr, m.rebuild())
-}
-
-func (m *Model) beginMove() {
-	if m.interaction.session.kind == sessionKeyboardMove {
-		m.finishMove()
-		return
-	}
-	if !m.interaction.idle() {
-		m.setError(finishOperation)
-		return
-	}
-	if !m.hasSelectedNodes() {
-		hit, ok := m.activeHit()
-		if !ok || hit.Kind != layout.HitNode {
-			m.setError("select a node to move")
-			return
-		}
-		m.selectOnly(hit)
-	}
-	target, ok := m.firstSelectedNode()
-	if !ok {
-		m.setError("select a node to move")
-		return
-	}
-	m.target = target
-	m.beginTransaction(transactionKeyboardMove)
-	m.interaction.session = interactionSession{
-		kind:  sessionKeyboardMove,
-		rigid: m.geo.SelectionMovesRigidly(),
-	}
-	m.status = ""
 }
 
 func (m *Model) beginLabelEdit() {
@@ -691,8 +649,13 @@ func (m *Model) newNode() {
 		m.setError(finishOperation)
 		return
 	}
+	origin, err := m.newNodeOrigin()
+	if err != nil {
+		m.setError(err.Error())
+		return
+	}
 	m.beginTransaction(transactionLabelEdit)
-	nodeID, err := m.geo.NewNodeAt("", m.cursor)
+	nodeID, err := m.geo.NewNodeAt("", origin)
 	if err != nil {
 		m.setError(errors.Join(err, m.cancelTransaction()).Error())
 		return
@@ -706,6 +669,49 @@ func (m *Model) newNode() {
 		return
 	}
 	m.startLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+}
+
+func (m *Model) newNodeOrigin() (layout.Point, error) {
+	padding := m.geo.Padding()
+	dx := int(padding.Left) + int(padding.Right) + 4
+	dy := int(padding.Top) + int(padding.Bottom) + 4
+	offsets := [...]struct {
+		x int
+		y int
+	}{
+		{},
+		{x: dx},
+		{y: dy},
+		{x: -dx},
+		{y: -dy},
+		{x: dx, y: dy},
+		{x: -dx, y: dy},
+		{x: dx, y: -dy},
+		{x: -dx, y: -dy},
+	}
+	var placementErr error
+	for _, offset := range offsets {
+		origin, ok := movePoint(m.cursor, offset.x, offset.y)
+		if !ok {
+			continue
+		}
+		cloned, err := m.geo.Clone()
+		if err == nil {
+			var nodeID uint32
+			nodeID, err = cloned.NewNodeAt("", origin)
+			if err == nil {
+				err = cloned.SetNodeStyle(nodeID, m.nodeStyle)
+			}
+			if err == nil {
+				err = cloned.Build()
+			}
+		}
+		if err == nil {
+			return origin, nil
+		}
+		placementErr = err
+	}
+	return layout.Point{}, fmt.Errorf("place new node: %w", placementErr)
 }
 
 func (m *Model) beginRectangle() {
@@ -727,6 +733,10 @@ func (m *Model) beginConnection() {
 	m.interaction.tool = toolConnect
 	hit, ok := m.activeHit()
 	if !ok {
+		m.status = dragFromSource
+		return
+	}
+	if hit.Kind != layout.HitPort && hit.Kind != layout.HitEdge {
 		m.status = dragFromSource
 		return
 	}
@@ -824,17 +834,9 @@ func (m *Model) completeConnectionTo(destination uint32) {
 }
 
 func (m *Model) deleteActive() {
-	session := m.interaction.session.kind
-	if !m.interaction.idle() && session != sessionKeyboardMove {
+	if !m.interaction.idle() {
 		m.setError(finishOperation)
 		return
-	}
-	if session == sessionKeyboardMove {
-		if err := m.commitTransaction(); err != nil {
-			m.setError(err.Error())
-			return
-		}
-		m.interaction.session = interactionSession{}
 	}
 	if !m.hasSelection() {
 		hit, ok := m.activeHit()
@@ -891,10 +893,6 @@ func (m *Model) deleteActive() {
 }
 
 func (m *Model) cancelMode() {
-	if m.interaction.session.kind == sessionKeyboardMove {
-		m.finishMove()
-		return
-	}
 	if m.interaction.gesture.kind == gestureRectangle {
 		m.interaction.resetGesture()
 		m.interaction.tool = toolNavigate
@@ -956,7 +954,6 @@ func (m *Model) finishMove() {
 		routeErr = m.rebuildSelection()
 	}
 	err := errors.Join(routeErr, m.commitTransaction())
-	m.interaction.session = interactionSession{}
 	m.interaction.resetGesture()
 	m.interaction.render.moveHighlight = m.interaction.render.moveHighlight[:0]
 	if err != nil {

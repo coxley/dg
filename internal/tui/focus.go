@@ -122,6 +122,7 @@ func (m *Model) shiftSelection(dx, dy int) {
 		_ = m.cancelTransaction()
 		return
 	}
+	m.ensureCursorVisible()
 	if err := m.commitTransaction(); err != nil {
 		m.setError(err.Error())
 	}

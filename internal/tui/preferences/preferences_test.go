@@ -357,15 +357,26 @@ func borderedStyles() Styles {
 
 func testStyles() Styles {
 	return Styles{
-		Picker: directorypicker.Styles{Dark: true},
+		Picker: directorypicker.Styles{},
 		Form: chrome.FormStyles{
 			Label:        lipgloss.NewStyle(),
+			HoveredLabel: lipgloss.NewStyle(),
 			FocusedLabel: lipgloss.NewStyle().Bold(true),
 			Value:        lipgloss.NewStyle(),
+			HoveredValue: lipgloss.NewStyle(),
 			FocusedValue: lipgloss.NewStyle().Bold(true),
-			ActiveValue:  lipgloss.NewStyle().Bold(true),
+			Number: chrome.NumberFieldStyles{
+				Value:            lipgloss.NewStyle(),
+				HoveredValue:     lipgloss.NewStyle(),
+				FocusedValue:     lipgloss.NewStyle().Bold(true),
+				FocusedDecrement: lipgloss.NewStyle().Bold(true),
+				ActiveDecrement:  lipgloss.NewStyle().Reverse(true),
+				FocusedIncrement: lipgloss.NewStyle().Bold(true),
+				ActiveIncrement:  lipgloss.NewStyle().Reverse(true),
+			},
 			Buttons: chrome.ButtonListStyles{
 				Button:        lipgloss.NewStyle().Padding(0, 1),
+				HoveredButton: lipgloss.NewStyle().Padding(0, 1),
 				FocusedButton: lipgloss.NewStyle().Bold(true).Padding(0, 1),
 			},
 		},

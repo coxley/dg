@@ -11,9 +11,15 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Styles selects the picker color environment.
+// Styles defines every directory-picker visual state.
 type Styles struct {
-	Dark bool
+	Container    lipgloss.Style
+	Title        lipgloss.Style
+	Item         lipgloss.Style
+	HoveredItem  lipgloss.Style
+	SelectedItem lipgloss.Style
+	Empty        lipgloss.Style
+	Error        lipgloss.Style
 }
 
 // Config declares filesystem selection policy.
@@ -32,6 +38,8 @@ type Model struct {
 	width    int
 	height   int
 	selected int
+	hovered  bool
+	hover    int
 	offset   int
 	styles   Styles
 	open     bool
@@ -66,6 +74,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseClickMsg:
 		m.click(message.Mouse())
+	case tea.MouseMotionMsg:
+		m.hoverAt(message.Mouse())
 	}
 	return m, nil
 }
@@ -110,7 +120,7 @@ func (m *Model) SetBounds(width, height int) {
 	m.reveal()
 }
 
-// SetStyles replaces the picker color environment.
+// SetStyles replaces every directory-picker visual state.
 func (m *Model) SetStyles(styles Styles) {
 	m.styles = styles
 }
@@ -136,6 +146,7 @@ func (m *Model) startDirectory() string {
 }
 
 func (m *Model) load(directory string) {
+	m.hovered = false
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		m.err = err.Error()
@@ -209,7 +220,7 @@ func (m *Model) reveal() {
 }
 
 func (m *Model) visibleRows() int {
-	return max(m.renderHeight()-1, 1)
+	return max(m.contentHeight()-1, 1)
 }
 
 func (m *Model) openSelected() {
@@ -235,7 +246,7 @@ func (m *Model) click(mouse tea.Mouse) {
 	if mouse.Button != tea.MouseLeft {
 		return
 	}
-	row := mouse.Y - 1
+	row := mouse.Y - m.contentTop() - 1
 	if row < 0 || row >= m.visibleRows() {
 		return
 	}
@@ -247,28 +258,45 @@ func (m *Model) click(mouse tea.Mouse) {
 	m.reveal()
 }
 
+func (m *Model) hoverAt(mouse tea.Mouse) {
+	row := mouse.Y - m.contentTop() - 1
+	index := m.offset + row
+	hovered := row >= 0 && row < m.visibleRows() && index < len(m.entries)
+	if m.hovered == hovered && (!hovered || m.hover == index) {
+		return
+	}
+	m.hovered = hovered
+	m.hover = index
+}
+
 func (m *Model) render() string {
-	width := max(m.width, 0)
-	height := m.renderHeight()
+	width := m.contentWidth()
+	height := m.contentHeight()
 	if width == 0 {
 		return ""
 	}
-	title, cursor, directory, muted, errStyle := pickerStyles(m.styles.Dark)
 	lines := make([]string, 0, height)
-	lines = append(lines, title.Render(ansi.Truncate(m.config.Title, width, "")))
+	lines = append(lines, m.styles.Title.Render(
+		ansi.Truncate(m.config.Title, width, ""),
+	))
 	switch {
 	case m.err != "":
-		lines = append(lines, errStyle.Render(ansi.Truncate(m.err, width, "")))
+		lines = append(lines, m.styles.Error.Render(
+			ansi.Truncate(m.err, width, ""),
+		))
 	case len(m.entries) == 0:
-		lines = append(lines, muted.Render("  No visible directories"))
+		lines = append(lines, m.styles.Empty.Render("  No visible directories"))
 	default:
 		end := min(m.offset+m.visibleRows(), len(m.entries))
 		for i := m.offset; i < end; i++ {
 			prefix := "  "
-			style := directory
-			if i == m.selected {
+			style := m.styles.Item
+			switch {
+			case i == m.selected:
 				prefix = "> "
-				style = cursor
+				style = m.styles.SelectedItem
+			case m.hovered && i == m.hover:
+				style = m.styles.HoveredItem
 			}
 			lines = append(
 				lines,
@@ -282,34 +310,32 @@ func (m *Model) render() string {
 	if len(lines) > height {
 		lines = lines[:height]
 	}
-	return lipgloss.NewStyle().
-		Width(width).
-		Height(height).
-		MaxWidth(width).
-		MaxHeight(height).
+	outerHeight := m.height
+	if outerHeight == 0 {
+		outerHeight = height + m.styles.Container.GetVerticalFrameSize()
+	}
+	return m.styles.Container.
+		Width(m.width).
+		Height(outerHeight).
+		MaxWidth(m.width).
+		MaxHeight(outerHeight).
 		Render(strings.Join(lines, "\n"))
 }
 
-func (m *Model) renderHeight() int {
+func (m *Model) contentWidth() int {
+	return max(m.width-m.styles.Container.GetHorizontalFrameSize(), 0)
+}
+
+func (m *Model) contentHeight() int {
 	if m.height > 0 {
-		return m.height
+		return max(m.height-m.styles.Container.GetVerticalFrameSize(), 0)
 	}
 	return min(max(len(m.entries)+1, 2), 10)
 }
 
-func pickerStyles(dark bool) (
-	title, cursor, directory, muted, errStyle lipgloss.Style,
-) {
-	if dark {
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")),
-			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("36")),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("243")),
-			lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	}
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("57")),
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("127")),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("29")),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("160"))
+func (m *Model) contentTop() int {
+	style := m.styles.Container
+	return style.GetMarginTop() +
+		style.GetBorderTopSize() +
+		style.GetPaddingTop()
 }

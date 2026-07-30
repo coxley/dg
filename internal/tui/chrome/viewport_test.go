@@ -1,8 +1,10 @@
 package chrome
 
 import (
+	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
@@ -11,7 +13,10 @@ const (
 	viewportOne   = "one"
 	viewportTwo   = "two"
 	viewportThree = "three"
+	viewportFour  = "four"
+	viewportFive  = "five"
 	viewportLast  = "last"
+	viewportWide  = "01234567890123456789"
 )
 
 func TestViewportScrollbarPolicyMatrix(t *testing.T) {
@@ -30,7 +35,7 @@ func TestViewportScrollbarPolicyMatrix(t *testing.T) {
 				viewportOne,
 				viewportTwo,
 				viewportThree,
-				"four",
+				viewportFour,
 			})
 			viewport.SetOverflow(ScrollText)
 			viewport.SetScrollbars(horizontal, vertical)
@@ -74,7 +79,7 @@ func TestViewportRevealAndPointerTranslation(t *testing.T) {
 		viewportOne,
 		viewportTwo,
 		viewportThree,
-		"four",
+		viewportFour,
 	})
 	viewport.SetOverflow(ScrollText)
 	viewport.SetBounds(Rect{X: 10, Y: 4, Width: 6, Height: 4})
@@ -108,11 +113,107 @@ func TestViewportHandlesConstrainedBounds(t *testing.T) {
 	require.Equal(t, 1, ansi.StringWidth(viewport.Lines()[0]))
 }
 
+func TestViewportScrollbarsSupportClickAndDrag(t *testing.T) {
+	t.Parallel()
+
+	viewport := NewViewport("body")
+	viewport.SetContent([]string{
+		viewportWide,
+		viewportOne, viewportTwo, viewportThree, viewportFour,
+		viewportFive, "six", "seven", "eight", "nine",
+	})
+	viewport.SetOverflow(ScrollText)
+	viewport.SetBounds(Rect{X: 3, Y: 4, Width: 8, Height: 5})
+	plan := viewport.Plan()
+
+	require.True(t, viewport.BeginScrollbarDrag(Point{
+		X: plan.VerticalBar.X,
+		Y: plan.VerticalBar.Bottom() - 1,
+	}))
+	require.True(t, viewport.ScrollbarDragging())
+	require.Equal(t, plan.Extent.Height-plan.Content.Height, viewport.Plan().Offset.Y)
+	viewport.EndScrollbarDrag()
+
+	viewport.Scroll(-100, -100)
+	plan = viewport.Plan()
+	require.True(t, viewport.BeginScrollbarDrag(Point{
+		X: plan.HorizontalThumb.X,
+		Y: plan.HorizontalThumb.Y,
+	}))
+	require.True(t, viewport.DragScrollbar(Point{
+		X: plan.HorizontalBar.Right() - 1,
+		Y: plan.HorizontalBar.Y,
+	}))
+	require.Equal(t, plan.Extent.Width-plan.Content.Width, viewport.Plan().Offset.X)
+	viewport.EndScrollbarDrag()
+	require.False(t, viewport.ScrollbarDragging())
+}
+
+func TestViewportRendersThemedScrollbarCells(t *testing.T) {
+	t.Parallel()
+
+	styles := ScrollbarStyles{
+		Track: lipgloss.NewStyle().Foreground(lipgloss.Color("#123456")),
+		Thumb: lipgloss.NewStyle().Foreground(lipgloss.Color("#abcdef")),
+	}
+	viewport := NewViewport("body")
+	viewport.SetContent([]string{
+		viewportWide,
+		viewportOne, viewportTwo, viewportThree, viewportFour, viewportFive,
+	})
+	viewport.SetOverflow(ScrollText)
+	viewport.SetScrollbarStyles(styles)
+	viewport.SetBounds(Rect{Width: 8, Height: 4})
+
+	rendered := strings.Join(viewport.Lines(), "\n")
+	require.Contains(t, rendered, styles.Track.Render("│"))
+	require.Contains(t, rendered, styles.Track.Render("─"))
+	require.Contains(t, rendered, styles.Thumb.Render("█"))
+}
+
+func TestViewportRendersScrollbarInteractionStates(t *testing.T) {
+	t.Parallel()
+
+	styles := ScrollbarStyles{
+		Track:        lipgloss.NewStyle(),
+		Thumb:        lipgloss.NewStyle(),
+		HoveredTrack: lipgloss.NewStyle().Foreground(lipgloss.Color("#111111")),
+		HoveredThumb: lipgloss.NewStyle().Foreground(lipgloss.Color("#222222")),
+		FocusedTrack: lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")),
+		FocusedThumb: lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")),
+		ActiveTrack:  lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")),
+		ActiveThumb:  lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")),
+	}
+	viewport := NewViewport("body")
+	viewport.SetContent([]string{
+		viewportOne, viewportTwo, viewportThree, viewportFour, viewportFive,
+	})
+	viewport.SetScrollbarStyles(styles)
+	viewport.SetBounds(Rect{Width: 8, Height: 3})
+
+	viewport.SetFocused(true)
+	rendered := strings.Join(viewport.Lines(), "\n")
+	require.Contains(t, rendered, styles.FocusedTrack.Render("│"))
+	require.Contains(t, rendered, styles.FocusedThumb.Render("█"))
+
+	thumb := viewport.Plan().VerticalThumb
+	point := Point{X: thumb.X, Y: thumb.Y}
+	require.True(t, viewport.HoverScrollbar(point))
+	rendered = strings.Join(viewport.Lines(), "\n")
+	require.Contains(t, rendered, styles.HoveredTrack.Render("│"))
+	require.Contains(t, rendered, styles.HoveredThumb.Render("█"))
+
+	require.True(t, viewport.BeginScrollbarDrag(point))
+	rendered = strings.Join(viewport.Lines(), "\n")
+	require.Contains(t, rendered, styles.ActiveTrack.Render("│"))
+	require.Contains(t, rendered, styles.ActiveThumb.Render("█"))
+}
+
 func BenchmarkViewportArrange(b *testing.B) {
 	viewport := NewViewport("body")
 	viewport.SetContent([]string{
 		viewportOne + " " + viewportTwo + " " + viewportThree + " four five",
-		"01234567890123456789",
+		viewportWide,
 		viewportLast,
 	})
 	viewport.SetOverflow(WrapText)

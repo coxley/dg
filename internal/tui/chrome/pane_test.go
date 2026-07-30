@@ -3,6 +3,8 @@ package chrome
 import (
 	"testing"
 
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,4 +55,39 @@ func TestNestedPanesRetainIndependentViewports(t *testing.T) {
 		"inner one  │",
 		"inner two  █",
 	}, outer.Lines())
+}
+
+func TestPaneStyleFramesEverySlot(t *testing.T) {
+	t.Parallel()
+
+	viewport := NewViewport("body")
+	viewport.SetContent([]string{"body"})
+	pane := NewPane("pane", viewport)
+	pane.SetHeader([]string{"header"})
+	pane.SetFooter([]string{"footer"})
+	pane.SetStyle(lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, true, false, false).
+		PaddingLeft(1).
+		MarginRight(1))
+	pane.SetBounds(Rect{Width: 8, Height: 4})
+
+	require.Equal(t, []string{
+		" heade│ ",
+		" body │ ",
+		"      │ ",
+		" foote│ ",
+	}, stripLines(pane.Lines()))
+	plan := pane.Plan()
+	require.Equal(t, Rect{X: 1, Width: 5, Height: 4}, plan.Content)
+	require.Equal(t, Rect{X: 1, Width: 5, Height: 1}, plan.Header)
+	require.Equal(t, Rect{X: 1, Y: 1, Width: 5, Height: 2}, plan.Body)
+	require.Equal(t, Rect{X: 1, Y: 3, Width: 5, Height: 1}, plan.Footer)
+	require.Equal(t, Rect{X: 1, Y: 1, Width: 5, Height: 2}, viewport.Plan().Bounds)
+}
+
+func stripLines(lines []string) []string {
+	for i := range lines {
+		lines[i] = ansi.Strip(lines[i])
+	}
+	return lines
 }

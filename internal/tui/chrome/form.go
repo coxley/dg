@@ -64,12 +64,26 @@ type FormDeclaration struct {
 // FormStyles defines geometry-stable semantic form states.
 type FormStyles struct {
 	Label        lipgloss.Style
+	HoveredLabel lipgloss.Style
 	FocusedLabel lipgloss.Style
 	Value        lipgloss.Style
+	HoveredValue lipgloss.Style
 	FocusedValue lipgloss.Style
-	ActiveValue  lipgloss.Style
+	Number       NumberFieldStyles
 	Buttons      ButtonListStyles
 	TextInput    TextInputStyles
+}
+
+// NumberFieldStyles defines number text and directional-control states.
+// Directional controls only appear while the field has focus.
+type NumberFieldStyles struct {
+	Value            lipgloss.Style
+	HoveredValue     lipgloss.Style
+	FocusedValue     lipgloss.Style
+	FocusedDecrement lipgloss.Style
+	ActiveDecrement  lipgloss.Style
+	FocusedIncrement lipgloss.Style
+	ActiveIncrement  lipgloss.Style
 }
 
 // FormControlPlan records one visible field or button hit target.
@@ -116,6 +130,8 @@ type Form struct {
 	hugHeight   bool
 	version     uint64
 	focus       int
+	hovered     bool
+	hover       int
 	offset      int
 	flashID     ID
 	flash       int
@@ -151,6 +167,8 @@ func (f *Form) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case tea.KeyPressMsg:
 		return f, f.updateKey(message)
+	case tea.MouseMotionMsg:
+		f.hoverAt(Point{X: message.X, Y: message.Y})
 	case tea.PasteMsg:
 		f.updateTextInput(message)
 	case FormFlashExpiredMsg:
@@ -612,13 +630,18 @@ func (f *Form) buttonFocus() int {
 
 func (f *Form) renderField(field FormField, focused bool, width int) string {
 	labelStyle, valueStyle := f.styles.Label, f.styles.Value
-	if focused {
+	hovered := f.hovered && f.declaration.Fields[f.hover].ID == field.ID
+	switch {
+	case focused:
 		labelStyle, valueStyle = f.styles.FocusedLabel, f.styles.FocusedValue
+	case hovered:
+		labelStyle, valueStyle = f.styles.HoveredLabel, f.styles.HoveredValue
 	}
 	label := labelStyle.Render(field.Label)
 	if field.Kind == TextField {
 		input := f.inputs[field.ID]
 		input.SetWidth(max(width-ansi.StringWidth(label)-1, 0))
+		input.SetHovered(hovered)
 		if focused {
 			input.Focus()
 		} else {
@@ -626,8 +649,64 @@ func (f *Form) renderField(field FormField, focused bool, width int) string {
 		}
 		return renderFormRow(width, label, input.View())
 	}
-	value := valueStyle.Render(f.fieldText(field, focused))
+	value := f.renderFieldValue(field, focused, hovered, valueStyle)
 	return renderFormRow(width, label, value)
+}
+
+func (f *Form) renderFieldValue(
+	field FormField,
+	focused, hovered bool,
+	style lipgloss.Style,
+) string {
+	if field.Kind != NumberField {
+		return style.Render(f.fieldText(field, focused))
+	}
+
+	value := strconv.FormatUint(field.Number, 10)
+	if !focused {
+		numberStyle := f.styles.Number.Value
+		if hovered {
+			numberStyle = f.styles.Number.HoveredValue
+		}
+		return numberStyle.Render("  " + value + "  ")
+	}
+	decrement := f.styles.Number.FocusedDecrement
+	increment := f.styles.Number.FocusedIncrement
+	if f.flashID == field.ID {
+		if f.flash < 0 {
+			decrement = f.styles.Number.ActiveDecrement
+		} else if f.flash > 0 {
+			increment = f.styles.Number.ActiveIncrement
+		}
+	}
+	return decrement.Render("⇽") +
+		f.styles.Number.FocusedValue.Render(" "+value+" ") +
+		increment.Render("⇾")
+}
+
+func (f *Form) hoverAt(point Point) {
+	for index, field := range f.plan.Fields {
+		if !field.Rect.Contains(point) {
+			continue
+		}
+		buttonChanged := f.buttons.ClearHover()
+		if f.hovered && f.hover == index {
+			if buttonChanged {
+				f.invalidate()
+			}
+			return
+		}
+		f.hovered = true
+		f.hover = index
+		f.invalidate()
+		return
+	}
+	wasHovered := f.hovered
+	f.hovered = false
+	buttonChanged := f.buttons.Hover(point)
+	if wasHovered || buttonChanged {
+		f.invalidate()
+	}
 }
 
 func (f *Form) fieldText(field FormField, focused bool) string {
@@ -652,14 +731,7 @@ func (f *Form) fieldText(field FormField, focused bool) string {
 	if !focused {
 		return "  " + value + "  "
 	}
-	left, right := "⇽", "⇾"
-	if f.flashID == field.ID && f.flash < 0 {
-		left = f.styles.ActiveValue.Render(left)
-	}
-	if f.flashID == field.ID && f.flash > 0 {
-		right = f.styles.ActiveValue.Render(right)
-	}
-	return left + " " + value + " " + right
+	return "⇽ " + value + " ⇾"
 }
 
 func (f *Form) syncInputs() {

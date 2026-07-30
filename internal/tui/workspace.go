@@ -93,7 +93,7 @@ func (m *Model) syncWorkspace() {
 		m.helpInspector.setPlan(
 			help.Rect,
 			m.helpContext(),
-			m.bindings.Effective(m.activeBindingScopes()),
+			m.contextualHelpBindings(),
 			chrome.VocabularyForProfile(m.preferenceValue().KeyProfile),
 		)
 	}
@@ -113,7 +113,7 @@ func (m *Model) helpContext() string {
 	if m.interaction.session.kind == sessionLabelEdit {
 		return "label editor"
 	}
-	return "canvas"
+	return string(surfaceCanvas)
 }
 
 func (m *Model) textEntryActive() bool {
@@ -160,6 +160,9 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 	case surfaceSidebar:
 		surface, _ := m.surfacePlan(surfaceSidebar)
 		m.sidebar.click(point, surface)
+		if m.sidebar.capturesPointer() {
+			m.workspace.Capture(surfaceSidebar)
+		}
 	case surfaceNavigation:
 		var command tea.Cmd
 		m.nav, command = m.nav.Update(m.navigationMessage(message))
@@ -184,6 +187,8 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 }
 
 func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
+	m.helpInspector.clearHover()
+	m.sidebar.clearHover()
 	id, ok := m.workspace.SurfaceAt(chrome.Point{X: message.X, Y: message.Y})
 	if ok {
 		switch id {
@@ -195,6 +200,8 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 			plan, _ := m.surfacePlan(surfaceHelp)
 			m.helpInspector.update(message, plan.Rect)
 		case surfaceSidebar:
+			surface, _ := m.surfacePlan(surfaceSidebar)
+			m.sidebar.motion(chrome.Point{X: message.X, Y: message.Y}, surface)
 		default:
 			if id == m.dialogs.ActiveID() {
 				return m.updateDialogMouseMotion(message.Mouse())
@@ -218,6 +225,7 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
 		plan, _ := m.surfacePlan(surfaceHelp)
 		m.helpInspector.update(message, plan.Rect)
 	case surfaceSidebar:
+		m.sidebar.release()
 	default:
 		if id != m.dialogs.ActiveID() {
 			m.updateMouseRelease(message.Mouse())

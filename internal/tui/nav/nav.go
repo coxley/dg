@@ -28,6 +28,7 @@ type Item struct {
 // Styles defines the floating navigation appearance.
 type Styles struct {
 	Container lipgloss.Style
+	Item      lipgloss.Style
 	Active    lipgloss.Style
 	Hover     lipgloss.Style
 }
@@ -187,12 +188,12 @@ func (m *Model) render() {
 func (m Model) renderLines(active Tool) []string {
 	return m.menu.Lines(func(item chrome.MenuItem) string {
 		declared := m.item(item.ID)
-		text := declared.Label
+		text := m.styles.Item.Render(declared.Label)
 		switch {
 		case active == declared.Tool:
-			text = m.styles.Active.Render(text)
+			text = m.styles.Active.Render(declared.Label)
 		case m.hovered && m.hover == declared.Tool:
-			text = m.styles.Hover.Render(text)
+			text = m.styles.Hover.Render(declared.Label)
 		}
 		return text
 	})

@@ -23,6 +23,7 @@ type ButtonListDeclaration struct {
 // ButtonListStyles defines geometry-stable button states.
 type ButtonListStyles struct {
 	Button        lipgloss.Style
+	HoveredButton lipgloss.Style
 	FocusedButton lipgloss.Style
 }
 
@@ -53,6 +54,8 @@ type ButtonList struct {
 	hugHeight   bool
 	focused     bool
 	focus       int
+	hovered     bool
+	hover       int
 	version     uint64
 	plan        ButtonListPlan
 	lines       []string
@@ -173,6 +176,33 @@ func (l *ButtonList) Click(point Point) tea.Cmd {
 	return emitButtonMessage(ButtonPressMsg{ID: id})
 }
 
+// Hover updates the button under point and reports whether its state changed.
+func (l *ButtonList) Hover(point Point) bool {
+	for index, button := range l.plan.Buttons {
+		if !button.Rect.Contains(point) {
+			continue
+		}
+		if l.hovered && l.hover == index {
+			return false
+		}
+		l.hovered = true
+		l.hover = index
+		l.invalidate()
+		return true
+	}
+	return l.ClearHover()
+}
+
+// ClearHover removes pointer emphasis and reports whether its state changed.
+func (l *ButtonList) ClearHover() bool {
+	if !l.hovered {
+		return false
+	}
+	l.hovered = false
+	l.invalidate()
+	return true
+}
+
 func (l *ButtonList) applyIntent(intent ControlIntent) (ID, bool) {
 	switch intent {
 	case NavigateLeft:
@@ -232,8 +262,11 @@ func (l *ButtonList) arrange() {
 	widths := make([]int, len(views))
 	for index, button := range l.declaration.Buttons {
 		style := l.styles.Button
-		if l.focused && index == l.focus {
+		switch {
+		case l.focused && index == l.focus:
 			style = l.styles.FocusedButton
+		case l.hovered && index == l.hover:
+			style = l.styles.HoveredButton
 		}
 		views[index] = style.Render(button.Label)
 		widths[index] = lipgloss.Width(views[index])

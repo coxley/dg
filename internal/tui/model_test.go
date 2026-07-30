@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"cmp"
+	"fmt"
 	"image/color"
 	"math/bits"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +15,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/internal/settings"
@@ -23,6 +27,7 @@ import (
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 var benchmarkView tea.View
@@ -59,7 +64,27 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
 
-func TestModelNavigatesAndCyclesHits(t *testing.T) {
+func TestNewStartsWithoutSelectionOrFocusHighlight(t *testing.T) {
+	t.Parallel()
+
+	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	geo, err := layout.New(layout.WithHistory(history))
+	require.NoError(t, err)
+	nodeID, err := geo.NewNode("node")
+	require.NoError(t, err)
+	node := layout.Hit{ID: nodeID, Kind: layout.HitNode}
+	require.True(t, geo.Selection().Toggle(node))
+
+	model, err := New(geo, testModelSettings())
+
+	require.NoError(t, err)
+	require.True(t, model.geo.Selection().Empty())
+	require.Empty(t, model.hits)
+	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].Rect.Min))
+}
+
+func TestModelNavigatesFromHit(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -71,34 +96,18 @@ func TestModelNavigatesAndCyclesHits(t *testing.T) {
 	before := model.cursor
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before.Add(1, 0), model.cursor)
-
-	model.cursor = model.geo.Ports[rightPort].Anchor
-	model.refreshHits()
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{
-		Code: tea.KeyTab,
-		Mod:  tea.ModCtrl,
-	}))
-	require.Equal(t, 1, model.active)
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{
-		Code: tea.KeyTab,
-		Mod:  tea.ModCtrl | tea.ModShift,
-	}))
-	require.Zero(t, model.active)
 }
 
-func TestModelMoveIsOneUndoInteraction(t *testing.T) {
+func TestModelArrowMoveIsUndoable(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
 	before := model.geo.Nodes[nodeID].Rect.Min
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	beforeCursor := model.cursor
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-	require.Equal(t, modeMove, model.interaction.mode())
-	require.Equal(t, transactionKeyboardMove, model.interaction.transaction.owner)
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
 	updateModel(t, model, keyPress(tea.KeyDown, ""))
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
 	after := model.geo.Nodes[nodeID].Rect.Min
 	require.Equal(t, before.Add(2, 1), after)
 	require.Equal(t, beforeCursor.Add(2, 1), model.cursor)
@@ -106,7 +115,7 @@ func TestModelMoveIsOneUndoInteraction(t *testing.T) {
 	require.NotEmpty(t, model.canvas.Frame(canvasview.BaseFrame).Text)
 
 	updateModel(t, model, keyPress('u', "u"))
-	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, before.Add(2, 0), model.geo.Nodes[nodeID].Rect.Min)
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
 	require.Equal(t, after, model.geo.Nodes[nodeID].Rect.Min)
 }
@@ -640,25 +649,6 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	require.True(t, model.helpInspector.visible)
 }
 
-func TestEnhancedQuestionMarkOpensAndClosesHelp(t *testing.T) {
-	t.Parallel()
-
-	model, _ := newTestModel(t)
-	question := tea.KeyPressMsg(tea.Key{
-		Code:        '/',
-		ShiftedCode: '?',
-		Text:        "?",
-		Mod:         tea.ModShift,
-	})
-
-	updateModel(t, model, question)
-	require.True(t, model.helpInspector.visible)
-	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
-	updateModel(t, model, question)
-	require.False(t, model.helpInspector.visible)
-	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
-}
-
 func TestPreferenceModalFitsShortTerminals(t *testing.T) {
 	t.Parallel()
 
@@ -689,6 +679,31 @@ func TestPreferencesCloseWithQWithoutHidingHelp(t *testing.T) {
 	updateModel(t, model, keyPress('q', "q"))
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.True(t, model.helpInspector.visible)
+}
+
+func TestPreferencesPrimaryShortcutClosesAndRestoresPreview(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.preferences.baseline.KeyProfile = chrome.ProfileStandard
+	model.bindings.SetProfile(chrome.ProfileStandard)
+	preferencesKey := tea.KeyPressMsg(tea.Key{
+		Code: 'p',
+		Text: "p",
+		Mod:  tea.ModCtrl,
+	})
+	before := model.geo.Router()
+
+	updateModel(t, model, preferencesKey)
+	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
+	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
+	require.NotEqual(t, before, model.geo.Router())
+
+	updateModel(t, model, preferencesKey)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
+	require.Equal(t, before, model.geo.Router())
+	require.False(t, model.preferenceEdit)
+	require.False(t, model.interaction.transaction.open())
 }
 
 func TestDialogControllerOwnsDistinctModalSurfacesAndScopes(t *testing.T) {
@@ -841,6 +856,822 @@ func TestHelpInspectorShowsEffectiveModalBindings(t *testing.T) {
 	require.Contains(t, view, "HELP · preferences")
 	require.Contains(t, view, "cancel preferences")
 	require.Contains(t, view, "toggle help")
+}
+
+func TestCanvasHelpShowsOnlyAvailableCommands(t *testing.T) {
+	t.Parallel()
+
+	hasCommand := func(bindings []chrome.EffectiveBinding, command chrome.CommandID) bool {
+		return slices.ContainsFunc(bindings, func(binding chrome.EffectiveBinding) bool {
+			return binding.Command == command
+		})
+	}
+
+	model, _ := newTestModel(t)
+	base := model.contextualHelpBindings()
+	for _, command := range []chrome.CommandID{
+		commandMoveUp,
+		commandActivate,
+		commandArrowEnd,
+		commandLayerForward,
+		commandUndo,
+		commandRedo,
+	} {
+		require.False(t, hasCommand(base, command), command)
+	}
+	require.True(t, hasCommand(base, commandFocusNext))
+	require.True(t, hasCommand(base, commandNewNode))
+	_, hasMoveBinding := model.bindings.Resolve(
+		"m",
+		[]chrome.ScopeID{scopeCanvas},
+		false,
+	)
+	require.False(t, hasMoveBinding)
+
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	selected := model.contextualHelpBindings()
+	require.True(t, hasCommand(selected, commandMoveUp))
+	require.False(t, hasCommand(selected, commandLayerForward))
+	require.True(t, hasCommand(selected, commandNewNode))
+	require.False(t, hasCommand(selected, commandArrowEnd))
+
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	require.True(t, hasCommand(model.contextualHelpBindings(), commandUndo))
+	updateModel(t, model, keyPress('u', "u"))
+	require.True(t, hasCommand(model.contextualHelpBindings(), commandRedo))
+
+	edgeModel, left, right := newTwoNodeModel(t)
+	edgeID := edgeModel.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, edgeModel.rebuild())
+	edgeModel.selectOnly(layout.Hit{ID: edgeID, Kind: layout.HitEdge})
+	edgeBindings := edgeModel.contextualHelpBindings()
+	require.True(t, hasCommand(edgeBindings, commandArrowEnd))
+	require.True(t, hasCommand(edgeBindings, commandArrowStart))
+	require.False(t, hasCommand(edgeBindings, commandMoveUp))
+}
+
+func TestLabelHelpOnlyShowsExecutableChords(t *testing.T) {
+	t.Parallel()
+
+	model := newHelpScenarioModel(t, helpLabelEditing, 1, 1)
+	hasBinding := func(chord chrome.Chord, command chrome.CommandID) bool {
+		return slices.ContainsFunc(
+			model.contextualHelpBindings(),
+			func(binding chrome.EffectiveBinding) bool {
+				return binding.Chord == chord && binding.Command == command
+			},
+		)
+	}
+
+	require.True(t, hasBinding("esc", commandCancel))
+	require.False(t, hasBinding("ctrl+enter", commandCancel))
+	require.False(t, hasBinding("?", commandHelp))
+	before := string(model.editBuffer)
+	updateModel(t, model, keyPress('?', "?"))
+	require.Equal(t, before+"?", string(model.editBuffer))
+
+	updateModel(t, model, tea.KeyboardEnhancementsMsg{
+		Flags: ansi.KittyDisambiguateEscapeCodes,
+	})
+	require.True(t, hasBinding("ctrl+enter", commandCancel))
+	require.False(t, hasBinding("?", commandHelp))
+}
+
+func TestCanvasHelpCommandsArePerformable(t *testing.T) {
+	t.Parallel()
+
+	violations := make(map[string]struct{})
+	for scenario := helpExistingDiagramBlankCell; scenario < helpScenarioCount; scenario++ {
+		for _, enhanced := range []bool{false, true} {
+			collectHelpCommandViolations(t, violations, scenario, 1, 1, enhanced)
+		}
+	}
+	rapid.Check(t, func(rt *rapid.T) {
+		scenario := helpScenario(
+			rapid.IntRange(0, int(helpScenarioCount)-1).Draw(rt, "scenario"),
+		)
+		dx := rapid.IntRange(1, 4).Draw(rt, "dx")
+		dy := rapid.IntRange(1, 3).Draw(rt, "dy")
+		enhanced := rapid.Bool().Draw(rt, "keyboard enhancements")
+		collectHelpCommandViolations(t, violations, scenario, dx, dy, enhanced)
+	})
+	if len(violations) == 0 {
+		return
+	}
+	list := make([]string, 0, len(violations))
+	for violation := range violations {
+		list = append(list, violation)
+	}
+	slices.Sort(list)
+	t.Fatal(strings.Join(list, "\n"))
+}
+
+func collectHelpCommandViolations(
+	t testing.TB,
+	violations map[string]struct{},
+	scenario helpScenario,
+	dx, dy int,
+	enhanced bool,
+) {
+	t.Helper()
+
+	model := newHelpScenarioModel(t, scenario, dx, dy)
+	setHelpKeyboardEnhancements(t, model, enhanced)
+	for _, binding := range model.contextualHelpBindings() {
+		if !enhanced && helpChordRequiresDisambiguation(binding.Chord) {
+			violations[fmt.Sprintf(
+				"%s: %s advertises unsupported %s chord",
+				scenario,
+				binding.Command,
+				binding.Chord,
+			)] = struct{}{}
+			continue
+		}
+		candidate := newHelpScenarioModel(t, scenario, dx, dy)
+		setHelpKeyboardEnhancements(t, candidate, enhanced)
+		candidate.status = ""
+		candidate.statusError = ""
+		before := snapshotHelpCommand(candidate)
+		key := helpKeyPress(t, binding.Chord)
+		resolved, ok := candidate.bindings.ResolveKey(
+			key,
+			candidate.activeBindingScopes(),
+			candidate.textEntryActive(),
+		)
+		if !ok || resolved.Command != binding.Command {
+			violations[fmt.Sprintf(
+				"%s: %s resolves %s as %s",
+				scenario,
+				binding.Command,
+				binding.Chord,
+				resolved.Command,
+			)] = struct{}{}
+			continue
+		}
+		_, command := candidate.Update(key)
+
+		switch {
+		case candidate.statusError != "":
+			violations[fmt.Sprintf(
+				"%s: %s failed: %s",
+				scenario,
+				binding.Command,
+				candidate.statusError,
+			)] = struct{}{}
+		case !helpCommandPerformed(
+			candidate,
+			binding.Command,
+			command,
+			before,
+		):
+			violations[fmt.Sprintf(
+				"%s: %s had no effect",
+				scenario,
+				binding.Command,
+			)] = struct{}{}
+		}
+	}
+}
+
+func setHelpKeyboardEnhancements(t testing.TB, model *Model, enhanced bool) {
+	t.Helper()
+
+	if !enhanced {
+		return
+	}
+	got, command := model.Update(tea.KeyboardEnhancementsMsg{
+		Flags: ansi.KittyDisambiguateEscapeCodes,
+	})
+	require.Same(t, model, got)
+	require.Nil(t, command)
+}
+
+func helpChordRequiresDisambiguation(chord chrome.Chord) bool {
+	value := string(chord)
+	return strings.HasPrefix(value, "super+") ||
+		value == "ctrl+enter" ||
+		strings.Contains(value, "ctrl+shift+")
+}
+
+func helpKeyPress(t testing.TB, chord chrome.Chord) tea.KeyPressMsg {
+	t.Helper()
+
+	modifiers, name := testChordParts(t, chord)
+	special := map[string]rune{
+		"backspace": tea.KeyBackspace,
+		"delete":    tea.KeyDelete,
+		"down":      tea.KeyDown,
+		"enter":     tea.KeyEnter,
+		"esc":       tea.KeyEscape,
+		"left":      tea.KeyLeft,
+		"right":     tea.KeyRight,
+		tabChord:    tea.KeyTab,
+		"up":        tea.KeyUp,
+	}
+	if code, ok := special[name]; ok {
+		return tea.KeyPressMsg(tea.Key{Code: code, Mod: modifiers})
+	}
+	runes := []rune(name)
+	require.Len(t, runes, 1, "unsupported help chord %q", chord)
+	text := name
+	if modifiers.Contains(tea.ModCtrl) {
+		text = ""
+	}
+	return tea.KeyPressMsg(tea.Key{
+		Code: runes[0],
+		Text: text,
+		Mod:  modifiers,
+	})
+}
+
+func helpCommandPerformed(
+	model *Model,
+	commandID chrome.CommandID,
+	command tea.Cmd,
+	before helpCommandSnapshot,
+) bool {
+	after := snapshotHelpCommand(model)
+	switch commandID {
+	case commandActivate,
+		commandCancel,
+		commandFocusNext,
+		commandFocusPrevious,
+		commandLine,
+		commandMoveDown,
+		commandMoveLeft,
+		commandMoveRight,
+		commandMoveUp,
+		commandNewNode,
+		commandRectangle:
+		return helpMovementCommandPerformed(model, commandID, before, after)
+	case commandArrowEnd,
+		commandArrowStart,
+		commandBorder,
+		commandDashed,
+		commandLayerBack,
+		commandLayerBackward,
+		commandLayerForward,
+		commandLayerFront,
+		commandTextHorizontal,
+		commandTextVertical:
+		return helpAppearanceCommandPerformed(commandID, before, after)
+	case commandCopy,
+		commandDelete,
+		commandDuplicate,
+		commandEditLabel,
+		commandExpand,
+		commandRedo,
+		commandUndo:
+		return helpEditCommandPerformed(commandID, command, before, after)
+	case commandHelp,
+		commandPreferences,
+		commandQuit,
+		commandSave,
+		commandSidebar:
+		return helpChromeCommandPerformed(commandID, command, before, after)
+	default:
+		return false
+	}
+}
+
+func helpMovementCommandPerformed(
+	model *Model,
+	commandID chrome.CommandID,
+	before, after helpCommandSnapshot,
+) bool {
+	switch commandID {
+	case commandActivate:
+		return after.edgeCount == before.edgeCount+1 &&
+			after.tool == toolNavigate &&
+			after.session.kind == sessionNone
+	case commandCancel:
+		return model.interaction.idle() &&
+			after.transaction == transactionNone
+	case commandFocusNext:
+		return helpFocusChanged(before, after, 1)
+	case commandFocusPrevious:
+		return helpFocusChanged(before, after, -1)
+	case commandLine:
+		return after.tool == toolConnect
+	case commandMoveDown:
+		return helpMoved(before, after, 0, 1)
+	case commandMoveLeft:
+		return helpMoved(before, after, -1, 0)
+	case commandMoveRight:
+		return helpMoved(before, after, 1, 0)
+	case commandMoveUp:
+		return helpMoved(before, after, 0, -1)
+	case commandNewNode:
+		return after.nodeCount == before.nodeCount+1 &&
+			after.session.kind == sessionLabelEdit
+	case commandRectangle:
+		return after.tool == toolRectangle
+	default:
+		return false
+	}
+}
+
+func helpAppearanceCommandPerformed(
+	commandID chrome.CommandID,
+	before, after helpCommandSnapshot,
+) bool {
+	switch commandID {
+	case commandArrowEnd:
+		return helpEdgeStyleChanged(before, after, func(style *layout.EdgeStyle) {
+			style.PortBArrow = style.PortBArrow.Next()
+		})
+	case commandArrowStart:
+		return helpEdgeStyleChanged(before, after, func(style *layout.EdgeStyle) {
+			style.PortAArrow = style.PortAArrow.Next()
+		})
+	case commandBorder:
+		return helpNodeStyleChanged(before, after, func(style *layout.NodeStyle) {
+			style.Border = style.Border.Next()
+		})
+	case commandDashed:
+		return helpStrokeChanged(before, after)
+	case commandLayerBack:
+		return helpLayerChanged(before, after, true, true)
+	case commandLayerBackward:
+		return helpLayerChanged(before, after, false, true)
+	case commandLayerForward:
+		return helpLayerChanged(before, after, false, false)
+	case commandLayerFront:
+		return helpLayerChanged(before, after, true, false)
+	case commandTextHorizontal:
+		return helpNodeStyleChanged(before, after, func(style *layout.NodeStyle) {
+			style.Horizontal = style.Horizontal.Next()
+		})
+	case commandTextVertical:
+		return helpNodeStyleChanged(before, after, func(style *layout.NodeStyle) {
+			style.Vertical = style.Vertical.Next()
+		})
+	default:
+		return false
+	}
+}
+
+func helpEditCommandPerformed(
+	commandID chrome.CommandID,
+	command tea.Cmd,
+	before, after helpCommandSnapshot,
+) bool {
+	switch commandID {
+	case commandCopy:
+		return command != nil
+	case commandDelete:
+		return after.nodeCount+after.edgeCount < before.nodeCount+before.edgeCount
+	case commandDuplicate:
+		return after.nodeCount > before.nodeCount
+	case commandEditLabel:
+		return after.session.kind == sessionLabelEdit &&
+			after.target.Kind == layout.HitNode
+	case commandExpand:
+		return len(after.selection) > len(before.selection)
+	case commandRedo:
+		return !reflect.DeepEqual(before.document, after.document) && after.canUndo
+	case commandUndo:
+		return !reflect.DeepEqual(before.document, after.document) && after.canRedo
+	default:
+		return false
+	}
+}
+
+func helpChromeCommandPerformed(
+	commandID chrome.CommandID,
+	command tea.Cmd,
+	before, after helpCommandSnapshot,
+) bool {
+	switch commandID {
+	case commandHelp:
+		return after.helpVisible != before.helpVisible
+	case commandPreferences:
+		return after.dialog == surfacePreferences && after.preferenceEdit
+	case commandQuit:
+		if command == nil {
+			return false
+		}
+		_, ok := command().(tea.QuitMsg)
+		return ok
+	case commandSave:
+		return after.dialog == surfaceSave
+	case commandSidebar:
+		return after.sidebarOpen != before.sidebarOpen ||
+			after.sidebarFocused != before.sidebarFocused
+	default:
+		return false
+	}
+}
+
+func helpFocusChanged(before, after helpCommandSnapshot, delta int) bool {
+	nodes := make([]layout.Hit, 0, len(before.nodeOrigins))
+	for nodeID := range before.nodeOrigins {
+		nodes = append(nodes, layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	}
+	slices.SortFunc(nodes, func(a, b layout.Hit) int {
+		pa, pb := before.nodeOrigins[a.ID], before.nodeOrigins[b.ID]
+		if order := cmp.Compare(pa.Y, pb.Y); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(pa.X, pb.X); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	index := -1
+	if slices.Contains(before.selection, before.target) {
+		index = slices.Index(nodes, before.target)
+	}
+	if index < 0 && delta < 0 {
+		index = 0
+	}
+	want := nodes[(index+delta+len(nodes))%len(nodes)]
+	return after.target == want && slices.Equal(after.selection, []layout.Hit{want})
+}
+
+func helpMoved(before, after helpCommandSnapshot, dx, dy int64) bool {
+	movedNode := false
+	for _, hit := range before.selection {
+		if hit.Kind != layout.HitNode {
+			continue
+		}
+		want, ok := movePoint64(before.nodeOrigins[hit.ID], dx, dy)
+		if !ok || after.nodeOrigins[hit.ID] != want {
+			return false
+		}
+		movedNode = true
+	}
+	if movedNode {
+		return true
+	}
+	want, ok := movePoint64(before.cursor, dx, dy)
+	return ok && after.cursor == want
+}
+
+func helpNodeStyleChanged(
+	before, after helpCommandSnapshot,
+	change func(*layout.NodeStyle),
+) bool {
+	for nodeID, style := range before.nodeStyles {
+		want := style
+		change(&want)
+		if after.nodeStyles[nodeID] == want {
+			return true
+		}
+	}
+	return false
+}
+
+func helpEdgeStyleChanged(
+	before, after helpCommandSnapshot,
+	change func(*layout.EdgeStyle),
+) bool {
+	for edgeID, style := range before.edgeStyles {
+		want := style
+		change(&want)
+		if after.edgeStyles[edgeID] == want {
+			return true
+		}
+	}
+	return false
+}
+
+func helpStrokeChanged(before, after helpCommandSnapshot) bool {
+	return helpNodeStyleChanged(before, after, func(style *layout.NodeStyle) {
+		style.Stroke = style.Stroke.Toggle()
+	}) || helpEdgeStyleChanged(before, after, func(style *layout.EdgeStyle) {
+		style.Stroke = style.Stroke.Toggle()
+	})
+}
+
+func helpLayerChanged(
+	before, after helpCommandSnapshot,
+	all, backward bool,
+) bool {
+	var target layout.Hit
+	for _, hit := range before.order {
+		if slices.Contains(before.selection, hit) {
+			target = hit
+		}
+	}
+	beforeIndex := slices.Index(before.order, target)
+	afterIndex := slices.Index(after.order, target)
+	switch {
+	case all && backward:
+		return afterIndex == 0
+	case all:
+		return afterIndex == len(after.order)-1
+	case backward:
+		return afterIndex == beforeIndex-1
+	default:
+		return afterIndex == beforeIndex+1
+	}
+}
+
+type helpScenario uint8
+
+const (
+	helpExistingDiagramBlankCell helpScenario = iota
+	helpNodeSelected
+	helpSingleNodeSelected
+	helpIsolatedNodeSelected
+	helpEdgeSelected
+	helpUndoAvailable
+	helpRedoAvailable
+	helpAreaSelection
+	helpRectangleTool
+	helpRectangleDrawing
+	helpConnectionTool
+	helpConnectionSource
+	helpConnectionDestination
+	helpNodeMoving
+	helpNodeResizing
+	helpNodeDuplicating
+	helpLabelEditing
+	helpScenarioCount
+)
+
+func (s helpScenario) String() string {
+	switch s {
+	case helpExistingDiagramBlankCell:
+		return "existing diagram, blank cursor cell"
+	case helpNodeSelected:
+		return "node selected"
+	case helpSingleNodeSelected:
+		return "single node selected"
+	case helpIsolatedNodeSelected:
+		return "isolated node selected"
+	case helpEdgeSelected:
+		return "edge selected"
+	case helpUndoAvailable:
+		return "undo available"
+	case helpRedoAvailable:
+		return "redo available"
+	case helpAreaSelection:
+		return "area selection"
+	case helpRectangleTool:
+		return "rectangle tool"
+	case helpRectangleDrawing:
+		return "rectangle drawing"
+	case helpConnectionTool:
+		return "connection tool"
+	case helpConnectionSource:
+		return "connection source"
+	case helpConnectionDestination:
+		return "connection destination"
+	case helpNodeMoving:
+		return "node moving"
+	case helpNodeResizing:
+		return "node resizing"
+	case helpNodeDuplicating:
+		return "node duplicating"
+	case helpLabelEditing:
+		return "label editing"
+	default:
+		return fmt.Sprintf("help scenario %d", s)
+	}
+}
+
+func newHelpScenarioModel(
+	t testing.TB,
+	scenario helpScenario,
+	dx, dy int,
+) *Model {
+	t.Helper()
+
+	if scenario == helpSingleNodeSelected {
+		model, _ := newTestModel(t)
+		updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+		updateModel(t, model, keyPress(tea.KeyTab, ""))
+		return model
+	}
+
+	model, left, _, isolated, edgeID := newComponentModel(t)
+	for nodeID := range model.geo.Nodes {
+		if !model.geo.NodeExists(uint32(nodeID)) {
+			continue
+		}
+		node := &model.geo.Nodes[nodeID]
+		require.NoError(t, model.geo.PlaceNode(
+			uint32(nodeID),
+			node.Rect.Min.Add(0, 8),
+		))
+	}
+	require.NoError(t, model.rebuild())
+	model.history.Clear()
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	blank := layout.NewPoint(70, 20)
+	focusNode := func() {
+		updateModel(t, model, keyPress(tea.KeyTab, ""))
+	}
+	beginConnection := func() {
+		updateModel(t, model, keyPress('l', "l"))
+		source := portExiting(t, model, left, -1)
+		updateModel(t, model, tea.MouseClickMsg{
+			X:      int(model.geo.Ports[source].Anchor.X),
+			Y:      int(model.geo.Ports[source].Anchor.Y),
+			Button: tea.MouseLeft,
+		})
+		updateModel(t, model, tea.MouseReleaseMsg{
+			X:      int(blank.X),
+			Y:      int(blank.Y),
+			Button: tea.MouseLeft,
+		})
+	}
+
+	switch scenario {
+	case helpExistingDiagramBlankCell:
+	case helpNodeSelected:
+		focusNode()
+	case helpIsolatedNodeSelected:
+		hit := layout.Hit{ID: isolated, Kind: layout.HitNode}
+		selectHit(t, model, hit)
+		model.selectOnly(hit)
+	case helpEdgeSelected:
+		hit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
+		selectHit(t, model, hit)
+		model.selectOnly(hit)
+	case helpUndoAvailable:
+		focusNode()
+		for range dx {
+			updateModel(t, model, keyPress(tea.KeyRight, ""))
+		}
+	case helpRedoAvailable:
+		focusNode()
+		updateModel(t, model, keyPress(tea.KeyRight, ""))
+		updateModel(t, model, keyPress('u', "u"))
+	case helpAreaSelection:
+		updateModel(t, model, tea.MouseClickMsg{
+			X: int(blank.X), Y: int(blank.Y), Button: tea.MouseLeft,
+		})
+		updateModel(t, model, tea.MouseMotionMsg{
+			X: int(blank.X) + dx, Y: int(blank.Y) + dy, Button: tea.MouseLeft,
+		})
+	case helpRectangleTool:
+		updateModel(t, model, keyPress('r', "r"))
+	case helpRectangleDrawing:
+		updateModel(t, model, keyPress('r', "r"))
+		updateModel(t, model, tea.MouseClickMsg{
+			X: int(blank.X), Y: int(blank.Y), Button: tea.MouseLeft,
+		})
+		updateModel(t, model, tea.MouseMotionMsg{
+			X: int(blank.X) + dx, Y: int(blank.Y) + dy, Button: tea.MouseLeft,
+		})
+	case helpConnectionTool:
+		updateModel(t, model, keyPress('l', "l"))
+	case helpConnectionSource:
+		beginConnection()
+	case helpConnectionDestination:
+		beginConnection()
+		destination := portExiting(t, model, isolated, 1)
+		selectHit(t, model, layout.Hit{ID: destination, Kind: layout.HitPort})
+		model.refreshConnectionPreview()
+	case helpNodeMoving:
+		focusNode()
+		point := model.geo.Nodes[model.target.ID].LabelPoint
+		updateModel(t, model, tea.MouseClickMsg{
+			X: int(point.X), Y: int(point.Y), Button: tea.MouseLeft,
+		})
+		updateModel(t, model, tea.MouseMotionMsg{
+			X: int(point.X) + dx, Y: int(point.Y) + dy, Button: tea.MouseLeft,
+		})
+	case helpNodeResizing:
+		focusNode()
+		point := resizeCornerPoint(
+			model.geo.Nodes[model.target.ID].Rect,
+			resizeEast|resizeSouth,
+		)
+		updateModel(t, model, tea.MouseClickMsg{
+			X: int(point.X), Y: int(point.Y), Button: tea.MouseRight,
+		})
+		updateModel(t, model, tea.MouseMotionMsg{
+			X: int(point.X) + dx, Y: int(point.Y) + dy, Button: tea.MouseRight,
+		})
+	case helpNodeDuplicating:
+		focusNode()
+		point := model.geo.Nodes[model.target.ID].LabelPoint
+		updateModel(t, model, tea.MouseClickMsg{
+			X: int(point.X), Y: int(point.Y), Button: tea.MouseLeft, Mod: tea.ModAlt,
+		})
+		updateModel(t, model, tea.MouseMotionMsg{
+			X: int(point.X) + dx, Y: int(point.Y) + dy,
+			Button: tea.MouseLeft, Mod: tea.ModAlt,
+		})
+	case helpLabelEditing:
+		focusNode()
+		updateModel(t, model, keyPress('e', "e"))
+	default:
+		require.FailNow(t, "unknown help scenario", "%d", scenario)
+	}
+	return model
+}
+
+type helpCommandSnapshot struct {
+	document       document.Document
+	selection      []layout.Hit
+	order          []layout.Hit
+	nodeOrigins    map[uint32]layout.Point
+	nodeStyles     map[uint32]layout.NodeStyle
+	edgeStyles     map[uint32]layout.EdgeStyle
+	nodeCount      int
+	edgeCount      int
+	cursor         layout.Point
+	viewport       layout.Point
+	target         layout.Hit
+	active         int
+	hits           []layout.Hit
+	tool           activeTool
+	session        interactionSession
+	gesture        pointerGesture
+	transaction    transactionOwner
+	canUndo        bool
+	canRedo        bool
+	dialog         chrome.SurfaceID
+	helpVisible    bool
+	sidebarOpen    bool
+	sidebarFocused bool
+	preferenceEdit bool
+}
+
+func snapshotHelpCommand(model *Model) helpCommandSnapshot {
+	selection := make([]layout.Hit, 0)
+	order := slices.Collect(model.geo.DrawOrder())
+	nodeOrigins := make(map[uint32]layout.Point)
+	nodeStyles := make(map[uint32]layout.NodeStyle)
+	edgeStyles := make(map[uint32]layout.EdgeStyle)
+	nodeCount, edgeCount := 0, 0
+	for hit := range model.geo.DrawOrder() {
+		if model.geo.Selection().Contains(hit) {
+			selection = append(selection, hit)
+		}
+		switch hit.Kind {
+		case layout.HitNode:
+			nodeCount++
+			nodeOrigins[hit.ID] = model.geo.Nodes[hit.ID].Rect.Min
+			nodeStyles[hit.ID], _ = model.geo.NodeStyle(hit.ID)
+		case layout.HitEdge:
+			edgeCount++
+			edgeStyles[hit.ID], _ = model.geo.EdgeStyle(hit.ID)
+		case layout.HitPort:
+		}
+	}
+	return helpCommandSnapshot{
+		document:       document.FromLayout(model.geo),
+		selection:      selection,
+		order:          order,
+		nodeOrigins:    nodeOrigins,
+		nodeStyles:     nodeStyles,
+		edgeStyles:     edgeStyles,
+		nodeCount:      nodeCount,
+		edgeCount:      edgeCount,
+		cursor:         model.cursor,
+		viewport:       model.viewport,
+		target:         model.target,
+		active:         model.active,
+		hits:           slices.Clone(model.hits),
+		tool:           model.interaction.tool,
+		session:        model.interaction.session,
+		gesture:        model.interaction.gesture,
+		transaction:    model.interaction.transaction.owner,
+		canUndo:        model.history != nil && model.history.CanUndo(),
+		canRedo:        model.history != nil && model.history.CanRedo(),
+		dialog:         model.dialogs.ActiveID(),
+		helpVisible:    model.helpInspector.visible,
+		sidebarOpen:    model.sidebar.open,
+		sidebarFocused: model.sidebar.focused,
+		preferenceEdit: model.preferenceEdit,
+	}
+}
+
+func TestHelpScrollbarSupportsPointerDrag(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	model.openHelp()
+	model.syncWorkspace()
+	help, ok := model.surfacePlan(surfaceHelp)
+	require.True(t, ok)
+	plan := model.helpInspector.viewport.Plan()
+	require.NotEmpty(t, plan.VerticalThumb)
+
+	x := help.Rect.X + plan.VerticalThumb.X
+	y := help.Rect.Y + plan.VerticalThumb.Y
+	updateModel(t, model, tea.MouseClickMsg{
+		X: x, Y: y, Button: tea.MouseLeft,
+	})
+	require.Equal(t, surfaceHelp, model.workspace.CaptureID())
+	updateModel(t, model, tea.MouseMotionMsg{
+		X:      x,
+		Y:      help.Rect.Y + plan.VerticalBar.Bottom() - 1,
+		Button: tea.MouseLeft,
+	})
+	require.Positive(t, model.helpInspector.viewport.Plan().Offset.Y)
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X: x, Y: y, Button: tea.MouseLeft,
+	})
+	require.Empty(t, model.workspace.CaptureID())
 }
 
 func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
@@ -1306,16 +2137,18 @@ func TestNoticeExpiresOrDismissesOnKey(t *testing.T) {
 	})
 }
 
-func TestStatusErrorsRenderRed(t *testing.T) {
+func TestStatusUsesRootThemeVariants(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 12})
+	model.theme.Status.Error = lipgloss.NewStyle().Underline(true)
 	model.setError("broken")
-	require.Contains(t, model.View().Content, model.theme.Canvas.Error.Render("broken"))
+	require.Contains(t, model.View().Content, model.theme.Status.Error.Render("b"))
 
+	model.theme.Status.Normal = lipgloss.NewStyle().Bold(true)
 	model.status = "ready"
-	require.NotContains(t, model.View().Content, model.theme.Canvas.Error.Render("ready"))
+	require.Contains(t, model.View().Content, model.theme.Status.Normal.Render("ready"))
 }
 
 func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
@@ -1362,24 +2195,11 @@ func TestModelReordersLayersWithUndo(t *testing.T) {
 	)
 }
 
-func TestModelBlurCommitsActiveMove(t *testing.T) {
-	t.Parallel()
-
-	model, nodeID := newTestModel(t)
-	before := model.geo.Nodes[nodeID].Rect.Min
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
-	updateModel(t, model, keyPress(tea.KeyRight, ""))
-	updateModel(t, model, tea.BlurMsg{})
-	require.Equal(t, modeNavigate, model.interaction.mode())
-
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
-	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
-}
-
 func TestModelBlurCommitsLabelEdit(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	updateModel(t, model, keyPress('e', "e"))
 	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
 	updateModel(t, model, tea.BlurMsg{})
@@ -1394,6 +2214,7 @@ func TestModelEditsLabel(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	updateModel(t, model, keyPress('e', "e"))
 	require.Equal(t, modeEditLabel, model.interaction.mode())
 	require.Equal(t, transactionLabelEdit, model.interaction.transaction.owner)
@@ -1418,6 +2239,7 @@ func TestModelEscapeCommitsLabelEdit(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	updateModel(t, model, keyPress('e', "e"))
 	updateModel(t, model, keyPress(tea.KeyLeft, ""))
 	updateModel(t, model, keyPress('X', "X"))
@@ -1995,6 +2817,7 @@ func TestModelDeletesNode(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
 
 	require.False(t, model.geo.NodeExists(nodeID))
@@ -2013,7 +2836,8 @@ func TestModelViewTracksWindowWithoutCursor(t *testing.T) {
 	require.Nil(t, view.Cursor)
 	require.True(t, view.AltScreen)
 	require.Equal(t, tea.MouseModeAllMotion, view.MouseMode)
-	require.Contains(t, view.Content, model.theme.Canvas.Selection.Render("┌──"))
+	require.NotContains(t, view.Content, model.theme.Canvas.Selection.Render("┌──"))
+	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].Rect.Min))
 	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].LabelPoint))
 }
 
@@ -2064,7 +2888,7 @@ func TestToolbarHighlightsHoveredTool(t *testing.T) {
 	require.Contains(
 		t,
 		model.View().Content,
-		model.theme.Nav.Hover.Render(" Rectangle "),
+		model.theme.Navigation.Hover.Render(" Rectangle "),
 	)
 }
 
@@ -2100,7 +2924,8 @@ func TestCanvasHostOffsetsRenderingPointerAndCursor(t *testing.T) {
 func TestKeyboardEnhancementsAdvertiseMacVocabulary(t *testing.T) {
 	t.Parallel()
 
-	model, _ := newTestModel(t)
+	model, nodeID := newTestModel(t)
+	model.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 	model.preferences.baseline.KeyProfile = chrome.ProfileMac
 	model.bindings.SetProfile(chrome.ProfileMac)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
@@ -2152,6 +2977,7 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 12, Height: 12})
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	updateModel(t, model, keyPress('e', "e"))
 	view := model.View()
 
@@ -2373,6 +3199,42 @@ func TestModelControlAExpandsComponentsThenEverything(t *testing.T) {
 	require.True(t, selectionContains(model, layout.HitNode, isolated))
 }
 
+func TestModelMovesAndExpandsSingleControlSelectedNode(t *testing.T) {
+	t.Parallel()
+
+	model, left, connected, isolated, edgeID := newComponentModel(t)
+	for nodeID := range model.geo.Nodes {
+		if model.geo.NodeExists(uint32(nodeID)) {
+			node := &model.geo.Nodes[nodeID]
+			require.NoError(t, model.geo.PlaceNode(
+				uint32(nodeID),
+				node.Rect.Min.Add(0, 8),
+			))
+		}
+	}
+	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	point := model.geo.Nodes[isolated].LabelPoint
+	host := model.workspace.Geometry().Canvas
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      host.X + int(point.X-model.viewport.X),
+		Y:      host.Y + int(point.Y-model.viewport.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+	})
+	require.True(t, selectionContains(model, layout.HitNode, isolated))
+
+	origin := model.geo.Nodes[isolated].Rect.Min
+	updateModel(t, model, keyPress(tea.KeyRight, ""))
+	require.Equal(t, origin.Add(1, 0), model.geo.Nodes[isolated].Rect.Min)
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	require.True(t, selectionContains(model, layout.HitNode, left))
+	require.True(t, selectionContains(model, layout.HitNode, connected))
+	require.True(t, selectionContains(model, layout.HitNode, isolated))
+	require.True(t, selectionContains(model, layout.HitEdge, edgeID))
+}
+
 func TestModelControlClickTogglesObjects(t *testing.T) {
 	t.Parallel()
 
@@ -2415,9 +3277,7 @@ func TestModelMovesAndDeletesSelectionAsOneInteraction(t *testing.T) {
 	model.selectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
 
-	updateModel(t, model, keyPress('m', "m"))
 	updateModel(t, model, keyPress(tea.KeyRight, ""))
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
 	require.Equal(t, leftOrigin.Add(1, 0), model.geo.Nodes[left].Rect.Min)
 	require.Equal(t, connectedOrigin.Add(1, 0), model.geo.Nodes[connected].Rect.Min)
 	require.Equal(t, isolatedOrigin, model.geo.Nodes[isolated].Rect.Min)
@@ -2738,7 +3598,7 @@ func TestAppendViewportRowClipsWideGrapheme(t *testing.T) {
 func BenchmarkModelMoveAndView(b *testing.B) {
 	model, _ := newTestModel(b)
 	updateModel(b, model, tea.WindowSizeMsg{Width: 80, Height: 24})
-	updateModel(b, model, keyPress(tea.KeyEnter, ""))
+	updateModel(b, model, keyPress(tea.KeyTab, ""))
 	keys := [...]tea.KeyPressMsg{
 		keyPress(tea.KeyRight, ""),
 		keyPress(tea.KeyLeft, ""),

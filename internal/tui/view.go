@@ -50,6 +50,12 @@ func (m *Model) View() tea.View {
 		workspace.Footer.Height == 1
 	if workspace.Footer.Height >= 1 {
 		m.statusText = m.appendStatusText(m.statusText[:0])
+		statusStyle := m.theme.Status.Normal
+		if m.status != "" && m.status == m.statusError {
+			statusStyle = m.theme.Status.Error
+		}
+		styled := statusStyle.Render(string(m.statusText))
+		m.statusText = append(m.statusText[:0], styled...)
 		if defaultBase {
 			m.viewBuffer = appendStatusLine(m.viewBuffer, m.statusText, workspace.Footer.Width)
 		}
@@ -191,9 +197,6 @@ type styledRunKey struct {
 
 func (m *Model) appendStatusText(dst []byte) []byte {
 	if m.status != "" {
-		if m.status == m.statusError {
-			return append(dst, m.theme.Canvas.Error.Render(m.status)...)
-		}
 		return append(dst, m.status...)
 	}
 	if m.interaction.session.kind == sessionLabelEdit {
@@ -672,7 +675,7 @@ func (m *Model) refreshConnectionPreview() {
 
 func (m *Model) primaryHighlight() (layout.Hit, bool) {
 	switch m.interaction.session.kind {
-	case sessionKeyboardMove, sessionLabelEdit:
+	case sessionLabelEdit:
 		return m.target, true
 	default:
 		return m.activeHit()

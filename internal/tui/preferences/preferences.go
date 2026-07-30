@@ -78,7 +78,7 @@ const (
 	ActionCancel
 )
 
-// Styles defines preferences appearance and the bounded picker adapter.
+// Styles defines preferences appearance.
 type Styles struct {
 	Form   chrome.FormStyles
 	Picker directorypicker.Styles

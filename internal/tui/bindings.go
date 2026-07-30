@@ -1,57 +1,58 @@
 package tui
 
 import (
+	"slices"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/layout"
 )
 
 const (
 	scopeCanvas      chrome.ScopeID = "canvas"
 	scopeGlobal      chrome.ScopeID = "global"
+	scopeLabel       chrome.ScopeID = "label"
 	scopeModal       chrome.ScopeID = "modal"
 	scopePreferences chrome.ScopeID = "preferences"
 	scopeDirectory   chrome.ScopeID = "directory"
 	scopeSidebar     chrome.ScopeID = "sidebar"
 
-	commandActivate         chrome.CommandID = "activate"
-	commandArrowEnd         chrome.CommandID = "arrow-end"
-	commandArrowStart       chrome.CommandID = "arrow-start"
-	commandBack             chrome.CommandID = "back"
-	commandBorder           chrome.CommandID = "border"
-	commandCancel           chrome.CommandID = "cancel"
-	commandCopy             chrome.CommandID = "copy"
-	commandCycleHitNext     chrome.CommandID = "cycle-hit-next"
-	commandCycleHitPrevious chrome.CommandID = "cycle-hit-previous"
-	commandDashed           chrome.CommandID = "dashed"
-	commandDelete           chrome.CommandID = "delete"
-	commandDuplicate        chrome.CommandID = "duplicate"
-	commandEditLabel        chrome.CommandID = "edit-label"
-	commandExpand           chrome.CommandID = "expand-selection"
-	commandFocusNext        chrome.CommandID = "focus-next"
-	commandFocusPrevious    chrome.CommandID = "focus-previous"
-	commandHelp             chrome.CommandID = "help"
-	commandLayerBack        chrome.CommandID = "layer-back"
-	commandLayerBackward    chrome.CommandID = "layer-backward"
-	commandLayerForward     chrome.CommandID = "layer-forward"
-	commandLayerFront       chrome.CommandID = "layer-front"
-	commandLine             chrome.CommandID = "line"
-	commandMove             chrome.CommandID = "move"
-	commandMoveDown         chrome.CommandID = "move-down"
-	commandMoveLeft         chrome.CommandID = "move-left"
-	commandMoveRight        chrome.CommandID = "move-right"
-	commandMoveUp           chrome.CommandID = "move-up"
-	commandNewNode          chrome.CommandID = "new-node"
-	commandPreferences      chrome.CommandID = "preferences"
-	commandQuit             chrome.CommandID = "quit"
-	commandRectangle        chrome.CommandID = "rectangle"
-	commandRedo             chrome.CommandID = "redo"
-	commandSave             chrome.CommandID = "save"
-	commandSidebar          chrome.CommandID = "sidebar"
-	commandSidebarNext      chrome.CommandID = "sidebar-next"
-	commandSidebarPrevious  chrome.CommandID = "sidebar-previous"
-	commandTextHorizontal   chrome.CommandID = "text-horizontal"
-	commandTextVertical     chrome.CommandID = "text-vertical"
-	commandUndo             chrome.CommandID = "undo"
+	commandActivate        chrome.CommandID = "activate"
+	commandArrowEnd        chrome.CommandID = "arrow-end"
+	commandArrowStart      chrome.CommandID = "arrow-start"
+	commandBack            chrome.CommandID = "back"
+	commandBorder          chrome.CommandID = "border"
+	commandCancel          chrome.CommandID = "cancel"
+	commandCopy            chrome.CommandID = "copy"
+	commandDashed          chrome.CommandID = "dashed"
+	commandDelete          chrome.CommandID = "delete"
+	commandDuplicate       chrome.CommandID = "duplicate"
+	commandEditLabel       chrome.CommandID = "edit-label"
+	commandExpand          chrome.CommandID = "expand-selection"
+	commandFocusNext       chrome.CommandID = "focus-next"
+	commandFocusPrevious   chrome.CommandID = "focus-previous"
+	commandHelp            chrome.CommandID = "help"
+	commandLayerBack       chrome.CommandID = "layer-back"
+	commandLayerBackward   chrome.CommandID = "layer-backward"
+	commandLayerForward    chrome.CommandID = "layer-forward"
+	commandLayerFront      chrome.CommandID = "layer-front"
+	commandLine            chrome.CommandID = "line"
+	commandMoveDown        chrome.CommandID = "move-down"
+	commandMoveLeft        chrome.CommandID = "move-left"
+	commandMoveRight       chrome.CommandID = "move-right"
+	commandMoveUp          chrome.CommandID = "move-up"
+	commandNewNode         chrome.CommandID = "new-node"
+	commandPreferences     chrome.CommandID = "preferences"
+	commandQuit            chrome.CommandID = "quit"
+	commandRectangle       chrome.CommandID = "rectangle"
+	commandRedo            chrome.CommandID = "redo"
+	commandSave            chrome.CommandID = "save"
+	commandSidebar         chrome.CommandID = "sidebar"
+	commandSidebarNext     chrome.CommandID = "sidebar-next"
+	commandSidebarPrevious chrome.CommandID = "sidebar-previous"
+	commandTextHorizontal  chrome.CommandID = "text-horizontal"
+	commandTextVertical    chrome.CommandID = "text-vertical"
+	commandUndo            chrome.CommandID = "undo"
 )
 
 var applicationBindings = []chrome.Binding{
@@ -61,16 +62,14 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
 	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
+	{Scope: scopeLabel, Chords: chrome.Keys("esc", "ctrl+enter"), Command: commandCancel, Label: "finish label"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("up"), Command: commandMoveUp, Label: "move up"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("right"), Command: commandMoveRight, Label: "move right"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("down"), Command: commandMoveDown, Label: "move down"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("left"), Command: commandMoveLeft, Label: "move left"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("tab"), Command: commandFocusNext, Label: "next node"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("shift+tab"), Command: commandFocusPrevious, Label: "previous node"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+tab"), Command: commandCycleHitNext, Label: "next hit"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+shift+tab"), Command: commandCycleHitPrevious, Label: "previous hit"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("enter"), Command: commandActivate, Label: "move or connect"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("m"), Command: commandMove, Label: "move"},
+	{Scope: scopeCanvas, Chords: chrome.Keys("enter"), Command: commandActivate, Label: "complete connection"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("e"), Command: commandEditLabel, Label: "edit label"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("n"), Command: commandNewNode, Label: "new node"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("r"), Command: commandRectangle, Label: string(commandRectangle)},
@@ -101,7 +100,7 @@ var applicationBindings = []chrome.Binding{
 
 var (
 	canvasBindingScopes  = [...]chrome.ScopeID{scopeCanvas, scopeGlobal}
-	labelBindingScopes   = [...]chrome.ScopeID{scopeGlobal}
+	labelBindingScopes   = [...]chrome.ScopeID{scopeLabel, scopeGlobal}
 	sidebarBindingScopes = [...]chrome.ScopeID{scopeSidebar, scopeGlobal}
 )
 
@@ -122,12 +121,9 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 	switch message.Command {
 	case commandActivate,
 		commandCancel,
-		commandCycleHitNext,
-		commandCycleHitPrevious,
 		commandFocusNext,
 		commandFocusPrevious,
 		commandLine,
-		commandMove,
 		commandMoveDown,
 		commandMoveLeft,
 		commandMoveRight,
@@ -174,23 +170,15 @@ func (m *Model) updateMovementCommand(command chrome.CommandID) {
 	case commandActivate:
 		if m.interaction.mode() == modeConnect {
 			m.completeConnection()
-		} else {
-			m.beginMove()
 		}
 	case commandCancel:
 		m.cancelMode()
-	case commandCycleHitNext:
-		m.cycleHit(1)
-	case commandCycleHitPrevious:
-		m.cycleHit(-1)
 	case commandFocusNext:
 		m.focusNode(1)
 	case commandFocusPrevious:
 		m.focusNode(-1)
 	case commandLine:
 		m.activateTool(modeConnect)
-	case commandMove:
-		m.beginMove()
 	case commandMoveDown:
 		m.move(0, 1)
 	case commandMoveLeft:
@@ -206,6 +194,239 @@ func (m *Model) updateMovementCommand(command chrome.CommandID) {
 	default:
 		panic("unhandled movement command " + command)
 	}
+}
+
+func (m *Model) contextualHelpBindings() []chrome.EffectiveBinding {
+	scopes := m.activeBindingScopes()
+	bindings := m.bindings.Effective(scopes)
+	context := m.helpContext()
+	if context != string(surfaceCanvas) && context != "label editor" {
+		return bindings
+	}
+	return slices.DeleteFunc(bindings, func(binding chrome.EffectiveBinding) bool {
+		if _, ok := m.bindings.Resolve(
+			string(binding.Chord),
+			scopes,
+			m.textEntryActive(),
+		); !ok {
+			return true
+		}
+		return !m.canvasCommandAvailable(binding.Command)
+	})
+}
+
+func (m *Model) canvasCommandAvailable(command chrome.CommandID) bool {
+	if !m.interaction.idle() {
+		return m.interactionCommandAvailable(command)
+	}
+	switch command {
+	case commandActivate,
+		commandCancel,
+		commandFocusNext,
+		commandFocusPrevious,
+		commandLine,
+		commandMoveDown,
+		commandMoveLeft,
+		commandMoveRight,
+		commandMoveUp,
+		commandNewNode,
+		commandRectangle:
+		return m.canvasMovementCommandAvailable(command)
+	case commandArrowEnd,
+		commandArrowStart,
+		commandBorder,
+		commandDashed,
+		commandLayerBack,
+		commandLayerBackward,
+		commandLayerForward,
+		commandLayerFront,
+		commandTextHorizontal,
+		commandTextVertical:
+		return m.canvasAppearanceCommandAvailable(command)
+	case commandCopy,
+		commandDelete,
+		commandDuplicate,
+		commandEditLabel,
+		commandExpand,
+		commandRedo,
+		commandUndo:
+		return m.canvasEditCommandAvailable(command)
+	default:
+		return true
+	}
+}
+
+func (m *Model) canvasMovementCommandAvailable(command chrome.CommandID) bool {
+	nodes, _ := m.selectedCounts()
+	switch command {
+	case commandActivate, commandCancel:
+		return false
+	case commandMoveUp, commandMoveRight, commandMoveDown, commandMoveLeft:
+		return nodes != 0
+	case commandFocusNext, commandFocusPrevious:
+		return m.nodeFocusCommandAvailable()
+	default:
+		return true
+	}
+}
+
+func (m *Model) canvasAppearanceCommandAvailable(command chrome.CommandID) bool {
+	nodes, edges := m.selectedCounts()
+	hit, hasHit := m.activeHit()
+	hasSelection := nodes != 0 || edges != 0
+	hasNode := nodes != 0 || hasHit && hit.Kind == layout.HitNode
+	switch command {
+	case commandArrowEnd, commandArrowStart:
+		return edges != 0
+	case commandBorder, commandTextHorizontal, commandTextVertical:
+		return hasNode
+	case commandDashed:
+		return hasSelection || hasHit &&
+			(hit.Kind == layout.HitNode || hit.Kind == layout.HitEdge)
+	case commandLayerBack, commandLayerBackward, commandLayerForward, commandLayerFront:
+		return hasSelection && m.layerCommandAvailable(command)
+	default:
+		return false
+	}
+}
+
+func (m *Model) canvasEditCommandAvailable(command chrome.CommandID) bool {
+	nodes, edges := m.selectedCounts()
+	hit, hasHit := m.activeHit()
+	hasSelection := nodes != 0 || edges != 0
+	hasNode := nodes != 0 || hasHit && hit.Kind == layout.HitNode
+	switch command {
+	case commandDelete:
+		return hasSelection || hasHit && hit.Kind != layout.HitPort
+	case commandDuplicate:
+		if nodes != 0 {
+			return m.geo.SelectionMovesRigidly()
+		}
+		return hasHit &&
+			hit.Kind == layout.HitNode &&
+			!m.nodeHasIncidentEdge(hit.ID)
+	case commandEditLabel:
+		return hasNode
+	case commandExpand:
+		if hasSelection {
+			return nodes+edges < m.liveObjectCount()
+		}
+		return hasHit && hit.Kind != layout.HitPort
+	case commandCopy:
+		return hasSelection
+	case commandUndo:
+		return m.history != nil && m.history.CanUndo()
+	case commandRedo:
+		return m.history != nil && m.history.CanRedo()
+	default:
+		return false
+	}
+}
+
+func (m *Model) nodeHasIncidentEdge(nodeID uint32) bool {
+	for edgeID := range m.geo.Edges {
+		id := uint32(edgeID)
+		if !m.geo.EdgeExists(id) {
+			continue
+		}
+		nodeA, nodeB, err := m.geo.EdgeNodes(id)
+		if err != nil || nodeA == nodeID || nodeB == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) interactionCommandAvailable(command chrome.CommandID) bool {
+	switch command {
+	case commandCancel:
+		return m.cancelCommandRelevant()
+	case commandHelp, commandQuit:
+		return true
+	}
+	if m.interaction.gesture.kind != gestureNone {
+		return false
+	}
+	switch m.interaction.tool {
+	case toolRectangle:
+		return command == commandLine
+	case toolConnect:
+		if command == commandRectangle {
+			return true
+		}
+		if m.interaction.session.kind != sessionConnection {
+			return false
+		}
+		switch command {
+		case commandActivate:
+			hit, ok := m.activeHit()
+			return ok &&
+				hit.Kind == layout.HitPort &&
+				hit.ID != m.interaction.session.connection.source &&
+				m.geo.PortUsable(hit.ID)
+		case commandMoveUp,
+			commandMoveRight,
+			commandMoveDown,
+			commandMoveLeft:
+			return true
+		default:
+			return false
+		}
+	case toolNavigate:
+		return false
+	default:
+		return false
+	}
+}
+
+func (m *Model) cancelCommandRelevant() bool {
+	if m.interaction.tool != toolNavigate ||
+		m.interaction.session.kind != sessionNone {
+		return true
+	}
+	switch m.interaction.gesture.kind {
+	case gestureRectangle,
+		gestureDuplicatePending,
+		gestureDuplicate,
+		gestureAreaSelection,
+		gestureConnectionPending,
+		gestureConnection:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Model) layerCommandAvailable(command chrome.CommandID) bool {
+	hit, ok := m.selectedLayer()
+	if !ok {
+		return false
+	}
+	order := slices.Collect(m.geo.DrawOrder())
+	index := slices.Index(order, hit)
+	switch command {
+	case commandLayerBack, commandLayerBackward:
+		return index > 0
+	case commandLayerForward, commandLayerFront:
+		return index >= 0 && index+1 < len(order)
+	default:
+		return false
+	}
+}
+
+func (m *Model) nodeFocusCommandAvailable() bool {
+	count := 0
+	for nodeID := range m.geo.Nodes {
+		if m.geo.NodeExists(uint32(nodeID)) {
+			count++
+		}
+	}
+	_, focused := m.focusedNode()
+	return count > 1 || count == 1 && !focused
+}
+
+func (m *Model) liveObjectCount() int {
+	return len(slices.Collect(m.geo.DrawOrder()))
 }
 
 func (m *Model) updateAppearanceCommand(command chrome.CommandID) {
@@ -277,6 +498,9 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 	case commandHelp:
 		m.openHelp()
 	case commandPreferences:
+		if m.dialogs.ActiveID() == surfacePreferences {
+			return m.dismissDialog()
+		}
 		m.openPreferences()
 	case commandQuit:
 		m.interruptInteraction()

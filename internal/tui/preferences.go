@@ -33,22 +33,20 @@ type dialogCancelMsg struct{}
 
 type preferenceDialogBody struct {
 	model  *preferencesview.Model
-	theme  Theme
 	bounds chrome.Rect
 }
 
 func newPreferenceDialogBody(
 	value preferenceDialogValue,
-	theme Theme,
+	width int,
+	styles preferencesview.Styles,
 ) *preferenceDialogBody {
-	body := &preferenceDialogBody{theme: theme}
+	body := &preferenceDialogBody{}
 	body.model = preferencesview.New(
 		value,
-		minimumSettingsModalWidth-
-			theme.Modal.Container.GetHorizontalFrameSize()-
-			theme.Modal.Body.GetHorizontalFrameSize(),
+		width,
 		0,
-		theme.preferenceStyles(),
+		styles,
 		preferencesview.WithTints(
 			tintOptions(darkTints),
 			tintOptions(lightTints),
@@ -173,9 +171,8 @@ func (b *preferenceDialogBody) View() string {
 	return b.model.View().Content
 }
 
-func (b *preferenceDialogBody) SetStyles(theme Theme) {
-	b.theme = theme
-	b.model.SetStyles(theme.preferenceStyles())
+func (b *preferenceDialogBody) SetStyles(styles preferencesview.Styles) {
+	b.model.SetStyles(styles)
 }
 
 func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {

@@ -31,12 +31,12 @@ type saveDialogBody struct {
 	picker    *directorypicker.Model
 	directory string
 	name      string
-	theme     Theme
+	styles    saveStyles
 	bounds    chrome.Rect
 }
 
-func newSaveDialogBody(theme Theme) *saveDialogBody {
-	body := &saveDialogBody{theme: theme}
+func newSaveDialogBody(styles saveStyles) *saveDialogBody {
+	body := &saveDialogBody{styles: styles}
 	body.Reset(".")
 	return body
 }
@@ -51,7 +51,7 @@ func (b *saveDialogBody) Reset(directory string) {
 	b.picker = directorypicker.New(directorypicker.Config{
 		Title: "Directory",
 		Value: directory,
-	}, directorypicker.Styles{Dark: b.theme.Dark})
+	}, b.styles.Picker)
 	b.SetBounds(b.bounds)
 }
 
@@ -75,7 +75,7 @@ func (b *saveDialogBody) newForm(directory, name string) *chrome.Form {
 				{ID: saveCancelAction, Label: "Cancel"},
 			},
 		},
-	}, b.theme.formStyles())
+	}, b.styles.Form)
 }
 
 func (*saveDialogBody) Context() string {
@@ -172,10 +172,10 @@ func (b *saveDialogBody) View() string {
 	return b.form.View().Content
 }
 
-func (b *saveDialogBody) SetStyles(theme Theme) {
-	b.theme = theme
-	b.form.SetStyles(theme.formStyles())
-	b.picker.SetStyles(directorypicker.Styles{Dark: theme.Dark})
+func (b *saveDialogBody) SetStyles(styles saveStyles) {
+	b.styles = styles
+	b.form.SetStyles(styles.Form)
+	b.picker.SetStyles(styles.Picker)
 }
 
 func (b *saveDialogBody) FocusID() chrome.ID {

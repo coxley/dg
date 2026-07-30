@@ -18,6 +18,7 @@ const (
 type helpInspector struct {
 	viewport *chrome.Viewport
 	pane     *chrome.Pane
+	styles   helpStyles
 
 	visible     bool
 	requested   chrome.Rect
@@ -30,12 +31,25 @@ type helpInspector struct {
 	resizeRect  chrome.Rect
 }
 
-func newHelpInspector() helpInspector {
+func newHelpInspector(styles helpStyles) helpInspector {
 	viewport := chrome.NewViewport("help-body")
 	viewport.SetScrollbars(chrome.ScrollbarNever, chrome.ScrollbarAutomatic)
 	pane := chrome.NewPane("help-pane", viewport)
-	pane.SetFooter([]string{"? hide · wheel scroll"})
-	return helpInspector{viewport: viewport, pane: pane}
+	inspector := helpInspector{
+		viewport: viewport,
+		pane:     pane,
+	}
+	inspector.setStyles(styles)
+	return inspector
+}
+
+func (h *helpInspector) setStyles(styles helpStyles) {
+	h.styles = styles
+	h.viewport.SetScrollbarStyles(styles.Scrollbar)
+	h.pane.SetFooter([]string{
+		styles.Footer.Render("? hide · wheel scroll"),
+	})
+	h.applyContainerStyle()
 }
 
 func (h *helpInspector) toggle() {
@@ -74,17 +88,23 @@ func (h *helpInspector) setPlan(
 	bindings []chrome.EffectiveBinding,
 	vocabulary chrome.ChordVocabulary,
 ) {
-	h.pane.SetHeader([]string{"HELP · " + context})
+	h.pane.SetHeader([]string{
+		h.styles.Header.Render("HELP · " + context),
+	})
 	lines := make([]string, 0, len(bindings)+1)
 	for _, binding := range bindings {
-		lines = append(lines, fmt.Sprintf(
-			"%-14s %s",
+		key := fmt.Sprintf(
+			"%-14s",
 			chrome.DisplayChord(binding.Chord, vocabulary),
-			binding.Label,
-		))
+		)
+		lines = append(
+			lines,
+			h.styles.Key.Render(key)+
+				h.styles.Description.Render(binding.Label),
+		)
 	}
 	if len(lines) == 0 {
-		lines = append(lines, "No active bindings")
+		lines = append(lines, h.styles.Description.Render("No active bindings"))
 	}
 	h.viewport.SetContent(lines)
 	h.pane.SetBounds(chrome.Rect{Width: rect.Width, Height: rect.Height})
@@ -94,6 +114,7 @@ func (h *helpInspector) lines() []string {
 	if !h.visible {
 		return nil
 	}
+	h.applyContainerStyle()
 	return h.pane.Lines()
 }
 
@@ -103,8 +124,12 @@ func (h *helpInspector) update(message tea.Msg, rect chrome.Rect) bool {
 		if !rect.Contains(chrome.Point{X: message.X, Y: message.Y}) {
 			return false
 		}
+		local := chrome.Point{X: message.X - rect.X, Y: message.Y - rect.Y}
 		switch message.Button {
 		case tea.MouseLeft:
+			if h.viewport.BeginScrollbarDrag(local) {
+				return true
+			}
 			if message.Y == rect.Y {
 				h.dragPending = true
 				h.dragOffset = chrome.Point{X: message.X - rect.X, Y: message.Y - rect.Y}
@@ -115,6 +140,10 @@ func (h *helpInspector) update(message tea.Msg, rect chrome.Rect) bool {
 			h.resizeRect = rect
 		}
 	case tea.MouseMotionMsg:
+		h.viewport.HoverScrollbar(chrome.Point{
+			X: message.X - rect.X,
+			Y: message.Y - rect.Y,
+		})
 		switch {
 		case h.resizing && message.Button == tea.MouseRight:
 			h.requested = resizeHelpRect(
@@ -124,6 +153,11 @@ func (h *helpInspector) update(message tea.Msg, rect chrome.Rect) bool {
 			)
 			h.positioned = true
 			return true
+		case h.viewport.ScrollbarDragging() && message.Button == tea.MouseLeft:
+			return h.viewport.DragScrollbar(chrome.Point{
+				X: message.X - rect.X,
+				Y: message.Y - rect.Y,
+			})
 		case h.dragPending && message.Button == tea.MouseLeft:
 			h.dragPending = false
 			h.dragging = true
@@ -137,6 +171,7 @@ func (h *helpInspector) update(message tea.Msg, rect chrome.Rect) bool {
 			return true
 		}
 	case tea.MouseReleaseMsg:
+		h.viewport.EndScrollbarDrag()
 		h.release()
 	case tea.MouseWheelMsg:
 		if !rect.Contains(chrome.Point{X: message.X, Y: message.Y}) {
@@ -153,13 +188,26 @@ func (h *helpInspector) update(message tea.Msg, rect chrome.Rect) bool {
 }
 
 func (h *helpInspector) capturesPointer() bool {
-	return h.dragPending || h.dragging || h.resizing
+	return h.dragPending || h.dragging || h.resizing ||
+		h.viewport.ScrollbarDragging()
 }
 
 func (h *helpInspector) release() {
 	h.dragPending = false
 	h.dragging = false
 	h.resizing = false
+}
+
+func (h *helpInspector) clearHover() {
+	h.viewport.ClearScrollbarHover()
+}
+
+func (h *helpInspector) applyContainerStyle() {
+	style := h.styles.Container
+	if h.dragging || h.resizing {
+		style = h.styles.ActiveContainer
+	}
+	h.pane.SetStyle(style)
 }
 
 func resizeHelpRect(rect chrome.Rect, dx, dy int) chrome.Rect {

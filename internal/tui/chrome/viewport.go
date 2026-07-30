@@ -3,6 +3,7 @@ package chrome
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -18,6 +19,26 @@ const (
 	ScrollbarAlways
 )
 
+// ScrollbarStyles configures finite viewport scrollbar cells.
+type ScrollbarStyles struct {
+	Track        lipgloss.Style
+	Thumb        lipgloss.Style
+	HoveredTrack lipgloss.Style
+	HoveredThumb lipgloss.Style
+	FocusedTrack lipgloss.Style
+	FocusedThumb lipgloss.Style
+	ActiveTrack  lipgloss.Style
+	ActiveThumb  lipgloss.Style
+}
+
+type renderedScrollbarStyles struct {
+	verticalTrack   string
+	verticalThumb   string
+	horizontalTrack string
+	horizontalThumb string
+	corner          string
+}
+
 // ViewportPlan is one finite viewport arrangement.
 type ViewportPlan struct {
 	Version uint64
@@ -27,10 +48,20 @@ type ViewportPlan struct {
 	Offset  Point
 	Extent  Size
 
-	HorizontalBar Rect
-	VerticalBar   Rect
-	lines         []string
+	HorizontalBar   Rect
+	VerticalBar     Rect
+	HorizontalThumb Rect
+	VerticalThumb   Rect
+	lines           []string
 }
+
+type scrollbarAxis uint8
+
+const (
+	scrollbarNone scrollbarAxis = iota
+	scrollbarHorizontal
+	scrollbarVertical
+)
 
 // Viewport retains finite text content, scroll offsets, and its arranged plan.
 type Viewport struct {
@@ -44,6 +75,12 @@ type Viewport struct {
 	bounds     Rect
 	version    uint64
 	plan       ViewportPlan
+	scrollbar  ScrollbarStyles
+	focused    bool
+	hoverAxis  scrollbarAxis
+
+	dragAxis scrollbarAxis
+	dragGrab int
 }
 
 // NewViewport returns a retained finite viewport.
@@ -56,6 +93,21 @@ func NewViewport(id ID) *Viewport {
 	}
 	v.arrange()
 	return v
+}
+
+// SetScrollbarStyles replaces the retained track and thumb styles.
+func (v *Viewport) SetScrollbarStyles(styles ScrollbarStyles) {
+	v.scrollbar = styles
+	v.invalidate()
+}
+
+// SetFocused controls whether the scrollbar displays keyboard focus.
+func (v *Viewport) SetFocused(focused bool) {
+	if v.focused == focused {
+		return
+	}
+	v.focused = focused
+	v.invalidate()
 }
 
 // SetContent replaces logical content lines.
@@ -131,6 +183,82 @@ func (v *Viewport) ContentPoint(point Point) (Point, bool) {
 	}, true
 }
 
+// BeginScrollbarDrag starts dragging the scrollbar at point.
+func (v *Viewport) BeginScrollbarDrag(point Point) bool {
+	switch {
+	case v.plan.VerticalBar.Contains(point):
+		v.dragAxis = scrollbarVertical
+		v.dragGrab = point.Y - v.plan.VerticalThumb.Y
+		if !v.plan.VerticalThumb.Contains(point) {
+			v.dragGrab = v.plan.VerticalThumb.Height / 2
+			v.dragScrollbar(point)
+		}
+		v.invalidate()
+		return true
+	case v.plan.HorizontalBar.Contains(point):
+		v.dragAxis = scrollbarHorizontal
+		v.dragGrab = point.X - v.plan.HorizontalThumb.X
+		if !v.plan.HorizontalThumb.Contains(point) {
+			v.dragGrab = v.plan.HorizontalThumb.Width / 2
+			v.dragScrollbar(point)
+		}
+		v.invalidate()
+		return true
+	default:
+		return false
+	}
+}
+
+// HoverScrollbar updates pointer emphasis for one scrollbar cell.
+func (v *Viewport) HoverScrollbar(point Point) bool {
+	axis := scrollbarNone
+	switch {
+	case v.plan.VerticalBar.Contains(point):
+		axis = scrollbarVertical
+	case v.plan.HorizontalBar.Contains(point):
+		axis = scrollbarHorizontal
+	}
+	if v.hoverAxis == axis {
+		return axis != scrollbarNone
+	}
+	v.hoverAxis = axis
+	v.invalidate()
+	return axis != scrollbarNone
+}
+
+// ClearScrollbarHover removes pointer emphasis.
+func (v *Viewport) ClearScrollbarHover() {
+	if v.hoverAxis == scrollbarNone {
+		return
+	}
+	v.hoverAxis = scrollbarNone
+	v.invalidate()
+}
+
+// DragScrollbar moves an active scrollbar drag to point.
+func (v *Viewport) DragScrollbar(point Point) bool {
+	if v.dragAxis == scrollbarNone {
+		return false
+	}
+	v.dragScrollbar(point)
+	return true
+}
+
+// EndScrollbarDrag ends an active scrollbar drag.
+func (v *Viewport) EndScrollbarDrag() {
+	if v.dragAxis == scrollbarNone {
+		return
+	}
+	v.dragAxis = scrollbarNone
+	v.dragGrab = 0
+	v.invalidate()
+}
+
+// ScrollbarDragging reports whether a scrollbar owns the pointer.
+func (v *Viewport) ScrollbarDragging() bool {
+	return v.dragAxis != scrollbarNone
+}
+
 // Lines renders the exact current plan.
 func (v *Viewport) Lines() []string {
 	return append([]string(nil), v.plan.lines...)
@@ -191,6 +319,16 @@ func (v *Viewport) arrange() {
 			Width:  min(1, v.bounds.Width),
 			Height: contentRect.Height,
 		}
+		start, size := scrollbarThumb(
+			plan.VerticalBar.Height,
+			plan.Offset.Y,
+			plan.Extent.Height,
+			plan.Content.Height,
+		)
+		plan.VerticalThumb = Rect{
+			X: plan.VerticalBar.X, Y: plan.VerticalBar.Y + start,
+			Width: plan.VerticalBar.Width, Height: size,
+		}
 	}
 	if horizontal {
 		plan.HorizontalBar = Rect{
@@ -199,9 +337,56 @@ func (v *Viewport) arrange() {
 			Width:  contentRect.Width,
 			Height: min(1, v.bounds.Height),
 		}
+		start, size := scrollbarThumb(
+			plan.HorizontalBar.Width,
+			plan.Offset.X,
+			plan.Extent.Width,
+			plan.Content.Width,
+		)
+		plan.HorizontalThumb = Rect{
+			X: plan.HorizontalBar.X + start, Y: plan.HorizontalBar.Y,
+			Width: size, Height: plan.HorizontalBar.Height,
+		}
 	}
-	plan.lines = renderViewport(plan, content)
+	plan.lines = renderViewport(plan, content, v.renderedScrollbarStyles())
 	v.plan = plan
+}
+
+func (v *Viewport) renderedScrollbarStyles() renderedScrollbarStyles {
+	track, thumb := v.scrollbar.Track, v.scrollbar.Thumb
+	switch {
+	case v.dragAxis != scrollbarNone:
+		track, thumb = v.scrollbar.ActiveTrack, v.scrollbar.ActiveThumb
+	case v.hoverAxis != scrollbarNone:
+		track, thumb = v.scrollbar.HoveredTrack, v.scrollbar.HoveredThumb
+	case v.focused:
+		track, thumb = v.scrollbar.FocusedTrack, v.scrollbar.FocusedThumb
+	}
+	return renderScrollbarStyles(track, thumb)
+}
+
+func (v *Viewport) dragScrollbar(point Point) {
+	switch v.dragAxis {
+	case scrollbarVertical:
+		v.offset.Y = scrollbarOffset(
+			point.Y-v.plan.VerticalBar.Y-v.dragGrab,
+			v.plan.VerticalBar.Height,
+			v.plan.VerticalThumb.Height,
+			v.plan.Extent.Height,
+			v.plan.Content.Height,
+		)
+	case scrollbarHorizontal:
+		v.offset.X = scrollbarOffset(
+			point.X-v.plan.HorizontalBar.X-v.dragGrab,
+			v.plan.HorizontalBar.Width,
+			v.plan.HorizontalThumb.Width,
+			v.plan.Extent.Width,
+			v.plan.Content.Width,
+		)
+	case scrollbarNone:
+		return
+	}
+	v.invalidate()
 }
 
 func (v *Viewport) measureContent(width int) ([]string, Size) {
@@ -227,7 +412,11 @@ func (v *Viewport) measureContent(width int) ([]string, Size) {
 	return lines, extent
 }
 
-func renderViewport(plan ViewportPlan, content []string) []string {
+func renderViewport(
+	plan ViewportPlan,
+	content []string,
+	scrollbar renderedScrollbarStyles,
+) []string {
 	lines := make([]string, 0, plan.Bounds.Height)
 	for row := range plan.Content.Height {
 		contentRow := row + plan.Offset.Y
@@ -243,6 +432,7 @@ func renderViewport(plan ViewportPlan, content []string) []string {
 				plan.Offset.Y,
 				plan.Extent.Height,
 				plan.Content.Height,
+				scrollbar,
 			)
 		}
 		lines = append(lines, line)
@@ -253,9 +443,10 @@ func renderViewport(plan ViewportPlan, content []string) []string {
 			plan.Offset.X,
 			plan.Extent.Width,
 			plan.Content.Width,
+			scrollbar,
 		)
 		if plan.VerticalBar.Width != 0 {
-			line += "┘"
+			line += scrollbar.corner
 		}
 		lines = append(lines, line)
 	}
@@ -265,26 +456,45 @@ func renderViewport(plan ViewportPlan, content []string) []string {
 	return lines
 }
 
-func verticalScrollbarCell(row, track, offset, extent, visible int) string {
+func verticalScrollbarCell(
+	row, track, offset, extent, visible int,
+	scrollbar renderedScrollbarStyles,
+) string {
 	start, size := scrollbarThumb(track, offset, extent, visible)
 	if row >= start && row < start+size {
-		return "█"
+		return scrollbar.verticalThumb
 	}
-	return "│"
+	return scrollbar.verticalTrack
 }
 
-func horizontalScrollbarLine(track, offset, extent, visible int) string {
+func horizontalScrollbarLine(
+	track, offset, extent, visible int,
+	scrollbar renderedScrollbarStyles,
+) string {
 	start, size := scrollbarThumb(track, offset, extent, visible)
 	var line strings.Builder
-	line.Grow(track)
+	line.Grow(track * len(scrollbar.horizontalTrack))
 	for column := range track {
 		if column >= start && column < start+size {
-			line.WriteRune('█')
+			line.WriteString(scrollbar.horizontalThumb)
 		} else {
-			line.WriteRune('─')
+			line.WriteString(scrollbar.horizontalTrack)
 		}
 	}
 	return line.String()
+}
+
+func renderScrollbarStyles(
+	track lipgloss.Style,
+	thumb lipgloss.Style,
+) renderedScrollbarStyles {
+	return renderedScrollbarStyles{
+		verticalTrack:   track.Render("│"),
+		verticalThumb:   thumb.Render("█"),
+		horizontalTrack: track.Render("─"),
+		horizontalThumb: thumb.Render("█"),
+		corner:          track.Render("┘"),
+	}
 }
 
 func scrollbarThumb(track, offset, extent, visible int) (int, int) {
@@ -297,6 +507,16 @@ func scrollbarThumb(track, offset, extent, visible int) (int, int) {
 	size := max(track*visible/extent, 1)
 	start := offset * (track - size) / max(extent-visible, 1)
 	return start, size
+}
+
+func scrollbarOffset(start, track, thumb, extent, visible int) int {
+	travel := max(track-thumb, 0)
+	maxOffset := max(extent-visible, 0)
+	if travel == 0 || maxOffset == 0 {
+		return 0
+	}
+	start = min(max(start, 0), travel)
+	return (start*maxOffset + travel/2) / travel
 }
 
 func padLine(line string, width int) string {

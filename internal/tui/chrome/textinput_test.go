@@ -61,11 +61,32 @@ func TestTextInputDeletesWholeGraphemeClusters(t *testing.T) {
 	require.Equal(t, "x", input.Value())
 }
 
+func TestTextInputRendersHoverAndSelectionStates(t *testing.T) {
+	t.Parallel()
+
+	styles := testTextInputStyles()
+	styles.HoveredText = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#111111"))
+	styles.SelectedText = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#222222"))
+	input := NewTextInput("value", "", styles)
+	input.SetWidth(8)
+	input.SetHovered(true)
+	require.Contains(t, input.View(), styles.HoveredText.Render("value"))
+
+	input.Focus()
+	input.Update(tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	require.Contains(t, input.View(), styles.SelectedText.Render("value"))
+}
+
 func testTextInputStyles() TextInputStyles {
 	return TextInputStyles{
-		Text:        lipgloss.NewStyle(),
-		FocusedText: lipgloss.NewStyle().Bold(true),
-		Placeholder: lipgloss.NewStyle().Faint(true),
-		Cursor:      lipgloss.NewStyle().Reverse(true),
+		Text:               lipgloss.NewStyle(),
+		HoveredText:        lipgloss.NewStyle(),
+		FocusedText:        lipgloss.NewStyle().Bold(true),
+		SelectedText:       lipgloss.NewStyle().Reverse(true),
+		Placeholder:        lipgloss.NewStyle().Faint(true),
+		HoveredPlaceholder: lipgloss.NewStyle().Faint(true),
+		Cursor:             lipgloss.NewStyle().Reverse(true),
 	}
 }

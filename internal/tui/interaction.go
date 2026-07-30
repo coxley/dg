@@ -17,7 +17,6 @@ type sessionKind uint8
 
 const (
 	sessionNone sessionKind = iota
-	sessionKeyboardMove
 	sessionLabelEdit
 	sessionConnection
 )
@@ -31,7 +30,6 @@ type connectionSession struct {
 
 type interactionSession struct {
 	kind       sessionKind
-	rigid      bool
 	connection connectionSession
 }
 
@@ -123,8 +121,6 @@ type interactionState struct {
 
 func (s interactionState) mode() mode {
 	switch s.session.kind {
-	case sessionKeyboardMove:
-		return modeMove
 	case sessionLabelEdit:
 		return modeEditLabel
 	case sessionConnection:
@@ -150,9 +146,6 @@ func (s interactionState) idle() bool {
 }
 
 func (s interactionState) movingRigidly() bool {
-	if s.session.kind == sessionKeyboardMove {
-		return s.session.rigid
-	}
 	return s.gesture.kind == gestureMove && s.gesture.rigid
 }
 

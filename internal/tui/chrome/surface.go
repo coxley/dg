@@ -357,13 +357,8 @@ func (w *Workspace) arrange() {
 	plan := WorkspacePlan{
 		Terminal: w.terminal,
 		Main:     main,
-		Canvas:   main,
-		Footer: Rect{
-			Y:      main.Bottom(),
-			Width:  w.terminal.Width,
-			Height: footerHeight,
-		},
 	}
+	canvas := w.terminal
 	surfaces := append([]Surface(nil), w.surfaces...)
 	slices.SortStableFunc(surfaces, func(a, b Surface) int {
 		return cmp.Compare(a.Priority, b.Priority)
@@ -373,7 +368,7 @@ func (w *Workspace) arrange() {
 		if !surface.Visible || surface.Role != SurfaceDock {
 			continue
 		}
-		anchor := plan.Canvas
+		anchor := canvas
 		content := dockRect(surface, anchor)
 		rect := content
 		if surface.Animated {
@@ -382,15 +377,15 @@ func (w *Workspace) arrange() {
 		}
 		switch surface.Dock {
 		case DockRight:
-			plan.Canvas.Width -= rect.Width
+			canvas.Width -= rect.Width
 		case DockTop:
-			plan.Canvas.Y += rect.Height
-			plan.Canvas.Height -= rect.Height
+			canvas.Y += rect.Height
+			canvas.Height -= rect.Height
 		case DockBottom:
-			plan.Canvas.Height -= rect.Height
+			canvas.Height -= rect.Height
 		case DockLeft:
-			plan.Canvas.X += rect.Width
-			plan.Canvas.Width -= rect.Width
+			canvas.X += rect.Width
+			canvas.Width -= rect.Width
 		}
 		plan.Dock = unionRect(plan.Dock, rect)
 		dockPlans = append(dockPlans, SurfacePlan{
@@ -399,6 +394,15 @@ func (w *Workspace) arrange() {
 			Content: content,
 			Rect:    rect,
 		})
+	}
+	footerHeight = min(footerHeight, canvas.Height)
+	plan.Canvas = canvas
+	plan.Canvas.Height -= footerHeight
+	plan.Footer = Rect{
+		X:      canvas.X,
+		Y:      plan.Canvas.Bottom(),
+		Width:  canvas.Width,
+		Height: footerHeight,
 	}
 	for _, surface := range surfaces {
 		if !surface.Visible {

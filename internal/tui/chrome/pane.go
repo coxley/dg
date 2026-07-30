@@ -3,6 +3,7 @@ package chrome
 import (
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -11,6 +12,7 @@ type PanePlan struct {
 	Version uint64
 	ID      ID
 	Bounds  Rect
+	Content Rect
 	Header  Rect
 	Body    Rect
 	Footer  Rect
@@ -21,6 +23,7 @@ type PanePlan struct {
 type Pane struct {
 	id ID
 
+	style  lipgloss.Style
 	header []string
 	footer []string
 	body   *Viewport
@@ -36,6 +39,12 @@ func NewPane(id ID, viewport *Viewport) *Pane {
 	p := &Pane{id: id, body: viewport}
 	p.arrange()
 	return p
+}
+
+// SetStyle replaces the pane frame style and arranges immediately.
+func (p *Pane) SetStyle(style lipgloss.Style) {
+	p.style = style
+	p.invalidate()
 }
 
 // SetHeader replaces sticky header rows.
@@ -84,30 +93,32 @@ func (p *Pane) invalidate() {
 }
 
 func (p *Pane) arrange() {
-	headerHeight := min(len(p.header), p.bounds.Height)
-	remaining := p.bounds.Height - headerHeight
+	content := p.bounds.Inset(styleFrameInsets(p.style))
+	headerHeight := min(len(p.header), content.Height)
+	remaining := content.Height - headerHeight
 	footerHeight := min(len(p.footer), remaining)
 	bodyHeight := max(remaining-footerHeight, 0)
 	plan := PanePlan{
 		Version: p.version,
 		ID:      p.id,
 		Bounds:  p.bounds,
+		Content: content,
 		Header: Rect{
-			X:      p.bounds.X,
-			Y:      p.bounds.Y,
-			Width:  p.bounds.Width,
+			X:      content.X,
+			Y:      content.Y,
+			Width:  content.Width,
 			Height: headerHeight,
 		},
 		Body: Rect{
-			X:      p.bounds.X,
-			Y:      p.bounds.Y + headerHeight,
-			Width:  p.bounds.Width,
+			X:      content.X,
+			Y:      content.Y + headerHeight,
+			Width:  content.Width,
 			Height: bodyHeight,
 		},
 		Footer: Rect{
-			X:      p.bounds.X,
-			Y:      p.bounds.Bottom() - footerHeight,
-			Width:  p.bounds.Width,
+			X:      content.X,
+			Y:      content.Bottom() - footerHeight,
+			Width:  content.Width,
 			Height: footerHeight,
 		},
 	}
@@ -121,8 +132,11 @@ func (p *Pane) arrange() {
 }
 
 func (p *Pane) renderLines() []string {
-	lines := make([]string, 0, p.bounds.Height)
-	lines = appendSlot(lines, p.header[:p.plan.Header.Height], p.bounds.Width)
+	if p.bounds.Width == 0 || p.bounds.Height == 0 {
+		return nil
+	}
+	lines := make([]string, 0, p.plan.Content.Height)
+	lines = appendSlot(lines, p.header[:p.plan.Header.Height], p.plan.Content.Width)
 	switch {
 	case p.nested != nil:
 		lines = append(lines, p.nested.Lines()...)
@@ -130,10 +144,14 @@ func (p *Pane) renderLines() []string {
 		lines = append(lines, p.body.Lines()...)
 	default:
 		for range p.plan.Body.Height {
-			lines = append(lines, strings.Repeat(" ", p.bounds.Width))
+			lines = append(lines, strings.Repeat(" ", p.plan.Content.Width))
 		}
 	}
-	return appendSlot(lines, p.footer[:p.plan.Footer.Height], p.bounds.Width)
+	lines = appendSlot(lines, p.footer[:p.plan.Footer.Height], p.plan.Content.Width)
+	style := p.style.
+		Width(max(p.bounds.Width-p.style.GetHorizontalMargins(), 0)).
+		Height(max(p.bounds.Height-p.style.GetVerticalMargins(), 0))
+	return fitBlock(style.Render(strings.Join(lines, "\n")), p.bounds.Width, p.bounds.Height)
 }
 
 func appendSlot(dst, lines []string, width int) []string {
@@ -141,4 +159,34 @@ func appendSlot(dst, lines []string, width int) []string {
 		dst = append(dst, padLine(ansi.Truncate(line, width, ""), width))
 	}
 	return dst
+}
+
+func styleFrameInsets(style lipgloss.Style) Insets {
+	return Insets{
+		Top: style.GetMarginTop() +
+			style.GetBorderTopSize() +
+			style.GetPaddingTop(),
+		Right: style.GetMarginRight() +
+			style.GetBorderRightSize() +
+			style.GetPaddingRight(),
+		Bottom: style.GetMarginBottom() +
+			style.GetBorderBottomSize() +
+			style.GetPaddingBottom(),
+		Left: style.GetMarginLeft() +
+			style.GetBorderLeftSize() +
+			style.GetPaddingLeft(),
+	}
+}
+
+func fitBlock(block string, width, height int) []string {
+	rendered := strings.Split(block, "\n")
+	lines := make([]string, height)
+	for i := range height {
+		line := ""
+		if i < len(rendered) {
+			line = ansi.Truncate(rendered[i], width, "")
+		}
+		lines[i] = padLine(line, width)
+	}
+	return lines
 }

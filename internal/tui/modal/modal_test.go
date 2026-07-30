@@ -1,12 +1,16 @@
 package modal
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 )
+
+const testTabOne = "One"
 
 func TestModelSwitchesTabsThroughCommands(t *testing.T) {
 	t.Parallel()
@@ -14,12 +18,12 @@ func TestModelSwitchesTabsThroughCommands(t *testing.T) {
 	model := New(testStyles())
 	model.Configure(
 		80, 24, 6, 40, "body", Standard,
-		[]Tab{{ID: 1, Label: "One"}, {ID: 2, Label: "Two"}},
+		[]Tab{{ID: 1, Label: testTabOne}, {ID: 2, Label: "Two"}},
 		1,
 	)
 	overlay := model.Overlay()
 	next, command := model.Update(tea.MouseClickMsg{
-		X:      overlay.ContentLeft + lipgloss.Width(model.styles.ActiveTab.Render("One")),
+		X:      overlay.ContentLeft + lipgloss.Width(model.styles.ActiveTab.Render(testTabOne)),
 		Y:      overlay.ContentTop,
 		Button: tea.MouseLeft,
 	})
@@ -27,6 +31,37 @@ func TestModelSwitchesTabsThroughCommands(t *testing.T) {
 	next, command = next.Update(command())
 	require.Nil(t, command)
 	require.Equal(t, TabID(2), next.ActiveTab())
+}
+
+func TestModelRendersHoveredTabAndActiveContainer(t *testing.T) {
+	t.Parallel()
+
+	styles := testStyles()
+	styles.HoveredTab = styles.Tab.Underline(true)
+	styles.ActiveContainer = lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder())
+	model := New(styles)
+	model.Configure(
+		80, 24, 0, 40, "body", Standard,
+		[]Tab{{ID: 1, Label: testTabOne}, {ID: 2, Label: "Two"}},
+		1,
+	)
+	overlay := model.Overlay()
+	model, _ = model.Update(tea.MouseMotionMsg{
+		X: overlay.ContentLeft +
+			lipgloss.Width(styles.ActiveTab.Render(testTabOne)),
+		Y: overlay.ContentTop,
+	})
+	require.Contains(t, model.View(), styles.HoveredTab.Render("Two"))
+
+	overlay = model.Overlay()
+	model, _ = model.Update(tea.MouseClickMsg{
+		X: overlay.Left + 1, Y: overlay.Top, Button: tea.MouseLeft,
+	})
+	model, _ = model.Update(tea.MouseMotionMsg{
+		X: overlay.Left + 2, Y: overlay.Top + 1, Button: tea.MouseLeft,
+	})
+	require.True(t, strings.HasPrefix(ansi.Strip(model.View()), "╔"))
 }
 
 func TestModelKeepsModalBelowAvoidedRows(t *testing.T) {
@@ -43,7 +78,7 @@ func TestModelTreatsConfiguredWidthAsOuterWidth(t *testing.T) {
 	model := New(testStyles())
 	model.Configure(
 		80, 24, 0, 40, "body", Standard,
-		[]Tab{{ID: 1, Label: "One"}},
+		[]Tab{{ID: 1, Label: testTabOne}},
 		1,
 	)
 
@@ -261,11 +296,16 @@ func TestModelReleasesPendingResizeWithoutChangingSize(t *testing.T) {
 }
 
 func testStyles() Styles {
+	container := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
+	tab := lipgloss.NewStyle().Padding(0, 1)
 	return Styles{
-		Container: lipgloss.NewStyle().Border(lipgloss.NormalBorder()),
-		Notice:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()),
-		Body:      lipgloss.NewStyle().PaddingTop(1),
-		Tab:       lipgloss.NewStyle().Padding(0, 1),
-		ActiveTab: lipgloss.NewStyle().Bold(true).Padding(0, 1),
+		Container:       container,
+		ActiveContainer: container,
+		Notice:          lipgloss.NewStyle().Border(lipgloss.RoundedBorder()),
+		NoticeText:      lipgloss.NewStyle(),
+		Body:            lipgloss.NewStyle().PaddingTop(1),
+		Tab:             tab,
+		HoveredTab:      tab.Underline(true),
+		ActiveTab:       tab.Bold(true),
 	}
 }

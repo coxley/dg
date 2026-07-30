@@ -28,7 +28,7 @@ func TestResolverProjectsScopesProfilesAndTextPrecedence(t *testing.T) {
 	})
 	require.NoError(t, err)
 	resolver.SetProfile(ProfileMac)
-	resolver.SetSuperAvailable(true)
+	resolver.SetKeyDisambiguation(true)
 
 	message, ok := resolver.Resolve("q", []ScopeID{testScopeField, testScopeCanvas}, false)
 	require.True(t, ok)
@@ -106,6 +106,31 @@ func TestResolverStandardProfileAndUnavailableSuper(t *testing.T) {
 	)
 	require.True(t, ok)
 	require.Equal(t, CommandID(testFormSave), message.Command)
+}
+
+func TestResolverAdvertisesAmbiguousChordsOnlyWithKeyDisambiguation(t *testing.T) {
+	t.Parallel()
+
+	resolver, err := NewResolver([]Binding{
+		{
+			Scope:   testScopeGlobal,
+			Chords:  Keys(escapeChord, "ctrl+enter", "ctrl+y", "ctrl+shift+z"),
+			Command: testBack,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []EffectiveBinding{
+		{Scope: testScopeGlobal, Chord: escapeChord, Command: testBack},
+		{Scope: testScopeGlobal, Chord: "ctrl+y", Command: testBack},
+	}, resolver.Effective([]ScopeID{testScopeGlobal}))
+
+	resolver.SetKeyDisambiguation(true)
+	require.Equal(t, []EffectiveBinding{
+		{Scope: testScopeGlobal, Chord: escapeChord, Command: testBack},
+		{Scope: testScopeGlobal, Chord: "ctrl+enter", Command: testBack},
+		{Scope: testScopeGlobal, Chord: "ctrl+y", Command: testBack},
+		{Scope: testScopeGlobal, Chord: "ctrl+shift+z", Command: testBack},
+	}, resolver.Effective([]ScopeID{testScopeGlobal}))
 }
 
 func TestResolverExecutesObservedMacPrimaryBeforeCapabilityReport(t *testing.T) {
