@@ -57,6 +57,8 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - double-click restores automatic node sizing
 - double-clicking an edge clears all of its pinned bends
 - Alt-drag duplicates selected nodes and their internal edges
+- Ctrl constrains selection moves and Alt-drag duplication to the dominant
+  horizontal or vertical axis
 - Ctrl-click toggles non-contiguous selection
 - Ctrl-A expands to connected components, then selects everything
 - edge endpoint dragging begins only after pointer movement

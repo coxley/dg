@@ -542,6 +542,12 @@ func (m *Model) dragNode(nodeID uint32, cursorX, cursorY int64) {
 	}
 	cursorX += int64(rebase.X)
 	cursorY += int64(rebase.Y)
+	if rebase != (layout.Point{}) {
+		m.interaction.gesture.start = m.interaction.gesture.start.Add(
+			rebase.X,
+			rebase.Y,
+		)
+	}
 	cursor := layout.NewPoint(uint32(cursorX), uint32(cursorY))
 	moved, err := m.moveSelectedNodes(dx, dy, cursor)
 	if err != nil {
@@ -890,6 +896,7 @@ func (m *Model) deleteActive() {
 }
 
 func (m *Model) cancelMode() {
+	m.interaction.controlDrag = controlDrag{}
 	if m.interaction.gesture.kind == gestureRectangle {
 		m.interaction.resetGesture()
 		m.interaction.tool = toolNavigate
@@ -988,6 +995,7 @@ func (m *Model) rejectMove(cause error) {
 
 func (m *Model) interruptInteraction() {
 	m.clipboard.CancelPending()
+	m.interaction.controlDrag = controlDrag{}
 	if m.preferenceEdit {
 		m.cancelPreferences()
 	}

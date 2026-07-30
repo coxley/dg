@@ -500,6 +500,42 @@ func TestModelAltDragPreviewsAndCommitsDuplicate(t *testing.T) {
 	require.False(t, model.geo.NodeExists(copied.ID))
 }
 
+func TestModelAltControlDragAxisLocksDuplicate(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	before := model.geo.Nodes[nodeID].Rect.Min
+	point := model.geo.Nodes[nodeID].LabelPoint
+	modifiers := tea.ModAlt | tea.ModCtrl
+	click := tea.Mouse{
+		X:      int(point.X),
+		Y:      int(point.Y),
+		Button: tea.MouseLeft,
+		Mod:    modifiers,
+	}
+	updateModel(t, model, tea.MouseClickMsg(click))
+	drag := tea.Mouse{
+		X:      click.X + 4,
+		Y:      click.Y + 10,
+		Button: tea.MouseLeft,
+		Mod:    modifiers,
+	}
+	updateModel(t, model, tea.MouseMotionMsg(drag))
+	preview, ok := model.interaction.render.duplicateLayout.Selection().FirstNode()
+	require.True(t, ok)
+	require.Equal(
+		t,
+		before.Add(0, 10),
+		model.interaction.render.duplicateLayout.Nodes[preview].Rect.Min,
+	)
+
+	updateModel(t, model, tea.MouseReleaseMsg(drag))
+	duplicate, ok := model.geo.Selection().FirstNode()
+	require.True(t, ok)
+	require.Equal(t, before.Add(0, 10), model.geo.Nodes[duplicate].Rect.Min)
+}
+
 func TestModelBlurDiscardsDuplicatePreview(t *testing.T) {
 	t.Parallel()
 
@@ -3479,6 +3515,40 @@ func TestModelMouseSelectsAndDragsNode(t *testing.T) {
 	require.Equal(t, before.Add(2, 1), model.geo.Nodes[nodeID].Rect.Min)
 	updateModel(t, model, tea.MouseReleaseMsg{Button: tea.MouseLeft})
 	require.NotEqual(t, gestureMove, model.interaction.gesture.kind)
+}
+
+func TestModelControlDragAxisLocksSelectionMove(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	leftBefore := model.geo.Nodes[left].Rect.Min
+	rightBefore := model.geo.Nodes[right].Rect.Min
+	leftHit := layout.Hit{ID: left, Kind: layout.HitNode}
+	model.selectOnly(leftHit)
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{
+		ID:   right,
+		Kind: layout.HitNode,
+	}))
+	point := model.geo.Nodes[left].LabelPoint
+	click := tea.Mouse{
+		X:      int(point.X),
+		Y:      int(point.Y),
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+	}
+	updateModel(t, model, tea.MouseClickMsg(click))
+	drag := tea.Mouse{
+		X:      click.X + 10,
+		Y:      click.Y + 4,
+		Button: tea.MouseLeft,
+		Mod:    tea.ModCtrl,
+	}
+	updateModel(t, model, tea.MouseMotionMsg(drag))
+	updateModel(t, model, tea.MouseReleaseMsg(drag))
+
+	require.Equal(t, leftBefore.Add(10, 0), model.geo.Nodes[left].Rect.Min)
+	require.Equal(t, rightBefore.Add(10, 0), model.geo.Nodes[right].Rect.Min)
 }
 
 func TestModelBlurCommitsPointerMove(t *testing.T) {

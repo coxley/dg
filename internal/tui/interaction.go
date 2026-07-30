@@ -97,6 +97,13 @@ type clickTracker struct {
 	valid bool
 }
 
+type controlDrag struct {
+	target layout.Hit
+	start  layout.Point
+	offset layout.Point
+	valid  bool
+}
+
 type interactionRenderCache struct {
 	connectionPreview  []layout.Point
 	connectionRaster   []layout.RasterCell
@@ -143,6 +150,7 @@ type interactionState struct {
 	session     interactionSession
 	gesture     pointerGesture
 	click       clickTracker
+	controlDrag controlDrag
 	render      interactionRenderCache
 	transaction interactionTransaction
 }
@@ -179,4 +187,25 @@ func (s interactionState) movingRigidly() bool {
 
 func (s *interactionState) resetGesture() {
 	s.gesture = pointerGesture{}
+	s.controlDrag = controlDrag{}
+}
+
+func axisLockedPointer(
+	start layout.Point,
+	x, y int64,
+) (int64, int64) {
+	startX, startY := int64(start.X), int64(start.Y)
+	dx := max(x, startX) - min(x, startX)
+	dy := max(y, startY) - min(y, startY)
+	if dx >= dy {
+		y = startY
+	} else {
+		x = startX
+	}
+	return x, y
+}
+
+func axisLockedPoint(start, point layout.Point) layout.Point {
+	x, y := axisLockedPointer(start, int64(point.X), int64(point.Y))
+	return layout.NewPoint(uint32(x), uint32(y))
 }

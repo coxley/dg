@@ -39,6 +39,9 @@ func (m *Model) updateDuplicateMotion(mouse tea.Mouse) bool {
 		return false
 	}
 	if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
+		if mouse.Mod.Contains(tea.ModCtrl) {
+			point = axisLockedPoint(m.interaction.gesture.start, point)
+		}
 		m.updateDuplicateDrag(point)
 	}
 	return true

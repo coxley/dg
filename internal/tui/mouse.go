@@ -20,6 +20,7 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	if !ok {
 		return
 	}
+	m.interaction.controlDrag = controlDrag{}
 	if m.interaction.tool == toolRectangle {
 		if mouse.Button == tea.MouseLeft {
 			m.startRectangle(point)
@@ -58,6 +59,8 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 			m.interaction.gesture = pointerGesture{
 				kind:   gestureLabelPress,
 				target: m.target,
+				start:  point,
+				point:  point,
 				offset: layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y),
 			}
 		}
@@ -83,6 +86,18 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		m.geo.Selection().Toggle(hit)
 		m.refreshSelectionHighlight()
 		m.interaction.resetGesture()
+		if hit.Kind == layout.HitNode {
+			rect := m.geo.Nodes[hit.ID].Rect
+			m.interaction.controlDrag = controlDrag{
+				target: hit,
+				start:  point,
+				offset: layout.NewPoint(
+					point.X-rect.Min.X,
+					point.Y-rect.Min.Y,
+				),
+				valid: true,
+			}
+		}
 		m.status = ""
 		return
 	}
@@ -112,6 +127,8 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.interaction.gesture = pointerGesture{
 		kind:   gestureMove,
 		target: hit,
+		start:  point,
+		point:  point,
 		offset: layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y),
 		rigid:  m.geo.SelectionMovesRigidly(),
 	}
@@ -253,6 +270,9 @@ func (m *Model) nearEdgeEndpoint(edgeID uint32, point layout.Point) bool {
 }
 
 func (m *Model) updateMouseMotion(mouse tea.Mouse) {
+	if m.startControlMove(mouse) {
+		return
+	}
 	switch m.interaction.gesture.kind {
 	case gestureNone:
 	case gestureMove:
@@ -281,6 +301,37 @@ func (m *Model) updateMouseMotion(mouse tea.Mouse) {
 	}
 }
 
+func (m *Model) startControlMove(mouse tea.Mouse) bool {
+	pending := m.interaction.controlDrag
+	if !pending.valid ||
+		m.interaction.gesture.kind != gestureNone ||
+		mouse.Button != tea.MouseLeft ||
+		!mouse.Mod.Contains(tea.ModCtrl) {
+		return false
+	}
+	x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+	if x == int64(pending.start.X) && y == int64(pending.start.Y) {
+		return true
+	}
+	if !m.geo.Selection().Contains(pending.target) {
+		m.geo.Selection().Toggle(pending.target)
+		m.refreshSelectionHighlight()
+	}
+	m.target = pending.target
+	m.beginTransaction(transactionPointerMove)
+	m.interaction.controlDrag = controlDrag{}
+	m.interaction.gesture = pointerGesture{
+		kind:   gestureMove,
+		target: pending.target,
+		start:  pending.start,
+		point:  pending.start,
+		offset: pending.offset,
+		rigid:  m.geo.SelectionMovesRigidly(),
+	}
+	m.updateMoveMotion(mouse)
+	return true
+}
+
 func (m *Model) updateAreaSelectionMotion(mouse tea.Mouse) {
 	if mouse.Button == tea.MouseLeft {
 		x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
@@ -299,10 +350,15 @@ func (m *Model) updateLabelPressMotion(mouse tea.Mouse) {
 	m.interaction.gesture = pointerGesture{
 		kind:   gestureMove,
 		target: gesture.target,
+		start:  gesture.start,
+		point:  gesture.point,
 		offset: gesture.offset,
 		rigid:  m.geo.SelectionMovesRigidly(),
 	}
 	x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+	if mouse.Mod.Contains(tea.ModCtrl) {
+		x, y = axisLockedPointer(gesture.start, x, y)
+	}
 	m.dragNode(nodeID, x, y)
 }
 
@@ -312,6 +368,9 @@ func (m *Model) updateMoveMotion(mouse tea.Mouse) {
 		return
 	}
 	x, y := m.unboundedDocumentPoint(mouse.X, mouse.Y)
+	if mouse.Mod.Contains(tea.ModCtrl) {
+		x, y = axisLockedPointer(m.interaction.gesture.start, x, y)
+	}
 	m.dragNode(target.ID, x, y)
 }
 
@@ -368,6 +427,12 @@ func (m *Model) updateRectangleMotion(mouse tea.Mouse) {
 }
 
 func (m *Model) updateMouseRelease(mouse tea.Mouse) {
+	if m.interaction.gesture.kind == gestureNone &&
+		m.interaction.controlDrag.valid &&
+		mouse.Button == tea.MouseLeft {
+		m.interaction.controlDrag = controlDrag{}
+		return
+	}
 	switch m.interaction.gesture.kind {
 	case gestureNone:
 	case gestureDuplicatePending, gestureDuplicate:
@@ -378,6 +443,9 @@ func (m *Model) updateMouseRelease(mouse tea.Mouse) {
 		if !ok {
 			m.cancelDuplicateDrag()
 			return
+		}
+		if mouse.Mod.Contains(tea.ModCtrl) {
+			point = axisLockedPoint(m.interaction.gesture.start, point)
 		}
 		m.finishDuplicateDrag(point)
 	case gestureRectangle:
