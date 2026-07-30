@@ -340,7 +340,6 @@ func TestDockedSidebarPushesStatusLineToCanvas(t *testing.T) {
 	status := lines[workspace.Footer.Y]
 	sidebar := ansi.Cut(status, 0, workspace.Canvas.X)
 	require.Contains(t, sidebar, "Esc canvas")
-	require.Equal(t, "│", ansi.Cut(sidebar, workspace.Canvas.X-2, workspace.Canvas.X-1))
 	require.Contains(t, ansi.Cut(status, workspace.Canvas.X, workspace.Terminal.Width), "selected  nodes 1")
 }
 

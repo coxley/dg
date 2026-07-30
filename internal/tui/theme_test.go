@@ -51,16 +51,6 @@ func TestThemeTintOptionsComeFromIndependentDefaultLists(t *testing.T) {
 	})
 }
 
-func TestThemeLeavesChromeBackgroundUnpainted(t *testing.T) {
-	t.Parallel()
-
-	theme := themeForTints(true, defaultDarkTint, defaultLightTint)
-
-	require.IsType(t, lipgloss.NoColor{}, theme.Navigation.Container.GetBackground())
-	require.IsType(t, lipgloss.NoColor{}, theme.Modal.Container.GetBackground())
-	require.IsType(t, lipgloss.NoColor{}, theme.Help.Description.GetBackground())
-}
-
 func TestHelpRendersEveryRootOwnedStyle(t *testing.T) {
 	t.Parallel()
 

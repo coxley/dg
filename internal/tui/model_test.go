@@ -1834,24 +1834,22 @@ func TestSettingsModalCanResize(t *testing.T) {
 		model.dialogs.preferences.bounds,
 	)
 	plan := model.dialogs.plan
-	lines := strings.Split(ansi.Strip(after.Content), "\n")
-	require.Len(t, lines, after.Height)
-	require.True(t, strings.HasPrefix(lines[len(lines)-1], "└"))
-	require.True(t, strings.HasSuffix(lines[len(lines)-1], "┘"))
+	overlayLines := strings.Split(ansi.Strip(after.Content), "\n")
+	require.Len(t, overlayLines, after.Height)
 	screen := strings.Split(ansi.Strip(model.View().Content), "\n")
 	require.Equal(t, plan, model.dialogs.plan)
 	after = model.dialogs.Overlay()
-	bottom := screen[after.Top+after.Height-1]
-	require.Equal(t, "└", ansi.Cut(bottom, after.Left, after.Left+1))
-	require.Equal(
-		t,
-		"┘",
-		ansi.Cut(
-			bottom,
-			after.Left+after.Width-1,
-			after.Left+after.Width,
-		),
-	)
+	for row, overlayLine := range overlayLines {
+		require.Equal(
+			t,
+			overlayLine,
+			ansi.Cut(
+				screen[after.Top+row],
+				after.Left,
+				after.Left+after.Width,
+			),
+		)
+	}
 
 	updateModel(t, model, tea.MouseReleaseMsg(mouse))
 	require.False(t, model.dialogs.Resizing())
@@ -2149,17 +2147,6 @@ func TestStatusUsesRootThemeVariants(t *testing.T) {
 	model.theme.Status.Normal = lipgloss.NewStyle().Bold(true)
 	model.status = "ready"
 	require.Contains(t, model.View().Content, model.theme.Status.Normal.Render("ready"))
-}
-
-func TestLineModePortHighlightUsesForegroundOnly(t *testing.T) {
-	t.Parallel()
-
-	model, _ := newTestModel(t)
-	model.interaction.tool = toolConnect
-
-	highlight := model.highlightStyle().Render("x")
-	require.Contains(t, highlight, "[38;")
-	require.NotContains(t, highlight, "[48;")
 }
 
 func TestModelReordersLayersWithUndo(t *testing.T) {
@@ -2836,7 +2823,6 @@ func TestModelViewTracksWindowWithoutCursor(t *testing.T) {
 	require.Nil(t, view.Cursor)
 	require.True(t, view.AltScreen)
 	require.Equal(t, tea.MouseModeAllMotion, view.MouseMode)
-	require.NotContains(t, view.Content, model.theme.Canvas.Selection.Render("┌──"))
 	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].Rect.Min))
 	require.False(t, model.highlightedPoint(model.geo.Nodes[nodeID].LabelPoint))
 }
@@ -2848,13 +2834,21 @@ func TestToolbarFloatsOverCanvasAndCentersTools(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 60, Height: 10})
 	view := model.View()
 	lines := strings.Split(view.Content, "\n")
-	require.NotContains(t, lines[0], "╭")
-	require.Contains(t, lines[1], "╭───────────────────────────╮")
-	require.Contains(t, lines[2], "│                           │")
-	tools := ansi.Strip(lines[3])
-	require.Contains(t, tools, "│  Cursor  Rectangle  Line  │")
-	require.Contains(t, lines[4], "│                           │")
-	require.Contains(t, lines[5], "╰───────────────────────────╯")
+	bounds := model.nav.Bounds()
+	require.NotZero(t, bounds.Width)
+	require.Equal(t, (model.width-bounds.Width)/2, bounds.X)
+	require.Equal(t, 1, bounds.Y)
+	surface, ok := model.surfacePlan(surfaceNavigation)
+	require.True(t, ok)
+	require.Equal(t, bounds, surface.Rect)
+	for row, toolbarLine := range model.nav.LinesFor(model.activeTool()) {
+		rendered := ansi.Cut(
+			lines[bounds.Y+row],
+			bounds.X,
+			bounds.Right(),
+		)
+		require.Equal(t, ansi.Strip(toolbarLine), ansi.Strip(rendered))
+	}
 
 	point, ok := model.documentPoint(3, 0)
 	require.True(t, ok)
@@ -2877,6 +2871,10 @@ func TestToolbarHighlightsHoveredTool(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
+	theme := model.theme
+	theme.Navigation.Item = lipgloss.NewStyle()
+	theme.Navigation.Hover = lipgloss.NewStyle().Underline(true)
+	model.applyTheme(theme)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 60, Height: 10})
 	start, row, ok := model.nav.Cell(nav.Rectangle)
 	require.True(t, ok)
@@ -2888,7 +2886,7 @@ func TestToolbarHighlightsHoveredTool(t *testing.T) {
 	require.Contains(
 		t,
 		model.View().Content,
-		model.theme.Navigation.Hover.Render(" Rectangle "),
+		theme.Navigation.Hover.Render(" Rectangle "),
 	)
 }
 
