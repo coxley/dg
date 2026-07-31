@@ -30,6 +30,9 @@ reappeared. Draft preservation replaces the UUID-keyed durable draft.
 Draft naming writes the named record before deleting the draft. A promotion
 journal removes a duplicate draft after restart when the named write completed.
 If the named write did not complete, recovery preserves the draft.
+Demotion writes the draft before deleting the named record. A demotion journal
+finishes removing an unchanged named record after restart when the draft write
+completed.
 `Import` copies a compressed external document into Drafts while preserving its
 UUID and leaving the source untouched.
 

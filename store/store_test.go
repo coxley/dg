@@ -70,6 +70,59 @@ func TestStoreNamedCanvasLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrEntryNotFound)
 }
 
+func TestStoreDemotesNamedCanvasWithoutReencoding(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "canvas")
+	named, err := store.Create("RFCs", "Proposal", doc)
+	require.NoError(t, err)
+	source, err := store.Path(named)
+	require.NoError(t, err)
+	want, err := os.ReadFile(source)
+	require.NoError(t, err)
+
+	draft, err := store.Demote(named)
+	require.NoError(t, err)
+	require.True(t, draft.Draft)
+	require.Equal(t, doc.ID, draft.ID)
+	require.Empty(t, draft.Section)
+	require.Empty(t, draft.Name)
+	_, err = os.Stat(source)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	target, err := store.Path(draft)
+	require.NoError(t, err)
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
+
+func TestStoreDemoteRejectsStaleRevisionAndDraftCollision(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stale revision", func(t *testing.T) {
+		store := newTestStore(t)
+		named, err := store.Create("", "Canvas", testDocument(t, "named"))
+		require.NoError(t, err)
+		require.NoError(t, replaceFile(store.namedPath("", "Canvas"), []byte("external")))
+		_, err = store.Demote(named)
+		require.ErrorIs(t, err, ErrRevision)
+	})
+
+	t.Run("draft collision", func(t *testing.T) {
+		store := newTestStore(t)
+		doc := testDocument(t, "named")
+		named, err := store.Create("", "Canvas", doc)
+		require.NoError(t, err)
+		_, err = store.CreateDraft(doc)
+		require.NoError(t, err)
+		_, err = store.Demote(named)
+		require.ErrorIs(t, err, ErrEntryExists)
+		_, err = store.Load(named)
+		require.NoError(t, err)
+	})
+}
+
 func TestStoreImportPreservesSourceAndIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -318,6 +371,41 @@ func TestStoreNamesDraftAndRecoversCompletedPromotion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "Named", entries[0].Name)
+}
+
+func TestStoreRecoversCompletedDemotion(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	preferred := filepath.Join(root, "canvases")
+	state := filepath.Join(root, "state")
+	cache := filepath.Join(root, "cache")
+	store, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	doc := testDocument(t, "named")
+	named, err := store.Create("RFCs", "Proposal", doc)
+	require.NoError(t, err)
+	source, err := store.Path(named)
+	require.NoError(t, err)
+	data, err := os.ReadFile(source)
+	require.NoError(t, err)
+	require.NoError(t, store.writeDemotion(demotion{
+		ID:       named.ID,
+		Section:  named.Section,
+		Name:     named.Name,
+		Revision: named.Revision,
+	}))
+	require.NoError(t, writeNew(store.draftPath(named.ID), data))
+
+	reopened, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	_, err = os.Stat(source)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	entries, err := reopened.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.True(t, entries[0].Draft)
+	require.Equal(t, named.ID, entries[0].ID)
 }
 
 func TestStoreListsOneLevelAndClearsDrafts(t *testing.T) {

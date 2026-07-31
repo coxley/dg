@@ -85,7 +85,7 @@ type Store struct {
 	self      map[string]Revision
 }
 
-// New opens a Store rooted at preferred and recovers interrupted draft promotion.
+// New opens a Store rooted at preferred and recovers interrupted record moves.
 func New(preferred string, options ...Option) (*Store, error) {
 	if preferred == "" {
 		return nil, errors.New("store preferred directory must not be empty")
@@ -131,6 +131,9 @@ func New(preferred string, options ...Option) (*Store, error) {
 		return nil, fmt.Errorf("create drafts directory: %w", err)
 	}
 	if err := store.recoverPromotion(); err != nil {
+		return nil, err
+	}
+	if err := store.recoverDemotion(); err != nil {
 		return nil, err
 	}
 	return store, nil
@@ -384,6 +387,66 @@ func (s *Store) Name(entry Entry, section, name string) (Entry, error) {
 	return updated, err
 }
 
+// Demote moves a named canvas to durable Drafts without changing its identity.
+func (s *Store) Demote(entry Entry) (Entry, error) {
+	if entry.Draft {
+		return Entry{}, errors.New("store cannot demote a draft")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	source, err := s.entryPath(entry)
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := checkRevision(source, entry.Revision); err != nil {
+		return Entry{}, err
+	}
+	target := s.draftPath(entry.ID)
+	if _, err := os.Stat(target); err == nil {
+		return Entry{}, ErrEntryExists
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return Entry{}, fmt.Errorf("inspect draft destination: %w", err)
+	}
+	data, err := os.ReadFile(source) //nolint:gosec // Entry validation confines the path to the preferred directory.
+	if err != nil {
+		return Entry{}, fmt.Errorf("read canvas for demotion: %w", err)
+	}
+	journal := demotion{
+		ID:       entry.ID,
+		Section:  entry.Section,
+		Name:     entry.Name,
+		Revision: entry.Revision,
+	}
+	if err := s.writeDemotion(journal); err != nil {
+		return Entry{}, err
+	}
+	if err := writeNew(target, data); err != nil {
+		_ = os.Remove(s.demotionPath())
+		if errors.Is(err, fs.ErrExist) {
+			return Entry{}, ErrEntryExists
+		}
+		return Entry{}, err
+	}
+	if err := os.Remove(source); err != nil {
+		return Entry{}, errors.Join(
+			fmt.Errorf("remove demoted canvas: %w", err),
+			os.Remove(target),
+			os.Remove(s.demotionPath()),
+		)
+	}
+	if err := os.Remove(s.demotionPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return Entry{}, fmt.Errorf("finish canvas demotion: %w", err)
+	}
+	s.warm.remove(warmKey(source, entry.Revision))
+	updated, err := entryFromFile(target, "", "", true, entry.ID)
+	if err == nil {
+		s.warm.put(warmKey(target, updated.Revision), data)
+		s.self[source] = Revision{}
+		s.self[target] = updated.Revision
+	}
+	return updated, err
+}
+
 // Delete removes entry when its observed revision still matches.
 func (s *Store) Delete(entry Entry) error {
 	s.mu.Lock()
@@ -505,7 +568,9 @@ func (s *Store) draftPath(id uuid.UUID) string {
 }
 
 func (s *Store) promotionPath() string { return filepath.Join(s.stateDir, "promotion.json") }
-func (s *Store) historyDir() string    { return filepath.Join(s.cacheDir, "history") }
+
+func (s *Store) demotionPath() string { return filepath.Join(s.stateDir, "demotion.json") }
+func (s *Store) historyDir() string   { return filepath.Join(s.cacheDir, "history") }
 func warmKey(path string, revision Revision) string {
 	return fmt.Sprintf("%s:%d:%d:%d", path, revision.Modified, revision.Size, revision.CRC32)
 }
@@ -619,6 +684,13 @@ type promotion struct {
 	Name    string    `json:"name"`
 }
 
+type demotion struct {
+	ID       uuid.UUID `json:"id"`
+	Section  string    `json:"section"`
+	Name     string    `json:"name"`
+	Revision Revision  `json:"revision"`
+}
+
 func (s *Store) writePromotion(value promotion) error {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -653,6 +725,50 @@ func (s *Store) recoverPromotion() error {
 	}
 	if err := os.Remove(s.promotionPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("finish draft promotion recovery: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) writeDemotion(value demotion) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode canvas demotion: %w", err)
+	}
+	if err := replaceFile(s.demotionPath(), data); err != nil {
+		return fmt.Errorf("write canvas demotion: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) recoverDemotion() error {
+	data, err := os.ReadFile(s.demotionPath()) //nolint:gosec // Store owns the demotion path.
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read canvas demotion: %w", err)
+	}
+	var value demotion
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode canvas demotion: %w", err)
+	}
+	if value.ID == uuid.Nil || value.ID.Version() != 4 {
+		return errors.New("validate canvas demotion: invalid document identity")
+	}
+	if err := validateLocation(value.Section, value.Name); err != nil {
+		return fmt.Errorf("validate canvas demotion: %w", err)
+	}
+	source := s.namedPath(value.Section, value.Name)
+	target := s.draftPath(value.ID)
+	if targetDoc, readErr := readDocumentFile(target); readErr == nil && targetDoc.ID == value.ID {
+		if err := checkRevision(source, value.Revision); err == nil {
+			if err := os.Remove(source); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("recover demoted canvas: %w", err)
+			}
+		}
+	}
+	if err := os.Remove(s.demotionPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("finish canvas demotion recovery: %w", err)
 	}
 	return nil
 }
