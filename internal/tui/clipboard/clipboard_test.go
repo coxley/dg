@@ -1,6 +1,7 @@
 package clipboard
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 	"testing/synctest"
@@ -133,7 +134,8 @@ func TestNativeFailureSelectsTerminalOrReportsFailure(t *testing.T) {
 func TestStructuredPasteRequiresMatchingText(t *testing.T) {
 	t.Parallel()
 
-	encoded := encodePayload("diagram", []byte("fragment"))
+	encoded, err := encodePayload("diagram", []byte("fragment"))
+	require.NoError(t, err)
 	model := newTestModel()
 	model.UseNativeReader(func() []byte { return encoded })
 
@@ -141,6 +143,34 @@ func TestStructuredPasteRequiresMatchingText(t *testing.T) {
 	require.Equal(t, []byte("fragment"), message.Data)
 	message = model.ReadPaste("other")().(PasteMsg)
 	require.Nil(t, message.Data)
+}
+
+func TestPayloadCompression(t *testing.T) {
+	t.Parallel()
+
+	t.Run("small raw", func(t *testing.T) {
+		t.Parallel()
+
+		payload := []byte("fragment")
+		encoded, err := encodePayload("diagram", payload)
+		require.NoError(t, err)
+		require.Zero(t, encoded[len(payloadMagic)])
+		require.Equal(t, payload, decodePayload("diagram", encoded))
+	})
+
+	t.Run("large gzip", func(t *testing.T) {
+		t.Parallel()
+
+		payload := bytes.Repeat([]byte(`{"node":"repetitive"}`), 1000)
+		encoded, err := encodePayload("diagram", payload)
+		require.NoError(t, err)
+		require.Equal(t, payloadFlagGZIP, encoded[len(payloadMagic)])
+		require.Less(t, len(encoded), len(payload))
+		require.Equal(t, payload, decodePayload("diagram", encoded))
+
+		encoded = encoded[:len(encoded)-1]
+		require.Nil(t, decodePayload("diagram", encoded))
+	})
 }
 
 func TestFormat(t *testing.T) {

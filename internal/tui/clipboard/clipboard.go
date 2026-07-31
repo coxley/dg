@@ -2,8 +2,12 @@
 package clipboard
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
+	"io"
 	"strings"
 	"time"
 	"unicode"
@@ -14,15 +18,22 @@ import (
 )
 
 const (
-	probeTimeout = 100 * time.Millisecond
-	payloadMIME  = "application/vnd.dg.fragment+json"
+	probeTimeout             = 100 * time.Millisecond
+	payloadMIME              = "application/vnd.dg.fragment"
+	payloadCompressThreshold = 4 << 10
+	payloadLimit             = 64 << 20
 	// DebounceDuration is the interval for distinguishing copy from export.
 	DebounceDuration = 175 * time.Millisecond
 )
 
 var (
 	payloadFormat = native.Register(payloadMIME)
-	payloadMagic  = [4]byte{'D', 'G', 'F', 1}
+	payloadMagic  = [4]byte{'D', 'G', 'F', 2}
+)
+
+const (
+	payloadFlagGZIP   uint8 = 1 << iota
+	payloadHeaderSize       = len(payloadMagic) + 1 + 4 + 4
 )
 
 type mode uint8
@@ -100,9 +111,13 @@ func writeNative(text string, payload []byte) error {
 	}
 	values := []native.Data{{Format: native.FmtText, Bytes: []byte(text)}}
 	if len(payload) != 0 {
+		encoded, err := encodePayload(text, payload)
+		if err != nil {
+			return err
+		}
 		values = append(values, native.Data{
 			Format: payloadFormat,
-			Bytes:  encodePayload(text, payload),
+			Bytes:  encoded,
 		})
 	}
 	_, err := native.WriteMany(values...)
@@ -436,23 +451,78 @@ func (m *Model) completeExport() tea.Cmd {
 	)
 }
 
-func encodePayload(text string, payload []byte) []byte {
-	encoded := make([]byte, len(payloadMagic)+4+len(payload))
-	copy(encoded, payloadMagic[:])
-	binary.LittleEndian.PutUint32(encoded[len(payloadMagic):], crc32.ChecksumIEEE([]byte(text)))
-	copy(encoded[len(payloadMagic)+4:], payload)
-	return encoded
+func encodePayload(text string, payload []byte) ([]byte, error) {
+	if len(payload) > payloadLimit {
+		return nil, errors.New("clipboard fragment exceeds size limit")
+	}
+	if len(payload) < payloadCompressThreshold {
+		return payloadEnvelope(text, payload, len(payload), 0), nil
+	}
+	var compressed bytes.Buffer
+	compressed.Grow(len(payload) / 8)
+	writer, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := writer.Write(payload); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	if compressed.Len() >= len(payload) {
+		return payloadEnvelope(text, payload, len(payload), 0), nil
+	}
+	return payloadEnvelope(
+		text,
+		compressed.Bytes(),
+		len(payload),
+		payloadFlagGZIP,
+	), nil
 }
 
 func decodePayload(text string, encoded []byte) []byte {
-	const headerSize = len(payloadMagic) + 4
-	if len(encoded) < headerSize ||
+	if len(encoded) < payloadHeaderSize ||
 		string(encoded[:len(payloadMagic)]) != string(payloadMagic[:]) ||
-		binary.LittleEndian.Uint32(encoded[len(payloadMagic):headerSize]) !=
+		binary.LittleEndian.Uint32(encoded[len(payloadMagic)+1:len(payloadMagic)+5]) !=
 			crc32.ChecksumIEEE([]byte(text)) {
 		return nil
 	}
-	return append([]byte(nil), encoded[headerSize:]...)
+	flags := encoded[len(payloadMagic)]
+	size := binary.LittleEndian.Uint32(encoded[len(payloadMagic)+5 : payloadHeaderSize])
+	if flags & ^payloadFlagGZIP != 0 || size > payloadLimit {
+		return nil
+	}
+	body := encoded[payloadHeaderSize:]
+	if flags == 0 {
+		if uint64(len(body)) != uint64(size) {
+			return nil
+		}
+		return append([]byte(nil), body...)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return nil
+	}
+	decoded, err := io.ReadAll(io.LimitReader(reader, int64(size)+1))
+	closeErr := reader.Close()
+	if err != nil || closeErr != nil || uint64(len(decoded)) != uint64(size) {
+		return nil
+	}
+	return decoded
+}
+
+func payloadEnvelope(text string, body []byte, size int, flags uint8) []byte {
+	encoded := make([]byte, payloadHeaderSize+len(body))
+	copy(encoded, payloadMagic[:])
+	encoded[len(payloadMagic)] = flags
+	binary.LittleEndian.PutUint32(
+		encoded[len(payloadMagic)+1:],
+		crc32.ChecksumIEEE([]byte(text)),
+	)
+	binary.LittleEndian.PutUint32(encoded[len(payloadMagic)+5:], uint32(size))
+	copy(encoded[payloadHeaderSize:], body)
+	return encoded
 }
 
 func styleValue(style Style) string {

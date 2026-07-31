@@ -14,6 +14,9 @@ atomic multi-format writes.
   portable fragment with `RequestCopy`.
 - Native writes atomically replace the clipboard with plain text and the
   fragment MIME type. OSC52 fallback writes plain text only.
+- Fragment payloads smaller than `4 << 10` bytes remain raw. Larger payloads
+  use gzip BestSpeed when it shrinks the value. Decoding rejects values larger
+  than `64 << 20` bytes.
 - Export formats the plain-text value and carries the original fragment into
   the same atomic write.
 - `ReadPaste` returns structural data only when its CRC32 envelope matches the

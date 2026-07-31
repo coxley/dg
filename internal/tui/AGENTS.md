@@ -164,7 +164,7 @@ mouse events and standalone modifier-key events do not cancel this window.
 Stale timers must never write after another interaction.
 
 The first actual clipboard write prefers the internal native backend. It
-publishes plain text and `application/vnd.dg.fragment+json` in one clipboard
+publishes plain text and `application/vnd.dg.fragment` in one clipboard
 replacement. If native initialization or writing fails, a 100 ms terminal
 probe selects the OSC52 text-only fallback. Structural paste stays unavailable
 when only OSC52 works. Advertise Super-C only after a keyboard enhancement
