@@ -234,7 +234,6 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	m.workspace.SetFooter(1)
 	m.applySettingsSnapshot(configured.settings)
 	m.sidebar = newSidebar(sidebarDeclaration{
-		Header: "SIDEBAR",
 		Items: []sidebarItem{
 			{ID: "overview", Label: "Overview"},
 			{ID: "selection", Label: "Selection"},

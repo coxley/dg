@@ -147,14 +147,17 @@ picker. Enter on an explicitly focused button submits that button. The naming
 form right-justifies compact text values opposite their field labels.
 
 The sidebar uses an application-declared Pane with separate Canvases and Drafts
-tabs. Canvases groups root records and collapsible one-level sections; Drafts
-shows newest-first modification times and clear/delete actions. Width follows
-the widest known content with a 30-cell minimum and remains stable across tabs
-and collapse. It docks only while preserving 48 canvas cells and otherwise
-becomes a drawer. One workspace transition owns the boundary and canvas origin.
-Back leaves a docked sidebar visible but returns keyboard focus to the canvas;
-Back or an outside click dismisses a drawer. Ctrl-B opens, focuses, refocuses,
-or closes it.
+tabs. Each tab owns half of the header content width and supports pointer and
+keyboard focus and activation. Header, inactive, focused, and active tab
+styles remain independent. Canvases groups root records and collapsible
+one-level sections with independent normal and focused styles; Drafts shows
+newest-first modification times and clear/delete actions. Width follows the
+widest known content with a 30-cell minimum and remains stable across tabs and
+collapse. It docks only while preserving 48 canvas cells and otherwise becomes
+a drawer. One workspace transition owns the boundary and canvas origin. Back
+leaves a docked sidebar visible but returns keyboard focus to the canvas; Back
+or an outside click dismisses a drawer. Ctrl-B opens, focuses, refocuses, or
+closes it.
 
 New sessions open the sidebar without taking canvas focus. Any pointer click
 inside the sidebar focuses it, including its header, empty body space, and

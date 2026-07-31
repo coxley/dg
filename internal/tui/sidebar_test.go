@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/internal/tui/chrome"
@@ -52,7 +53,7 @@ func TestSidebarBuildsCanvasSectionsAndDraftTab(t *testing.T) {
 	require.Equal(t, wantWidth, model.sidebar.desired)
 
 	model.switchSidebarTab(1)
-	require.Equal(t, "Canvases  [Drafts]", model.sidebar.declaration.Header)
+	require.True(t, model.sidebar.drafts)
 	require.Equal(t, wantWidth, model.sidebar.desired)
 	require.Len(t, model.sidebar.declaration.Items, 3)
 	for _, item := range model.sidebar.declaration.Items[:2] {
@@ -110,6 +111,71 @@ func TestSidebarStartsOpenAndClickFocusesIt(t *testing.T) {
 	require.True(t, model.sidebar.focused)
 	scope, _ = model.sidebar.focus.Current()
 	require.Equal(t, scopeSidebar, scope)
+}
+
+func TestSidebarTabsShareHeaderAndActivateOnClick(t *testing.T) {
+	t.Parallel()
+
+	model, _, _ := newStoredTestModel(t, "draft")
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 12})
+	model.setMotionEnabled(false)
+	updateModelCommand(t, model, sidebarKey())
+	require.Len(t, model.sidebar.tabs, 2)
+	canvases := model.sidebar.tabs[0]
+	drafts := model.sidebar.tabs[1]
+	require.Equal(t, canvases.Rect.Right(), drafts.Rect.X)
+	require.LessOrEqual(
+		t,
+		max(canvases.Rect.Width, drafts.Rect.Width)-min(canvases.Rect.Width, drafts.Rect.Width),
+		1,
+	)
+
+	clickSidebarTab(t, model, drafts)
+	require.True(t, model.sidebar.drafts)
+	focusedDrafts, ok := model.sidebar.focusedTab()
+	require.True(t, ok)
+	require.True(t, focusedDrafts)
+
+	clickSidebarTab(t, model, canvases)
+	require.False(t, model.sidebar.drafts)
+	focusedDrafts, ok = model.sidebar.focusedTab()
+	require.True(t, ok)
+	require.False(t, focusedDrafts)
+}
+
+func TestSidebarUsesDeclaredHeaderTabAndSectionStyles(t *testing.T) {
+	t.Parallel()
+
+	styles := DefaultTheme(true).Sidebar
+	styles.Header = lipgloss.NewStyle().Background(lipgloss.Color("4"))
+	styles.Tab = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	styles.FocusedTab = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	styles.ActiveTab = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	styles.Section = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	styles.FocusedSection = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	sidebar := newSidebar(sidebarDeclaration{
+		Items: []sidebarItem{{
+			ID: "section:Design", Label: "▾ [Design]", Kind: sidebarItemSection,
+		}},
+	}, styles)
+	sidebar.setBounds(chrome.Rect{Width: 30, Height: 6})
+	sidebar.show()
+
+	rendered := strings.Join(sidebar.pane.Lines(), "\n")
+	require.Contains(t, rendered, "\x1b[44m")
+	require.Contains(t, rendered, "\x1b[31m")
+	require.Contains(t, rendered, "\x1b[33m")
+	require.Contains(t, rendered, "\x1b[35m")
+
+	require.True(t, sidebar.focusTarget(sidebarDraftsTab))
+	sidebar.render()
+	rendered = strings.Join(sidebar.pane.Lines(), "\n")
+	require.Contains(t, rendered, "\x1b[32m")
+
+	require.True(t, sidebar.focusTarget("section:Design"))
+	sidebar.render()
+	rendered = strings.Join(sidebar.pane.Lines(), "\n")
+	require.Contains(t, rendered, "\x1b[36m")
 }
 
 func TestSidebarDeletesDraftsWithActivePreservationAndConfirmation(t *testing.T) {
@@ -527,8 +593,8 @@ func TestSidebarPaneUsesApplicationHeaderBodyAndFooter(t *testing.T) {
 	require.True(t, ok)
 	lines := model.sidebar.lines(surface)
 
-	require.Contains(t, ansi.Strip(lines[0]), "SIDEBAR")
-	require.Contains(t, ansi.Strip(strings.Join(lines[1:len(lines)-1], "\n")), "Overview")
+	require.Contains(t, ansi.Strip(strings.Join(lines[:model.sidebar.pane.Plan().Header.Height], "\n")), "Canvases")
+	require.Contains(t, ansi.Strip(strings.Join(lines[model.sidebar.pane.Plan().Header.Height:len(lines)-1], "\n")), "Overview")
 	require.Contains(t, ansi.Strip(lines[len(lines)-1]), "Esc canvas")
 }
 
@@ -698,6 +764,20 @@ func sidebarLabels(model *Model) []string {
 	return labels
 }
 
+func clickSidebarTab(t *testing.T, model *Model, tab sidebarTabPlan) {
+	t.Helper()
+
+	surface, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	point := chrome.Point{
+		X: surface.Content.X + tab.Rect.X + tab.Rect.Width/2,
+		Y: surface.Content.Y + tab.Rect.Y,
+	}
+	updateModelCommand(t, model, tea.MouseClickMsg{
+		X: point.X, Y: point.Y, Button: tea.MouseLeft,
+	})
+}
+
 func dragSidebarItem(t *testing.T, model *Model, source, target chrome.FocusID) {
 	t.Helper()
 
@@ -755,12 +835,9 @@ func sidebarItemPoint(t *testing.T, model *Model, id chrome.FocusID) chrome.Poin
 func focusSidebarItem(t testing.TB, model *Model, id chrome.FocusID) {
 	t.Helper()
 	model.sidebar.show()
-	for range len(model.sidebar.declaration.Items) {
-		_, focused := model.sidebar.focus.Current()
-		if focused == id {
-			return
-		}
-		model.sidebar.moveFocus(1)
+	if model.sidebar.focusTarget(id) {
+		model.sidebar.render()
+		return
 	}
 	t.Fatalf("sidebar item %q not found", id)
 }

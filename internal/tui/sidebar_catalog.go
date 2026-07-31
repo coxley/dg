@@ -19,10 +19,10 @@ func (m *Model) rebuildSidebarCatalog() {
 	draftItems, draftLabels := m.draftSidebarItems()
 	labels := append(canvasLabels, draftLabels...)
 	if m.sidebar.drafts {
-		m.sidebar.setContent("Canvases  [Drafts]", draftItems, labels)
+		m.sidebar.setContent(draftItems, labels)
 		return
 	}
-	m.sidebar.setContent("[Canvases]  Drafts", canvasItems, labels)
+	m.sidebar.setContent(canvasItems, labels)
 }
 
 func (m *Model) canvasSidebarItems() ([]sidebarItem, []string) {
@@ -144,12 +144,22 @@ func (m *Model) switchSidebarTab(delta int) tea.Cmd {
 	if delta == 0 {
 		return nil
 	}
-	m.sidebar.drafts = !m.sidebar.drafts
+	return m.selectSidebarTab(!m.sidebar.drafts)
+}
+
+func (m *Model) selectSidebarTab(drafts bool) tea.Cmd {
+	m.sidebar.drafts = drafts
 	m.rebuildSidebarCatalog()
+	if m.sidebar.focused {
+		m.sidebar.focusTab(drafts)
+	}
 	return m.retargetSidebar()
 }
 
 func (m *Model) activateSidebar() tea.Cmd {
+	if drafts, ok := m.sidebar.focusedTab(); ok {
+		return m.selectSidebarTab(drafts)
+	}
 	item, ok := m.sidebar.focusedItem()
 	if !ok {
 		return nil
@@ -239,7 +249,7 @@ func (m *Model) moveCanvasToSection(entry canvasstore.Entry, section string) tea
 	}
 	m.sidebar.collapsed[section] = false
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
-	m.sidebar.focusItem(canvasSidebarItem(moved, section != "").ID)
+	m.sidebar.focusTarget(canvasSidebarItem(moved, section != "").ID)
 	m.sidebar.focus.Reveal(m.sidebar.viewport)
 	m.sidebar.render()
 	m.status = "moved " + moved.Name
