@@ -56,9 +56,10 @@ type FormSpacer struct {
 
 // FormDeclaration contains application-owned form content.
 type FormDeclaration struct {
-	Fields  []FormField
-	Spacer  FormSpacer
-	Actions ButtonListDeclaration
+	Fields        []FormField
+	Spacer        FormSpacer
+	Actions       ButtonListDeclaration
+	DefaultAction ID
 }
 
 // FormStyles defines geometry-stable semantic form states.
@@ -394,6 +395,11 @@ func (f *Form) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	}
 
 	field := &f.declaration.Fields[f.focus]
+	if intent == Activate && field.Kind != DirectoryField {
+		if id, ok := f.defaultAction(); ok {
+			return emitFormMessage(FormSubmitMsg{ID: id})
+		}
+	}
 	if field.Kind == TextField {
 		return f.updateTextField(message, intent)
 	}
@@ -417,6 +423,15 @@ func (f *Form) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	case NoControlIntent:
 	}
 	return nil
+}
+
+func (f *Form) defaultAction() (ID, bool) {
+	for _, button := range f.declaration.Actions.Buttons {
+		if button.ID == f.declaration.DefaultAction {
+			return button.ID, true
+		}
+	}
+	return "", false
 }
 
 func (f *Form) updateTextField(message tea.KeyPressMsg, intent ControlIntent) tea.Cmd {

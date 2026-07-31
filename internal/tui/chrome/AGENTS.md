@@ -18,6 +18,9 @@ diagnostics used by the chrome lab.
   geometry.
 - Forms expose semantic field, button, spacer, and button-list IDs through one
   retained plan. Applications own declarations and value mapping.
+- A form may declare a default action. Enter on a field submits that action
+  unless the field owns Enter activation; Enter on a button submits the
+  focused button.
 - Text inputs edit grapheme clusters, clip by display cell, and keep typing,
   paste, pointer, and accessible value paths within the form declaration.
 - Keep keyboard traversal and accessible execution paths aligned with the same

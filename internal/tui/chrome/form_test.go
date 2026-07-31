@@ -12,7 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testFormSave ID = "save"
+const (
+	testFormDirectory ID = "directory"
+	testFormSave      ID = "save"
+)
 
 func TestFormEditsDeclaredFieldsWithinBounds(t *testing.T) {
 	t.Parallel()
@@ -142,7 +145,7 @@ func TestFormPlanRetainsSemanticGeometry(t *testing.T) {
 	require.Equal(t, ID("actions"), plan.ButtonListID)
 	require.Len(t, plan.Fields, 3)
 	require.Len(t, plan.Buttons, 2)
-	require.Equal(t, ID("directory"), plan.Fields[2].ID)
+	require.Equal(t, testFormDirectory, plan.Fields[2].ID)
 	require.Equal(t, plan.Bounds.X, plan.Buttons[0].Rect.X)
 	require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
 	require.Positive(t, plan.Spacer.Height)
@@ -168,7 +171,7 @@ func TestFormTraversalIncludesEveryButtonAndWraps(t *testing.T) {
 	t.Parallel()
 
 	form := newTestForm()
-	require.True(t, form.Focus("directory"))
+	require.True(t, form.Focus(testFormDirectory))
 
 	_, _ = form.Update(formKey(tea.KeyTab, ""))
 	require.Equal(t, testFormSave, form.FocusID())
@@ -189,11 +192,42 @@ func TestFormPointerEmitsSemanticMessages(t *testing.T) {
 
 	directory := plan.Fields[2].Rect
 	message := form.Click(Point{X: directory.X, Y: directory.Y})()
-	require.Equal(t, FormActivateMsg{ID: "directory"}, message)
+	require.Equal(t, FormActivateMsg{ID: testFormDirectory}, message)
 
 	save := plan.Buttons[0].Rect
 	message = form.Click(Point{X: save.X, Y: save.Y})()
 	require.Equal(t, FormSubmitMsg{ID: testFormSave}, message)
+}
+
+func TestFormEnterSubmitsDefaultActionExceptActivatableField(t *testing.T) {
+	t.Parallel()
+
+	declaration := testFormDeclaration()
+	declaration.DefaultAction = testFormSave
+	form := NewForm(declaration, testFormStyles())
+
+	message := formCommandMessage(t, form, formKey(tea.KeyEnter, ""))
+	require.Equal(t, FormSubmitMsg{ID: testFormSave}, message)
+	require.True(t, form.Focus("select"))
+	message = formCommandMessage(t, form, formKey(tea.KeyEnter, ""))
+	require.Equal(t, FormSubmitMsg{ID: testFormSave}, message)
+	require.True(t, form.Focus(testFormDirectory))
+	message = formCommandMessage(t, form, formKey(tea.KeyEnter, ""))
+	require.Equal(t, FormActivateMsg{ID: testFormDirectory}, message)
+	require.True(t, form.Focus("cancel"))
+	message = formCommandMessage(t, form, formKey(tea.KeyEnter, ""))
+	require.Equal(t, FormSubmitMsg{ID: "cancel"}, message)
+}
+
+func formCommandMessage(
+	t *testing.T,
+	form *Form,
+	message tea.KeyPressMsg,
+) tea.Msg {
+	t.Helper()
+	_, command := form.Update(message)
+	require.NotNil(t, command)
+	return command()
 }
 
 func TestFormAccessibleExecutionIncludesEveryControl(t *testing.T) {
@@ -293,7 +327,7 @@ func testFormDeclaration() FormDeclaration {
 					{Label: "Two", Value: viewportTwo},
 				},
 			},
-			{ID: "directory", Label: "Directory", Kind: DirectoryField},
+			{ID: testFormDirectory, Label: "Directory", Kind: DirectoryField},
 		},
 		Spacer: FormSpacer{ID: "spacer", Grow: 1},
 		Actions: ButtonListDeclaration{
