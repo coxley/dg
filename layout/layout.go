@@ -343,50 +343,58 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 	if len(selectedNodes) == 0 {
 		return errors.New("selection contains no nodes")
 	}
+	return l.copyNodesFrom(l, selectedNodes, dx, dy, true)
+}
 
-	portMap := make([]uint32, len(l.graph.Ports))
-	nodeMap := make([]uint32, len(l.graph.Nodes))
-	edgeMap := make([]uint32, len(l.graph.Edges))
+func (l *Layout) copyNodesFrom(
+	source *Layout,
+	selectedNodes []uint32,
+	dx, dy int64,
+	copyRoutes bool,
+) error {
+	portMap := make([]uint32, len(source.graph.Ports))
+	nodeMap := make([]uint32, len(source.graph.Nodes))
+	edgeMap := make([]uint32, len(source.graph.Edges))
 	l.selection.Clear()
 	for _, sourceID := range selectedNodes {
-		origin, ok := offsetPoint(l.origins[sourceID], dx, dy)
+		origin, ok := offsetPoint(source.origins[sourceID], dx, dy)
 		if !ok {
-			return errors.New("duplicate placement outside coordinate space")
+			return errors.New("copy placement outside coordinate space")
 		}
-		source := l.graph.Nodes[sourceID]
-		ports := make([]ir.Port, len(source.Ports))
-		for i, portID := range source.Ports {
-			ports[i] = l.graph.Ports[portID]
+		sourceNode := source.graph.Nodes[sourceID]
+		ports := make([]ir.Port, len(sourceNode.Ports))
+		for i, portID := range sourceNode.Ports {
+			ports[i] = source.graph.Ports[portID]
 		}
-		nodeID, err := l.newNodeAt(source.Label, origin, ports)
+		nodeID, err := l.newNodeAt(sourceNode.Label, origin, ports)
 		if err != nil {
 			return err
 		}
 		nodeMap[sourceID] = nodeID + 1
-		for i, sourcePort := range source.Ports {
+		for i, sourcePort := range sourceNode.Ports {
 			portMap[sourcePort] = l.graph.Nodes[nodeID].Ports[i]
 		}
-		if size, explicit := l.ExplicitNodeSize(sourceID); explicit {
+		if size, explicit := source.ExplicitNodeSize(sourceID); explicit {
 			if err := l.SetNodeSize(nodeID, size); err != nil {
 				return err
 			}
 		}
-		if err := l.SetNodeStyle(nodeID, l.nodeStyles[sourceID]); err != nil {
+		if err := l.SetNodeStyle(nodeID, source.nodeStyles[sourceID]); err != nil {
 			return err
 		}
 		l.selection.ensureCapacity()
 		l.selection.Toggle(Hit{ID: nodeID, Kind: HitNode})
 	}
-	for edgeID, edge := range l.graph.Edges {
-		if !l.graph.EdgeExists(uint32(edgeID)) {
+	for edgeID, edge := range source.graph.Edges {
+		if !source.graph.EdgeExists(uint32(edgeID)) {
 			continue
 		}
 		if uint64(edge.PortA) >= uint64(len(portMap)) ||
 			uint64(edge.PortB) >= uint64(len(portMap)) {
 			continue
 		}
-		nodeA := l.graph.Ports[edge.PortA].Node
-		nodeB := l.graph.Ports[edge.PortB].Node
+		nodeA := source.graph.Ports[edge.PortA].Node
+		nodeB := source.graph.Ports[edge.PortB].Node
 		if uint64(nodeA) >= uint64(len(nodeMap)) ||
 			uint64(nodeB) >= uint64(len(nodeMap)) ||
 			nodeMap[nodeA] == 0 || nodeMap[nodeB] == 0 {
@@ -396,34 +404,36 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		if err != nil {
 			return fmt.Errorf("duplicate edge %d: %w", edgeID, err)
 		}
-		if err := l.SetEdgeStyle(duplicateID, l.edgeStyles[edgeID]); err != nil {
+		if err := l.SetEdgeStyle(duplicateID, source.edgeStyles[edgeID]); err != nil {
 			return err
 		}
-		duplicateBends, ok := offsetPinnedBends(l.edgeBends[edgeID], dx, dy)
+		duplicateBends, ok := offsetPinnedBends(source.edgeBends[edgeID], dx, dy)
 		if !ok {
-			return errors.New("duplicate bend outside coordinate space")
+			return errors.New("copy bend outside coordinate space")
 		}
 		if err := l.SetPinnedBends(duplicateID, duplicateBends); err != nil {
 			return err
 		}
-		points := slices.Grow(
-			l.Edges[duplicateID].Points[:0],
-			len(l.Edges[edgeID].Points),
-		)
-		for _, point := range l.Edges[edgeID].Points {
-			translated, ok := offsetPoint(point, dx, dy)
-			if !ok {
-				return errors.New("duplicate route outside coordinate space")
+		if copyRoutes {
+			points := slices.Grow(
+				l.Edges[duplicateID].Points[:0],
+				len(source.Edges[edgeID].Points),
+			)
+			for _, point := range source.Edges[edgeID].Points {
+				translated, ok := offsetPoint(point, dx, dy)
+				if !ok {
+					return errors.New("copy route outside coordinate space")
+				}
+				points = append(points, translated)
 			}
-			points = append(points, translated)
+			l.Edges[duplicateID].Points = points
 		}
-		l.Edges[duplicateID].Points = points
 		l.selection.ensureCapacity()
 		l.selection.Toggle(Hit{ID: duplicateID, Kind: HitEdge})
 		edgeMap[edgeID] = duplicateID + 1
 	}
 	for _, sourceID := range selectedNodes {
-		attachment, ok := l.NodeAttachment(sourceID)
+		attachment, ok := source.NodeAttachment(sourceID)
 		if !ok ||
 			uint64(attachment.EdgeID) >= uint64(len(edgeMap)) ||
 			edgeMap[attachment.EdgeID] == 0 {

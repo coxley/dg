@@ -77,6 +77,11 @@ Deleting a node also removes attachments hosted by its incident edges.
 Duplication copies a relationship only when both the attached node and host
 edge are copied.
 
+`Fragment` owns a portable selected subgraph. `CopySelection` includes edges
+only when both endpoint nodes are selected and applies the same rule to
+attachments. `Paste` roots the fragment bounds at a destination point,
+selects the new objects, and leaves route computation to the next build.
+
 Selecting an edge first selects its attached nodes too. Selecting the same edge
 again leaves only the edge selected. Raster ownership remains authoritative:
 an edge passing under an attached node must not claim or highlight the node's
