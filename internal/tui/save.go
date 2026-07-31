@@ -223,6 +223,17 @@ func (m *Model) requestSave() {
 		m.setError(finishOperation)
 		return
 	}
+	if m.canvasStore != nil && m.entry != nil && !m.entry.Draft {
+		if m.dirty != m.saved {
+			if err := m.persistActive(); err != nil {
+				m.setError(err.Error())
+			}
+			return
+		}
+		m.status = "autosaved"
+		m.statusError = ""
+		return
+	}
 	if m.path == "" {
 		m.dialogs.OpenSave(m.preferenceValue().SaveDirectory)
 		m.status = ""

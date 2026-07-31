@@ -23,6 +23,8 @@ never replaces an existing name.
 Draft naming writes the named record before deleting the draft. A promotion
 journal removes a duplicate draft after restart when the named write completed.
 If the named write did not complete, recovery preserves the draft.
+`Import` copies a compressed external document into Drafts while preserving its
+UUID and leaving the source untouched.
 
 ## Warm data and history
 

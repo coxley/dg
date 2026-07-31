@@ -403,6 +403,8 @@ Status: complete.
 
 ### Phase 6: TUI switching and autosave
 
+Status: complete.
+
 - Replace path-centric state with an active Entry.
 - Add reusable-layout switching and independent per-canvas history restore.
 - Add 500 ms autosave and deterministic lifecycle flushes.

@@ -70,6 +70,28 @@ func TestStoreNamedCanvasLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, ErrEntryNotFound)
 }
 
+func TestStoreImportPreservesSourceAndIdentity(t *testing.T) {
+	t.Parallel()
+
+	source := newTestStore(t)
+	doc := testDocument(t, "shared")
+	entry, err := source.Create("", "Shared", doc)
+	require.NoError(t, err)
+	path, err := source.Path(entry)
+	require.NoError(t, err)
+	want, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	target := newTestStore(t)
+	draft, imported, err := target.Import(path)
+	require.NoError(t, err)
+	require.True(t, draft.Draft)
+	require.Equal(t, doc.ID, imported.ID)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
+
 func TestStoreReturnsIndependentDocuments(t *testing.T) {
 	t.Parallel()
 

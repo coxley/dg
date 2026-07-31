@@ -188,6 +188,23 @@ func (s *Store) CreateDraft(doc document.Document) (Entry, error) {
 	return entry, err
 }
 
+// Import reads a compressed document from path into Drafts without changing source.
+func (s *Store) Import(path string) (Entry, document.Document, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // The caller intentionally selects an external source.
+	if err != nil {
+		return Entry{}, document.Document{}, fmt.Errorf("read imported canvas: %w", err)
+	}
+	doc, err := decodeDocument(data)
+	if err != nil {
+		return Entry{}, document.Document{}, fmt.Errorf("decode imported canvas: %w", err)
+	}
+	entry, err := s.CreateDraft(doc)
+	if err != nil {
+		return Entry{}, document.Document{}, err
+	}
+	return entry, doc, nil
+}
+
 // Load reads and validates entry, returning independently owned document data.
 func (s *Store) Load(entry Entry) (document.Document, error) {
 	var doc document.Document
@@ -195,6 +212,11 @@ func (s *Store) Load(entry Entry) (document.Document, error) {
 		return document.Document{}, err
 	}
 	return doc, nil
+}
+
+// Path returns entry's filesystem path.
+func (s *Store) Path(entry Entry) (string, error) {
+	return s.entryPath(entry)
 }
 
 // LoadInto reads and validates entry while reusing dst document capacity.

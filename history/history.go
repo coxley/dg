@@ -36,8 +36,16 @@ type History struct {
 	generation uint64
 	activeGen  uint64
 	resetting  bool
+	changed    func()
 
 	cache cacheState
+}
+
+// SetChangeCallback replaces the callback invoked after visible history changes.
+func (h *History) SetChangeCallback(callback func()) {
+	if h != nil {
+		h.changed = callback
+	}
 }
 
 // Option configures History.
@@ -155,6 +163,7 @@ func (h *History) Undo() (bool, error) {
 		return false, fmt.Errorf("undo history: %w", err)
 	}
 	h.cursor--
+	h.notifyChanged()
 	return true, nil
 }
 
@@ -168,6 +177,7 @@ func (h *History) Redo() (bool, error) {
 		return false, fmt.Errorf("redo history: %w", err)
 	}
 	h.cursor++
+	h.notifyChanged()
 	return true, nil
 }
 
@@ -273,6 +283,7 @@ func (h *History) Reload(replace func() error) error {
 	h.generation++
 	h.cache.branchValid = false
 	h.cache.clearPending()
+	h.notifyChanged()
 	return nil
 }
 
@@ -311,6 +322,7 @@ func (h *History) record(change layout.Change) {
 		h.cursor = len(h.entries)
 		h.enforceLimit()
 		h.scheduleCache()
+		h.notifyChanged()
 		return
 	}
 	h.discardRedo()
@@ -327,8 +339,15 @@ func (h *History) commitActive() {
 		h.cursor = len(h.entries)
 		h.enforceLimit()
 		h.scheduleCache()
+		h.notifyChanged()
 	}
 	h.closeActive()
+}
+
+func (h *History) notifyChanged() {
+	if h.changed != nil {
+		h.changed()
+	}
 }
 
 func (h *History) closeActive() {

@@ -13,6 +13,7 @@ The root `Model` owns editor coordination:
 - viewport, cursor, active tool, focus, workspace surfaces, and dialog state
 - mouse, drag, resize, edge-bend, label-edit, and reconnect interactions
 - save, preference transactions, document selection export, and notices
+- active Store entry, catalog reconciliation, canvas switching, and autosave
 
 Composable presentation models live in sub-packages:
 
@@ -78,6 +79,11 @@ removed, then rasterize only the draft route over it. Node-only duplicate
 previews layer over committed frames without routing.
 Rigid committed moves skip routing when static edges cannot be affected.
 Keep preview geometry separate from committed geometry.
+
+Completed history changes schedule a 500 ms autosave. Switching synchronously
+persists a dirty document and flushes dirty history before reusing the same
+Document and Layout storage for the destination. Each canvas restores its own
+UUID-keyed history. Clean switches skip document and history writes.
 
 Each component defines its own `Styles`; root `Theme` configures them. Derive
 component dimensions from border and padding geometry. Cache Lip

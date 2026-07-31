@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/coxley/dg/internal/tui/nav"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/layout"
+	canvasstore "github.com/coxley/dg/store"
 )
 
 type mode uint8
@@ -64,10 +66,15 @@ func (m mode) String() string {
 
 // Model coordinates terminal interaction with a layout.
 type Model struct {
-	geo      *layout.Layout
-	history  *history.History
-	document document.Document
-	theme    Theme
+	geo         *layout.Layout
+	history     *history.History
+	document    document.Document
+	canvasStore *canvasstore.Store
+	entry       *canvasstore.Entry
+	catalog     []canvasstore.Entry
+	catalogFeed <-chan canvasstore.CatalogEvent
+	cancelWatch context.CancelFunc
+	theme       Theme
 
 	cursor      layout.Point
 	viewport    layout.Point
@@ -102,6 +109,8 @@ type Model struct {
 	status      string
 	statusError string
 	path        string
+	dirty       uint64
+	saved       uint64
 
 	clipboard *clipboardview.Model
 
@@ -122,10 +131,12 @@ type Model struct {
 type Option func(*modelOptions)
 
 type modelOptions struct {
-	settings settings.Snapshot
-	store    *settings.Store
-	history  *history.History
-	document *document.Document
+	settings      settings.Snapshot
+	settingsStore *settings.Store
+	history       *history.History
+	document      *document.Document
+	canvasStore   *canvasstore.Store
+	entry         *canvasstore.Entry
 }
 
 // WithDocument preserves value as the persisted identity of geo.
@@ -139,7 +150,7 @@ func WithDocument(value document.Document) Option {
 func WithSettings(snapshot settings.Snapshot, store *settings.Store) Option {
 	return func(options *modelOptions) {
 		options.settings = snapshot
-		options.store = store
+		options.settingsStore = store
 	}
 }
 
@@ -147,6 +158,14 @@ func WithSettings(snapshot settings.Snapshot, store *settings.Store) Option {
 func WithHistory(value *history.History) Option {
 	return func(options *modelOptions) {
 		options.history = value
+	}
+}
+
+// WithCanvasStore configures durable storage and the active record.
+func WithCanvasStore(value *canvasstore.Store, active canvasstore.Entry) Option {
+	return func(options *modelOptions) {
+		options.canvasStore = value
+		options.entry = &active
 	}
 }
 
@@ -166,13 +185,30 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	if configured.history != nil && configured.history.Layout() != geo {
 		return nil, errors.New("configured history belongs to a different layout")
 	}
+	if (configured.canvasStore == nil) != (configured.entry == nil) {
+		return nil, errors.New("canvas store and active entry must be configured together")
+	}
+	if configured.document != nil && configured.entry != nil && configured.document.ID != configured.entry.ID {
+		return nil, errors.New("configured document and active entry identities differ")
+	}
+	var catalog []canvasstore.Entry
+	if configured.canvasStore != nil {
+		var err error
+		catalog, err = configured.canvasStore.List()
+		if err != nil {
+			return nil, fmt.Errorf("list canvases: %w", err)
+		}
+	}
 	m := &Model{
 		geo:           geo,
 		history:       configured.history,
 		path:          path,
 		theme:         DefaultTheme(true),
 		styledRuns:    make(map[styledRunKey]string),
-		settingsStore: configured.store,
+		settingsStore: configured.settingsStore,
+		canvasStore:   configured.canvasStore,
+		entry:         configured.entry,
+		catalog:       catalog,
 	}
 	if configured.document == nil {
 		m.document = document.New(geo)
@@ -232,17 +268,21 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 			return nil, fmt.Errorf("configure history: %w", err)
 		}
 	}
+	m.history.SetChangeCallback(m.markDocumentDirty)
 	m.syncWorkspace()
 	return m, nil
 }
 
-// Run starts an interactive terminal editor for geo and saves it to path.
-func Run(geo *layout.Layout, path string, options ...Option) error {
-	model, err := newModel(geo, path, options...)
+// Run starts an interactive terminal editor for geo.
+func Run(geo *layout.Layout, options ...Option) error {
+	model, err := newModel(geo, "", options...)
 	if err != nil {
 		return err
 	}
 	_, runErr := tea.NewProgram(model).Run()
+	if model.cancelWatch != nil {
+		model.cancelWatch()
+	}
 	model.interruptInteraction()
 	cleanupErr := resetLiveTint(os.Stdout)
 	return errors.Join(runErr, cleanupErr)
@@ -253,16 +293,28 @@ func resetLiveTint(writer io.Writer) error {
 	return err
 }
 
-func (*Model) Init() tea.Cmd {
-	return tea.Raw(ansi.SetModeLightDark + ansi.RequestBackgroundColor)
+func (m *Model) Init() tea.Cmd {
+	raw := tea.Raw(ansi.SetModeLightDark + ansi.RequestBackgroundColor)
+	watch := m.startCatalogWatch()
+	if watch == nil {
+		return raw
+	}
+	return tea.Batch(raw, watch)
 }
 
-func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
+	dirty := m.dirty
 	syncWorkspace := m.workspaceNeedsSync()
 	defer func() {
 		m.syncWorkspaceAfterUpdate(syncWorkspace)
+		if m.dirty != dirty && m.canvasStore != nil {
+			command = tea.Batch(command, autosaveAfter(m.dirty))
+		}
 	}()
 	if command, handled := m.updatePresentation(message); handled {
+		return m, command
+	}
+	if command, handled := m.updatePersistence(message); handled {
 		return m, command
 	}
 	switch message := message.(type) {
@@ -277,7 +329,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case uv.DarkColorSchemeEvent, uv.LightColorSchemeEvent:
 		return m, requestBackgroundColor()
 	case tea.FocusMsg:
-		return m, requestBackgroundColor()
+		return m, tea.Batch(requestBackgroundColor(), reconcileCatalog(m.canvasStore, m.catalog))
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
 		m.bindings.SetKeyDisambiguation(message.SupportsKeyDisambiguation())

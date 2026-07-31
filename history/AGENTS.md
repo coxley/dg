@@ -34,6 +34,8 @@ History as separate operations.
 
 History retains 256 entries by default. `WithLimit` changes that bound.
 Coalescing belongs to Layout because `layout.Change` remains opaque.
+`SetChangeCallback` reports completed visible changes, including undo and redo,
+without exposing Layout's callback. Frontends use it to debounce persistence.
 
 ## Cache
 

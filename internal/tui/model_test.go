@@ -28,11 +28,82 @@ import (
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
+	canvasstore "github.com/coxley/dg/store"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
 
 var benchmarkView tea.View
+
+func TestModelAutosavesActiveCanvasAfterDebounce(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		model, nodeID, store := newStoredTestModel(t, "original")
+		before := *model.entry
+		require.NoError(t, model.geo.SetNodeLabel(nodeID, "changed"))
+		require.NotEqual(t, model.saved, model.dirty)
+		messages := make(chan tea.Msg, 1)
+		go func() { messages <- autosaveAfter(model.dirty)() }()
+
+		time.Sleep(autosaveDelay - time.Millisecond)
+		require.Empty(t, messages)
+		loaded, err := store.Load(before)
+		require.NoError(t, err)
+		require.Equal(t, "original", loaded.Nodes[0].Label)
+		time.Sleep(time.Millisecond)
+		updateModel(t, model, <-messages)
+		require.Equal(t, model.saved, model.dirty)
+		loaded, err = store.Load(*model.entry)
+		require.NoError(t, err)
+		require.Equal(t, "changed", loaded.Nodes[0].Label)
+	})
+}
+
+func TestModelSwitchReusesLayoutAndRestoresPerCanvasHistory(t *testing.T) {
+	t.Parallel()
+
+	model, firstID, store := newStoredTestModel(t, "first")
+	first := *model.entry
+	secondDoc := document.New(mustLayoutWithLabel(t, "second"))
+	second, err := store.CreateDraft(secondDoc)
+	require.NoError(t, err)
+	geo := model.geo
+	require.NoError(t, model.geo.SetNodeLabel(firstID, "first changed"))
+	require.NoError(t, model.switchCanvas(second))
+	first = findStoreEntry(t, store, first.ID)
+	require.Same(t, geo, model.geo)
+	require.Equal(t, "second", model.geo.Label(0))
+	require.NoError(t, model.geo.SetNodeLabel(0, "second changed"))
+
+	require.NoError(t, model.switchCanvas(first))
+	second = findStoreEntry(t, store, second.ID)
+	require.Same(t, geo, model.geo)
+	require.Equal(t, "first changed", model.geo.Label(0))
+	changed, err := model.history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "first", model.geo.Label(0))
+
+	require.NoError(t, model.switchCanvas(second))
+	require.Equal(t, "second changed", model.geo.Label(0))
+	changed, err = model.history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "second", model.geo.Label(0))
+}
+
+func findStoreEntry(t testing.TB, store *canvasstore.Store, id uuid.UUID) canvasstore.Entry {
+	t.Helper()
+	entries, err := store.List()
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if entry.ID == id {
+			return entry
+		}
+	}
+	t.Fatalf("store entry %s not found", id)
+	return canvasstore.Entry{}
+}
 
 func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "relative")
@@ -4134,6 +4205,43 @@ func newTestModel(t testing.TB) (*Model, uint32) {
 	model, err := New(geo, WithHistory(history), testModelSettings())
 	require.NoError(t, err)
 	return model, nodeID
+}
+
+func newStoredTestModel(t testing.TB, label string) (*Model, uint32, *canvasstore.Store) {
+	t.Helper()
+	root := t.TempDir()
+	store, err := canvasstore.New(
+		filepath.Join(root, "canvases"),
+		canvasstore.WithStateDir(filepath.Join(root, "state")),
+		canvasstore.WithCacheDir(filepath.Join(root, "cache")),
+	)
+	require.NoError(t, err)
+	geo := mustLayoutWithLabel(t, label)
+	doc := document.New(geo)
+	entry, err := store.CreateDraft(doc)
+	require.NoError(t, err)
+	history, err := undohistory.New(geo, undohistory.WithStore(store.History()))
+	require.NoError(t, err)
+	_, err = history.Restore(doc)
+	require.NoError(t, err)
+	model, err := New(
+		geo,
+		WithDocument(doc),
+		WithHistory(history),
+		WithCanvasStore(store, entry),
+		testModelSettings(),
+	)
+	require.NoError(t, err)
+	return model, 0, store
+}
+
+func mustLayoutWithLabel(t testing.TB, label string) *layout.Layout {
+	t.Helper()
+	geo, err := layout.New()
+	require.NoError(t, err)
+	_, err = geo.NewNode(label)
+	require.NoError(t, err)
+	return geo
 }
 
 func testModelSettings() Option {
