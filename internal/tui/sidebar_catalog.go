@@ -36,7 +36,11 @@ func (m *Model) canvasSidebarItems() ([]sidebarItem, []string) {
 			continue
 		}
 		label := canvasEntryLabel(entry)
-		labels = append(labels, label)
+		measured := label
+		if entry.Section != "" {
+			measured = sidebarNestedIndent + measured
+		}
+		labels = append(labels, measured)
 		if entry.Section == "" {
 			root = append(root, entry)
 		} else {

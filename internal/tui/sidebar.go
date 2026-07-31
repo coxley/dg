@@ -21,6 +21,7 @@ const (
 	sidebarRootDropTarget = -2
 	sidebarItemPrefix     = "  "
 	sidebarFocusPrefix    = "▸ "
+	sidebarNestedIndent   = "  "
 
 	sidebarCanvasesTab chrome.FocusID = "sidebar-tab:canvases"
 	sidebarDraftsTab   chrome.FocusID = "sidebar-tab:drafts"
@@ -380,10 +381,10 @@ func (s *sidebarState) render() {
 			style = focusedStyle
 		}
 		prefix := sidebarItemPrefix
-		if itemFocused {
+		if itemFocused && item.Kind != sidebarItemSection {
 			prefix = sidebarFocusPrefix
 		}
-		rendered := strings.Split(style.Render(prefix+item.Label), "\n")
+		rendered := strings.Split(style.Render(prefix+sidebarItemContent(item)), "\n")
 		start := len(lines) + style.GetMarginTop()
 		height := max(len(rendered)-style.GetMarginTop()-style.GetMarginBottom(), 0)
 		s.itemPlans = append(s.itemPlans, sidebarItemPlan{
@@ -394,6 +395,13 @@ func (s *sidebarState) render() {
 	}
 	s.viewport.SetContent(lines)
 	s.registerTargets()
+}
+
+func sidebarItemContent(item sidebarItem) string {
+	if item.Kind == sidebarItemRecord && item.Entry.Section != "" {
+		return sidebarNestedIndent + item.Label
+	}
+	return item.Label
 }
 
 func (s *sidebarState) renderHeader() {
@@ -544,7 +552,10 @@ func (s *sidebarState) measure(allLabels []string) {
 		ansi.StringWidth(s.declaration.Footer)+s.styles.Footer.GetHorizontalFrameSize(),
 	)
 	for _, item := range s.declaration.Items {
-		width = max(width, ansi.StringWidth(sidebarItemPrefix+item.Label)+itemFrame)
+		width = max(
+			width,
+			ansi.StringWidth(sidebarItemPrefix+sidebarItemContent(item))+itemFrame,
+		)
 	}
 	for _, label := range allLabels {
 		width = max(width, ansi.StringWidth(sidebarItemPrefix+label)+itemFrame)

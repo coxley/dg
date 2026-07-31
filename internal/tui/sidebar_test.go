@@ -93,6 +93,29 @@ func TestSidebarPrefixesFocusAndKeepsActiveCanvasVisible(t *testing.T) {
 	require.Contains(t, rendered, styles.ActiveItem.Render("▸ Active"))
 }
 
+func TestSidebarSectionsUseDisclosureMarkerAndIndentChildren(t *testing.T) {
+	t.Parallel()
+
+	child := canvasstore.Entry{ID: uuid.New(), Section: "Sub", Name: "Child"}
+	sidebar := newSidebar(sidebarDeclaration{Items: []sidebarItem{
+		{ID: "section:Sub", Label: "▾ [Sub]", Kind: sidebarItemSection},
+		canvasSidebarItem(child),
+	}}, sidebarStyles{})
+	sidebar.setBounds(chrome.Rect{Width: 30, Height: 6})
+	sidebar.show()
+	require.True(t, sidebar.focusTarget("section:Sub"))
+	sidebar.render()
+
+	rendered := ansi.Strip(strings.Join(sidebar.viewport.Lines(), "\n"))
+	require.Contains(t, rendered, "  ▾ [Sub]")
+	require.NotContains(t, rendered, "▸ ▾ [Sub]")
+
+	require.True(t, sidebar.focusTarget(canvasSidebarItem(child).ID))
+	sidebar.render()
+	rendered = ansi.Strip(strings.Join(sidebar.viewport.Lines(), "\n"))
+	require.Contains(t, rendered, "▸   Child")
+}
+
 func TestSidebarClearDraftsStyleAddsSeparateRow(t *testing.T) {
 	t.Parallel()
 
