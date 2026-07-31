@@ -113,7 +113,7 @@ func TestSidebarSectionsUseDisclosureMarkerAndIndentChildren(t *testing.T) {
 	require.True(t, sidebar.focusTarget(canvasSidebarItem(child).ID))
 	sidebar.render()
 	rendered = ansi.Strip(strings.Join(sidebar.viewport.Lines(), "\n"))
-	require.Contains(t, rendered, "▸   Child")
+	require.Contains(t, rendered, "  ▸ Child")
 }
 
 func TestSidebarClearDraftsStyleAddsSeparateRow(t *testing.T) {
@@ -186,6 +186,46 @@ func TestSidebarStartsOpenAndClickFocusesIt(t *testing.T) {
 	require.True(t, model.sidebar.focused)
 	scope, _ = model.sidebar.focus.Current()
 	require.Equal(t, scopeSidebar, scope)
+}
+
+func TestSidebarKeyboardFocusesActiveCanvas(t *testing.T) {
+	t.Parallel()
+
+	t.Run("open draft tab", func(t *testing.T) {
+		t.Parallel()
+
+		model, _, _ := newStoredTestModel(t, "active")
+		active := *model.entry
+		model.sidebar.openInitially()
+
+		updateModelCommand(t, model, sidebarKey())
+
+		require.True(t, model.sidebar.focused)
+		require.True(t, model.sidebar.drafts)
+		item, ok := model.sidebar.focusedItem()
+		require.True(t, ok)
+		require.Equal(t, active.ID, item.Entry.ID)
+	})
+
+	t.Run("closed canvas section", func(t *testing.T) {
+		t.Parallel()
+
+		model, _, store := newStoredTestModel(t, "active")
+		active, err := store.Name(*model.entry, "Design", "Architecture")
+		require.NoError(t, err)
+		model.setActiveEntry(active)
+		model.updateCatalog(store.Reconcile(model.catalog))
+		model.sidebar.collapsed[active.Section] = true
+
+		updateModelCommand(t, model, sidebarKey())
+
+		require.True(t, model.sidebar.focused)
+		require.False(t, model.sidebar.drafts)
+		require.False(t, model.sidebar.collapsed[active.Section])
+		item, ok := model.sidebar.focusedItem()
+		require.True(t, ok)
+		require.Equal(t, active.ID, item.Entry.ID)
+	})
 }
 
 func TestSidebarTabsShareHeaderAndActivateOnClick(t *testing.T) {
@@ -412,6 +452,7 @@ func TestSidebarStationaryClickOpensCanvasOnRelease(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
 	model.setMotionEnabled(false)
 	updateModelCommand(t, model, sidebarKey())
+	model.selectSidebarTab(false)
 	point := sidebarItemPoint(t, model, "canvas:/Architecture")
 
 	updateModel(t, model, tea.MouseClickMsg{

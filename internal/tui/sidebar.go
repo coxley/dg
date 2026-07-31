@@ -384,7 +384,10 @@ func (s *sidebarState) render() {
 		if itemFocused && item.Kind != sidebarItemSection {
 			prefix = sidebarFocusPrefix
 		}
-		rendered := strings.Split(style.Render(prefix+sidebarItemContent(item)), "\n")
+		rendered := strings.Split(
+			style.Render(sidebarItemIndent(item)+prefix+item.Label),
+			"\n",
+		)
 		start := len(lines) + style.GetMarginTop()
 		height := max(len(rendered)-style.GetMarginTop()-style.GetMarginBottom(), 0)
 		s.itemPlans = append(s.itemPlans, sidebarItemPlan{
@@ -397,11 +400,11 @@ func (s *sidebarState) render() {
 	s.registerTargets()
 }
 
-func sidebarItemContent(item sidebarItem) string {
+func sidebarItemIndent(item sidebarItem) string {
 	if item.Kind == sidebarItemRecord && item.Entry.Section != "" {
-		return sidebarNestedIndent + item.Label
+		return sidebarNestedIndent
 	}
-	return item.Label
+	return ""
 }
 
 func (s *sidebarState) renderHeader() {
@@ -502,6 +505,24 @@ func (s *sidebarState) focusedTab() (bool, bool) {
 	return false, false
 }
 
+func (s *sidebarState) focusActiveItem() bool {
+	if !s.hasActive {
+		return false
+	}
+	for _, item := range s.declaration.Items {
+		if item.Kind != sidebarItemRecord || item.Entry.ID != s.active.ID {
+			continue
+		}
+		if !s.focusTarget(item.ID) {
+			return false
+		}
+		s.focus.Reveal(s.viewport)
+		s.render()
+		return true
+	}
+	return false
+}
+
 func (s *sidebarState) tabAt(point chrome.Point) (sidebarTab, bool) {
 	for _, plan := range s.tabs {
 		if plan.Rect.Contains(point) {
@@ -554,7 +575,7 @@ func (s *sidebarState) measure(allLabels []string) {
 	for _, item := range s.declaration.Items {
 		width = max(
 			width,
-			ansi.StringWidth(sidebarItemPrefix+sidebarItemContent(item))+itemFrame,
+			ansi.StringWidth(sidebarItemIndent(item)+sidebarItemPrefix+item.Label)+itemFrame,
 		)
 	}
 	for _, label := range allLabels {
@@ -602,12 +623,30 @@ func (m *Model) toggleSidebar() tea.Cmd {
 	switch {
 	case !m.sidebar.open:
 		m.sidebar.show()
+		m.focusActiveSidebarItem()
 	case !m.sidebar.focused:
 		m.sidebar.show()
+		m.focusActiveSidebarItem()
 	default:
 		m.sidebar.hide()
 	}
 	return m.retargetSidebar()
+}
+
+func (m *Model) focusActiveSidebarItem() {
+	if m.entry == nil {
+		return
+	}
+	rebuild := m.sidebar.drafts != m.entry.Draft
+	m.sidebar.drafts = m.entry.Draft
+	if section := m.entry.Section; !m.entry.Draft && section != "" && m.sidebar.collapsed[section] {
+		m.sidebar.collapsed[section] = false
+		rebuild = true
+	}
+	if rebuild {
+		m.rebuildSidebarCatalog()
+	}
+	m.sidebar.focusActiveItem()
 }
 
 func (m *Model) syncSidebarShortcut() {
