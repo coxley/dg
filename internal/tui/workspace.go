@@ -196,9 +196,11 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 
 func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 	m.helpInspector.clearHover()
-	m.sidebar.clearHover()
 	id, ok := m.workspace.SurfaceAt(chrome.Point{X: message.X, Y: message.Y})
 	if ok {
+		if id != surfaceSidebar {
+			m.sidebar.clearHover()
+		}
 		switch id {
 		case surfaceCanvas:
 			m.updateMouseMotion(message.Mouse())
@@ -217,6 +219,7 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 		}
 		return nil
 	}
+	m.sidebar.clearHover()
 	m.nav, _ = m.nav.Update(message)
 	if !m.workspace.PointerBlocked(chrome.Point{X: message.X, Y: message.Y}) {
 		m.updateMouseMotion(message.Mouse())

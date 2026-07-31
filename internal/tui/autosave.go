@@ -151,6 +151,7 @@ func canvasTitle(entry canvasstore.Entry) string {
 func (m *Model) setActiveEntry(entry canvasstore.Entry) {
 	active := entry
 	m.entry = &active
+	m.sidebar.setActive(&active)
 	m.syncWindowTitle()
 }
 

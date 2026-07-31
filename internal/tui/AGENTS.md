@@ -151,10 +151,12 @@ form right-justifies compact text values opposite their field labels.
 
 The sidebar uses an application-declared Pane with separate Canvases and Drafts
 tabs. Each tab owns half of the header content width and supports pointer and
-keyboard focus and activation. Header, inactive, focused, and active tab
-styles remain independent. Canvases groups root records and collapsible
-one-level sections with independent normal and focused styles; Drafts shows
-newest-first modification times and clear/delete actions. Width follows the
+keyboard focus and activation. Header, inactive, hovered, focused, and active
+tab styles remain independent. Every list row reserves a two-cell focus prefix,
+and the active canvas remains styled independently from keyboard focus.
+Canvases groups root records and collapsible one-level sections with independent
+normal and focused styles; Drafts shows newest-first modification times and a
+separately styled clear action. Width follows the
 widest known content with a 30-cell minimum and remains stable across tabs and
 collapse. It docks only while preserving 48 canvas cells and otherwise becomes
 a drawer. One workspace transition owns the boundary and canvas origin. Back

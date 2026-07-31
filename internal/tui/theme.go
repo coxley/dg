@@ -53,11 +53,14 @@ type sidebarStyles struct {
 	Header           lipgloss.Style
 	Tab              lipgloss.Style
 	FocusedTab       lipgloss.Style
+	HoveredTab       lipgloss.Style
 	ActiveTab        lipgloss.Style
 	Item             lipgloss.Style
 	FocusedItem      lipgloss.Style
+	ActiveItem       lipgloss.Style
 	Section          lipgloss.Style
 	FocusedSection   lipgloss.Style
+	ClearDrafts      lipgloss.Style
 	Footer           lipgloss.Style
 	Scrollbar        chrome.ScrollbarStyles
 }
@@ -221,15 +224,18 @@ func convertTint(theme *tint.Tint) Theme {
 			Header:           plain.Padding(0, 1),
 			Tab:              tab,
 			FocusedTab:       activeControl.Padding(0, 1),
+			HoveredTab:       lipgloss.NewStyle().Foreground(text),
 			ActiveTab:        tabActive,
 			Item:             tab.Padding(0, 1),
 			FocusedItem: activeControl.
 				Padding(0, 1),
+			ActiveItem: tabActive,
 			Section: tab.Padding(0, 1),
 			FocusedSection: activeControl.
 				Padding(0, 1),
-			Footer:    tab.Foreground(muted),
-			Scrollbar: scrollbar,
+			ClearDrafts: tab.MarginTop(1),
+			Footer:      tab.Foreground(muted),
+			Scrollbar:   scrollbar,
 		},
 		Status: statusStyles{
 			Normal: plain,

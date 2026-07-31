@@ -20,9 +20,11 @@ func (m *Model) rebuildSidebarCatalog() {
 	labels := append(canvasLabels, draftLabels...)
 	if m.sidebar.drafts {
 		m.sidebar.setContent(draftItems, labels)
+		m.sidebar.setActive(m.entry)
 		return
 	}
 	m.sidebar.setContent(canvasItems, labels)
+	m.sidebar.setActive(m.entry)
 }
 
 func (m *Model) canvasSidebarItems() ([]sidebarItem, []string) {
@@ -33,7 +35,7 @@ func (m *Model) canvasSidebarItems() ([]sidebarItem, []string) {
 		if entry.Draft {
 			continue
 		}
-		label := canvasEntryLabel(entry, false)
+		label := canvasEntryLabel(entry)
 		labels = append(labels, label)
 		if entry.Section == "" {
 			root = append(root, entry)
@@ -44,7 +46,7 @@ func (m *Model) canvasSidebarItems() ([]sidebarItem, []string) {
 	}
 	items := make([]sidebarItem, 0, len(root)+len(sections))
 	for _, entry := range root {
-		items = append(items, canvasSidebarItem(entry, false))
+		items = append(items, canvasSidebarItem(entry))
 	}
 	names := make([]string, 0, len(sections))
 	for section := range sections {
@@ -67,7 +69,7 @@ func (m *Model) canvasSidebarItems() ([]sidebarItem, []string) {
 			continue
 		}
 		for _, entry := range sections[section] {
-			items = append(items, canvasSidebarItem(entry, true))
+			items = append(items, canvasSidebarItem(entry))
 		}
 	}
 	return items, labels
@@ -96,7 +98,7 @@ func (m *Model) draftSidebarItems() ([]sidebarItem, []string) {
 		})
 	}
 	if len(drafts) != 0 {
-		const label = "Clear Drafts..."
+		const label = "[Clear Drafts]"
 		labels = append(labels, label)
 		items = append(items, sidebarItem{
 			ID:    "drafts:clear",
@@ -107,20 +109,17 @@ func (m *Model) draftSidebarItems() ([]sidebarItem, []string) {
 	return items, labels
 }
 
-func canvasSidebarItem(entry canvasstore.Entry, indented bool) sidebarItem {
+func canvasSidebarItem(entry canvasstore.Entry) sidebarItem {
 	return sidebarItem{
 		ID:    chrome.FocusID("canvas:" + entry.Section + "/" + entry.Name),
-		Label: canvasEntryLabel(entry, indented),
+		Label: canvasEntryLabel(entry),
 		Kind:  sidebarItemRecord,
 		Entry: entry,
 	}
 }
 
-func canvasEntryLabel(entry canvasstore.Entry, indented bool) string {
+func canvasEntryLabel(entry canvasstore.Entry) string {
 	label := entry.Name
-	if indented {
-		label = "  " + label
-	}
 	if backupName(entry.Name) {
 		label += " [backup]"
 	}
@@ -249,7 +248,7 @@ func (m *Model) moveCanvasToSection(entry canvasstore.Entry, section string) tea
 	}
 	m.sidebar.collapsed[section] = false
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
-	m.sidebar.focusTarget(canvasSidebarItem(moved, section != "").ID)
+	m.sidebar.focusTarget(canvasSidebarItem(moved).ID)
 	m.sidebar.focus.Reveal(m.sidebar.viewport)
 	m.sidebar.render()
 	m.status = "moved " + moved.Name
