@@ -204,12 +204,12 @@ func (l *Layout) SetNodeStyle(nodeID uint32, style NodeStyle) error {
 		return nil
 	}
 	l.nodeStyles[nodeID] = style
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:            historySetNodeStyle,
-			id:              nodeID,
-			beforeNodeStyle: previous,
-			afterNodeStyle:  style,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historySetNodeStyle,
+			ID:     nodeID,
+			Before: historyChangeState{NodeStyle: previous},
+			After:  historyChangeState{NodeStyle: style},
 		})
 	}
 	return nil
@@ -237,12 +237,12 @@ func (l *Layout) SetEdgeStyle(edgeID uint32, style EdgeStyle) error {
 		return nil
 	}
 	l.edgeStyles[edgeID] = style
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:            historySetEdgeStyle,
-			id:              edgeID,
-			beforeEdgeStyle: previous,
-			afterEdgeStyle:  style,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historySetEdgeStyle,
+			ID:     edgeID,
+			Before: historyChangeState{EdgeStyle: previous},
+			After:  historyChangeState{EdgeStyle: style},
 		})
 	}
 	return nil

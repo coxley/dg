@@ -1,11 +1,38 @@
 package ir
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestSideJSONUsesNames(t *testing.T) {
+	t.Parallel()
+
+	data, err := json.Marshal(RightSide)
+	require.NoError(t, err)
+	require.JSONEq(t, `"right"`, string(data))
+
+	var side Side
+	require.NoError(t, json.Unmarshal([]byte(`"left"`), &side))
+	require.Equal(t, LeftSide, side)
+	require.Error(t, json.Unmarshal([]byte(`"diagonal"`), &side))
+}
+
+func TestSideMarshalTextDoesNotAllocate(t *testing.T) {
+	var text []byte
+	allocations := testing.AllocsPerRun(100, func() {
+		var err error
+		text, err = RightSide.MarshalText()
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	require.Zero(t, allocations)
+	require.Equal(t, "right", string(text))
+}
 
 func TestEdgeRelationships(t *testing.T) {
 	t.Parallel()

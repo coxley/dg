@@ -77,12 +77,10 @@ func TestSetPinnedBendsRejectsInvalidTurn(t *testing.T) {
 	require.EqualError(t, err, "invalid pinned bend 0")
 }
 
-func TestPinnedBendsFollowHistoryCloneDuplicateAndTranslation(t *testing.T) {
+func TestPinnedBendsFollowCloneDuplicateAndTranslation(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	geo, err := New()
 	require.NoError(t, err)
 	left, err := geo.NewNodeAt("left", NewPoint(2, 2))
 	require.NoError(t, err)
@@ -95,28 +93,12 @@ func TestPinnedBendsFollowHistoryCloneDuplicateAndTranslation(t *testing.T) {
 	}
 	require.NoError(t, geo.SetPinnedBends(edgeID, bends))
 	require.NoError(t, geo.Build())
-	history.Clear()
-
 	replacement := []PinnedBend{
 		{Point: NewPoint(16, 3), Incoming: East, Outgoing: South},
 		{Point: NewPoint(16, 13), Incoming: South, Outgoing: East},
 	}
-	transaction := history.Begin()
 	require.NoError(t, geo.SetPinnedBends(edgeID, replacement))
 	require.NoError(t, geo.Build())
-	require.NoError(t, transaction.Commit())
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	got, err := geo.PinnedBends(edgeID)
-	require.NoError(t, err)
-	require.Equal(t, bends, got)
-	changed, err = history.Redo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	got, err = geo.PinnedBends(edgeID)
-	require.NoError(t, err)
-	require.Equal(t, replacement, got)
 
 	cloned, err := geo.Clone()
 	require.NoError(t, err)

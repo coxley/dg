@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/coxley/dg/history"
 	"github.com/coxley/dg/internal/settings"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
@@ -63,7 +64,7 @@ func (m mode) String() string {
 // Model coordinates terminal interaction with a layout.
 type Model struct {
 	geo     *layout.Layout
-	history *layout.History
+	history *history.History
 	theme   Theme
 
 	cursor      layout.Point
@@ -121,6 +122,7 @@ type Option func(*modelOptions)
 type modelOptions struct {
 	settings settings.Snapshot
 	store    *settings.Store
+	history  *history.History
 }
 
 // WithSettings configures the initial settings snapshot and its durable store.
@@ -128,6 +130,13 @@ func WithSettings(snapshot settings.Snapshot, store *settings.Store) Option {
 	return func(options *modelOptions) {
 		options.settings = snapshot
 		options.store = store
+	}
+}
+
+// WithHistory uses an existing history attached to the layout.
+func WithHistory(value *history.History) Option {
+	return func(options *modelOptions) {
+		options.history = value
 	}
 }
 
@@ -144,9 +153,12 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	for _, option := range options {
 		option(&configured)
 	}
+	if configured.history != nil && configured.history.Layout() != geo {
+		return nil, errors.New("configured history belongs to a different layout")
+	}
 	m := &Model{
 		geo:           geo,
-		history:       geo.History(),
+		history:       configured.history,
 		path:          path,
 		theme:         DefaultTheme(true),
 		styledRuns:    make(map[styledRunKey]string),
@@ -198,6 +210,12 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	}
 	if err := m.rebuild(); err != nil {
 		return nil, err
+	}
+	if m.history == nil {
+		m.history, err = history.New(geo)
+		if err != nil {
+			return nil, fmt.Errorf("configure history: %w", err)
+		}
 	}
 	m.syncWorkspace()
 	return m, nil

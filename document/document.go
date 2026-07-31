@@ -453,9 +453,6 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 	if err := geo.SetAttachments(attachments...); err != nil {
 		return nil, fmt.Errorf("restore attachments: %w", err)
 	}
-	if history := geo.History(); history != nil {
-		history.Clear()
-	}
 	return geo, nil
 }
 

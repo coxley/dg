@@ -48,12 +48,12 @@ func (l *Layout) SetPinnedBends(edgeID uint32, bends []PinnedBend) error {
 		return nil
 	}
 	l.edgeBends[edgeID] = slices.Clone(bends)
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:        historySetPinnedBends,
-			id:          edgeID,
-			beforeBends: slices.Clone(previous),
-			afterBends:  slices.Clone(bends),
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historySetPinnedBends,
+			ID:     edgeID,
+			Before: historyChangeState{Bends: slices.Clone(previous)},
+			After:  historyChangeState{Bends: slices.Clone(bends)},
 		})
 	}
 	return nil
@@ -128,7 +128,7 @@ func (l *Layout) PreviewPinnedBends(
 		scratch.candidate[:0],
 	)
 	if err != nil {
-		return nil, fmt.Errorf("preview pinned bends: %w", err)
+		return nil, fmt.Errorf("preview pinned Bends: %w", err)
 	}
 	scratch.candidate = path
 	return compact(dst[:0], path), nil
@@ -191,7 +191,7 @@ func (r Router) findRouteThroughBends(
 		segmentBuffer,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("after pinned bends: %w", err)
+		return nil, fmt.Errorf("after pinned Bends: %w", err)
 	}
 	l.scratch.segment = append(segmentBuffer, segment...)
 	path = appendRoutePart(path, l.scratch.segment)

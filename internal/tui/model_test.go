@@ -19,6 +19,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/document"
+	undohistory "github.com/coxley/dg/history"
 	"github.com/coxley/dg/internal/settings"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
@@ -35,13 +36,13 @@ var benchmarkView tea.View
 
 func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "relative")
-	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := layout.New(layout.WithHistory(history))
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	store := settings.NewStore(filepath.Join(t.TempDir(), "config.json"))
 
-	model, err := New(geo, WithSettings(settings.Snapshot{
+	model, err := New(geo, WithHistory(history), WithSettings(settings.Snapshot{
 		ApplyToFuture: true,
 		SaveDirectory: "/diagrams",
 		CommentPrefix: "# ",
@@ -68,16 +69,16 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 func TestNewStartsWithoutSelectionOrFocusHighlight(t *testing.T) {
 	t.Parallel()
 
-	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := layout.New(layout.WithHistory(history))
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	nodeID, err := geo.NewNode("node")
 	require.NoError(t, err)
 	node := layout.Hit{ID: nodeID, Kind: layout.HitNode}
 	require.True(t, geo.Selection().Toggle(node))
 
-	model, err := New(geo, testModelSettings())
+	model, err := New(geo, WithHistory(history), testModelSettings())
 
 	require.NoError(t, err)
 	require.True(t, model.geo.Selection().Empty())
@@ -4121,14 +4122,14 @@ func BenchmarkModelMoveAndView(b *testing.B) {
 func newTestModel(t testing.TB) (*Model, uint32) {
 	t.Helper()
 
-	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := layout.New(layout.WithHistory(history))
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	nodeID, err := geo.NewNodeAt("node", layout.NewPoint(2, 2))
 	require.NoError(t, err)
 	history.Clear()
-	model, err := New(geo, testModelSettings())
+	model, err := New(geo, WithHistory(history), testModelSettings())
 	require.NoError(t, err)
 	return model, nodeID
 }
@@ -4181,16 +4182,16 @@ func requireSavedLabel(t testing.TB, path, want string) {
 func newTwoNodeModel(t testing.TB) (*Model, uint32, uint32) {
 	t.Helper()
 
-	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := layout.New(layout.WithHistory(history))
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	left, err := geo.NewNodeAt("left", layout.NewPoint(2, 2))
 	require.NoError(t, err)
 	right, err := geo.NewNodeAt("right", layout.NewPoint(20, 2))
 	require.NoError(t, err)
 	history.Clear()
-	model, err := New(geo, testModelSettings())
+	model, err := New(geo, WithHistory(history), testModelSettings())
 	require.NoError(t, err)
 	return model, left, right
 }
@@ -4207,9 +4208,9 @@ func modelMouseAt(model *Model, point layout.Point, button tea.MouseButton) tea.
 func newComponentModel(t testing.TB) (*Model, uint32, uint32, uint32, uint32) {
 	t.Helper()
 
-	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := layout.New(layout.WithHistory(history))
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	left, err := geo.NewNodeAt("left", layout.NewPoint(2, 2))
 	require.NoError(t, err)
@@ -4220,7 +4221,7 @@ func newComponentModel(t testing.TB) (*Model, uint32, uint32, uint32, uint32) {
 	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, connected)
 	require.NoError(t, geo.Build())
 	history.Clear()
-	model, err := New(geo, testModelSettings())
+	model, err := New(geo, WithHistory(history), testModelSettings())
 	require.NoError(t, err)
 	return model, left, connected, isolated, edgeID
 }
@@ -4230,9 +4231,9 @@ func newComponentModelWithBlocker(
 ) (*Model, uint32, uint32, uint32) {
 	t.Helper()
 
-	history, err := layout.NewHistory(layout.WithHistoryCacheDir(t.TempDir()))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := layout.New(layout.WithHistory(history))
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	left, err := geo.NewNodeAt("left", layout.NewPoint(2, 2))
 	require.NoError(t, err)
@@ -4247,7 +4248,7 @@ func newComponentModelWithBlocker(
 	geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 	require.NoError(t, geo.Build())
 	history.Clear()
-	model, err := New(geo, testModelSettings())
+	model, err := New(geo, WithHistory(history), testModelSettings())
 	require.NoError(t, err)
 	return model, left, right, blocker
 }

@@ -39,8 +39,10 @@ saving, clipboard export, preferences, and live previews.
 - `cmd/dg`: starts the example editor or opens a saved diagram
 - `document`: maps layouts to and from the versioned JSON schema
 - `ir`: stores semantic objects in `ir.Graph`
+- `history`: records layout changes as undo/redo interactions and persists its
+  disposable cache
 - `layout`: composes `ir.Graph` with geometry, routing, raster ownership,
-  selection, layers, and change history
+  selection, layers, and reversible change replay
 - `render`: encodes layout raster data as Unicode terminal frames
 - `internal/tui`: implements the Bubble Tea interactive editor
 - `internal/tui/canvas`: retains canvas frames, encoders, and drawing styles

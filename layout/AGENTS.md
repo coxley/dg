@@ -3,8 +3,8 @@
 ## Responsibility
 
 `layout` owns editable IR, terminal-cell geometry, orthogonal routing, raster
-ownership, selection, layers, and undo history. Frontends should mutate a
-diagram through `Layout`, not through a copied `ir.Graph`.
+ownership, selection, layers, and reversible mutation descriptions. Frontends
+should mutate a diagram through `Layout`, not through a copied `ir.Graph`.
 
 ## Geometry
 
@@ -71,8 +71,8 @@ edge still routes around them. A node cannot attach to an incident edge.
 Dependency cycles that do not stabilize within the bounded build passes fail,
 and reusable rollback snapshots restore the previous buildable geometry.
 
-Clone, history, history cache, translation, deletion, and tombstone reuse must
-preserve these invariants. Deleting a host edge detaches its nodes in place.
+Clone, change replay, translation, deletion, and tombstone reuse must preserve
+these invariants. Deleting a host edge detaches its nodes in place.
 Deleting a node also removes attachments hosted by its incident edges.
 Duplication copies a relationship only when both the attached node and host
 edge are copied.
@@ -236,27 +236,28 @@ Rigid selection moves skip routing when static edges cannot be affected.
 `BuildSelection` routes only affected geometry. Add safe no-route cases before
 optimizing the full router.
 
-## History
+## Reversible changes
 
-`History` records engine mutations as bounded interactions:
+Layout emits an opaque, value-owned `Change` after each successful semantic
+mutation. One callback may attach at a time. Builds, previews, and selection
+changes emit nothing.
 
-- `Commit` records the final state
-- `Cancel` restores the initial state
-- `Interrupt` commits the latest visible state
+Each internal change stores one shared before/after state shape. Change and
+Snapshot JSON encode those runtime values directly; validation remains
+separate from representation.
 
-Stale transactions return `ErrTransactionClosed`. History retains 256 entries
-by default.
+`Replay` applies a complete change entry forward or backward, builds once, and
+restores its prior `Snapshot` on failure. Exact-slot restoration remains
+private so node, port, and edge tombstones retain stable IDs. `Restore`
+atomically replaces semantic state from an opaque Snapshot. Replay and restore
+suppress change callbacks.
 
-Persistent history is gzip-compressed and stored separately from the document.
-Cache writes use a 100 ms debounce and atomic replacement. The cache key is the
-SHA-256 digest of the normalized absolute document path. Anonymous diagrams do
-not persist history until first save. Cache failures never block document
-editing or saving. `HistoryStore` makes cache storage replaceable for tests;
-use it with `fstest.MapFS` under `testing/synctest`.
+The `history` package owns transactions, undo/redo cursors, coalescing use, and
+cache persistence. Layout must not import it.
 
 ## Performance
 
-Reuse `routeScratch`, `draftPorts`, grid buffers, and history storage. Keep
+Reuse `routeScratch`, `draftPorts`, grid buffers, and change storage. Keep
 router configuration separate from scratch so callers can replace costs
 cheaply. Use `b.Loop`, `go tool pprof`, and allocation benchmarks for routing
 and interactive builds.
@@ -284,6 +285,6 @@ commands, custom compound shapes, and more no-route build cases.
 ## Verification
 
 Use property tests for geometry bounds, port usability, transaction drift,
-undo and redo, layer invariants, selection, and snapping. Keep focused examples
+change replay, layer invariants, selection, and snapping. Keep focused examples
 for route aesthetics and raster junctions. Benchmark layout builds, routing,
-components, hits, and history cache behavior.
+components, hits, and change callback behavior.

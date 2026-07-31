@@ -1,4 +1,4 @@
-package layout
+package history
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/coxley/dg/ir"
+	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -14,17 +15,17 @@ import (
 func TestHistoryCommitsInteractionAsOneStep(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	history, err := New(geo)
 	require.NoError(t, err)
-	nodeID, err := geo.NewNodeAt("before", NewPoint(2, 3))
+	nodeID, err := geo.NewNodeAt("before", layout.NewPoint(2, 3))
 	require.NoError(t, err)
 
 	transaction := history.Begin()
 	require.NoError(t, geo.SetNodeLabel(nodeID, "during"))
 	require.NoError(t, geo.SetNodeLabel(nodeID, "after"))
-	require.NoError(t, geo.PlaceNode(nodeID, NewPoint(20, 30)))
+	require.NoError(t, geo.PlaceNode(nodeID, layout.NewPoint(20, 30)))
 	require.NoError(t, transaction.Commit())
 	require.NoError(t, geo.Build())
 
@@ -32,25 +33,25 @@ func TestHistoryCommitsInteractionAsOneStep(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "before", geo.Label(nodeID))
-	require.Equal(t, NewPoint(2, 3), geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, layout.NewPoint(2, 3), geo.Nodes[nodeID].Rect.Min)
 
 	changed, err = history.Redo()
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "after", geo.Label(nodeID))
-	require.Equal(t, NewPoint(20, 30), geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, layout.NewPoint(20, 30), geo.Nodes[nodeID].Rect.Min)
 }
 
 func TestHistoryCancelRestoresDeletedNodeAndEdges(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	history, err := New(geo)
 	require.NoError(t, err)
-	left, err := geo.NewNodeAt("left", NewPoint(2, 2))
+	left, err := geo.NewNodeAt("left", layout.NewPoint(2, 2))
 	require.NoError(t, err)
-	right, err := geo.NewNodeAt("right", NewPoint(20, 2))
+	right, err := geo.NewNodeAt("right", layout.NewPoint(20, 2))
 	require.NoError(t, err)
 	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 	require.NoError(t, geo.Build())
@@ -62,46 +63,46 @@ func TestHistoryCancelRestoresDeletedNodeAndEdges(t *testing.T) {
 	require.True(t, geo.NodeExists(left))
 	require.True(t, geo.EdgeExists(edgeID))
 	require.Equal(t, "left", geo.Label(left))
-	require.Equal(t, NewPoint(2, 2), geo.Nodes[left].Rect.Min)
+	require.Equal(t, layout.NewPoint(2, 2), geo.Nodes[left].Rect.Min)
 	require.NotEmpty(t, geo.Edges[edgeID].Points)
 }
 
 func TestHistoryInterruptRejectsStaleTransaction(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	history, err := New(geo)
 	require.NoError(t, err)
-	nodeID, err := geo.NewNodeAt("node", NewPoint(2, 2))
+	nodeID, err := geo.NewNodeAt("node", layout.NewPoint(2, 2))
 	require.NoError(t, err)
 
 	stale := history.Begin()
-	require.NoError(t, geo.PlaceNode(nodeID, NewPoint(5, 5)))
+	require.NoError(t, geo.PlaceNode(nodeID, layout.NewPoint(5, 5)))
 	history.Interrupt()
 	current := history.Begin()
 
 	require.ErrorIs(t, stale.Commit(), ErrTransactionClosed)
 	require.ErrorIs(t, stale.Cancel(), ErrTransactionClosed)
-	require.NoError(t, geo.PlaceNode(nodeID, NewPoint(8, 8)))
+	require.NoError(t, geo.PlaceNode(nodeID, layout.NewPoint(8, 8)))
 	require.NoError(t, current.Commit())
 
 	changed, err := history.Undo()
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, NewPoint(5, 5), geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, layout.NewPoint(5, 5), geo.Nodes[nodeID].Rect.Min)
 	changed, err = history.Undo()
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, NewPoint(2, 2), geo.Nodes[nodeID].Rect.Min)
+	require.Equal(t, layout.NewPoint(2, 2), geo.Nodes[nodeID].Rect.Min)
 }
 
 func TestHistoryLimitDropsOldestInteraction(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory(WithHistoryLimit(2))
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	history, err := New(geo, WithLimit(2))
 	require.NoError(t, err)
 	nodeID, err := geo.NewNode("one")
 	require.NoError(t, err)
@@ -119,35 +120,115 @@ func TestHistoryLimitDropsOldestInteraction(t *testing.T) {
 	require.Equal(t, "one", geo.Label(nodeID))
 }
 
-func TestHistoryCannotAttachToMultipleLayouts(t *testing.T) {
+func TestHistoryRejectsSecondCallbackAttachment(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
+	geo, err := layout.New()
 	require.NoError(t, err)
-	_, err = New(WithHistory(history))
+	_, err = New(geo)
 	require.NoError(t, err)
-	_, err = New(WithHistory(history))
-	require.True(t, errors.Is(err, ErrHistoryAttached))
+	_, err = New(geo)
+	require.ErrorIs(t, err, ErrAttached)
+	require.ErrorIs(
+		t,
+		geo.SetChangeCallback(func(layout.Change) {}),
+		layout.ErrChangeCallbackAttached,
+	)
+}
+
+func TestHistoryResetReplacesLayoutAndClearsHistory(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	history, err := New(geo)
+	require.NoError(t, err)
+	nodeID, err := geo.NewNode("before")
+	require.NoError(t, err)
+	history.Clear()
+
+	transaction := history.Begin()
+	require.NoError(t, geo.SetNodeLabel(nodeID, "active"))
+	replacement, err := layout.New()
+	require.NoError(t, err)
+	replacementID, err := replacement.NewNodeAt("replacement", layout.NewPoint(8, 9))
+	require.NoError(t, err)
+
+	require.NoError(t, history.Reset(func() error {
+		return geo.Restore(replacement.Snapshot())
+	}))
+	require.Same(t, geo, history.Layout())
+	require.ErrorIs(t, transaction.Commit(), ErrTransactionClosed)
+	require.Equal(t, "replacement", geo.Label(replacementID))
+	require.Equal(t, layout.NewPoint(8, 9), geo.Nodes[replacementID].Rect.Min)
+	require.False(t, history.CanUndo())
+	require.False(t, history.CanRedo())
+
+	require.NoError(t, geo.SetNodeLabel(replacementID, "after reset"))
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "replacement", geo.Label(replacementID))
+}
+
+func TestHistoryResetFailureRestoresLayoutAndActiveTransaction(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	history, err := New(geo)
+	require.NoError(t, err)
+	nodeID, err := geo.NewNode("before")
+	require.NoError(t, err)
+	history.Clear()
+
+	transaction := history.Begin()
+	require.NoError(t, geo.SetNodeLabel(nodeID, "active"))
+	resetErr := errors.New("replace failed")
+	err = history.Reset(func() error {
+		require.NoError(t, geo.SetNodeLabel(nodeID, "replacement"))
+		return resetErr
+	})
+	require.ErrorIs(t, err, resetErr)
+	require.Equal(t, "active", geo.Label(nodeID))
+	require.NoError(t, transaction.Commit())
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "before", geo.Label(nodeID))
+	changed, err = history.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "active", geo.Label(nodeID))
+
+	next := history.Begin()
+	require.NoError(t, geo.SetNodeLabel(nodeID, "after failure"))
+	require.NoError(t, next.Commit())
+	changed, err = history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "active", geo.Label(nodeID))
 }
 
 func TestHistoryReplaysEdgeLifecycle(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	history, err := New(geo)
 	require.NoError(t, err)
-	left, err := geo.NewNodeAt("left", NewPoint(1, 1))
+	left, err := geo.NewNodeAt("left", layout.NewPoint(1, 1))
 	require.NoError(t, err)
-	middle, err := geo.NewNodeAt("middle", NewPoint(20, 1))
+	middle, err := geo.NewNodeAt("middle", layout.NewPoint(20, 1))
 	require.NoError(t, err)
-	right, err := geo.NewNodeAt("right", NewPoint(40, 1))
+	right, err := geo.NewNodeAt("right", layout.NewPoint(40, 1))
 	require.NoError(t, err)
-	leftPort, ok := geo.graph.PickCenterPort(left, ir.RightSide)
+	leftPort, ok := centerPort(geo, left, ir.RightSide)
 	require.True(t, ok)
-	middlePort, ok := geo.graph.PickCenterPort(middle, ir.LeftSide)
+	middlePort, ok := centerPort(geo, middle, ir.LeftSide)
 	require.True(t, ok)
-	rightPort, ok := geo.graph.PickCenterPort(right, ir.LeftSide)
+	rightPort, ok := centerPort(geo, right, ir.LeftSide)
 	require.True(t, ok)
 	history.Clear()
 
@@ -186,22 +267,22 @@ func TestHistoryReplaysEdgeLifecycle(t *testing.T) {
 func TestHistoryReplaysExplicitAndAutoNodeSize(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
+	geo, err := layout.New()
 	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	history, err := New(geo)
 	require.NoError(t, err)
 	nodeID, err := geo.NewNode("one two three")
 	require.NoError(t, err)
 	history.Clear()
 
-	explicit := Size{Width: 8, Height: 4}
+	explicit := layout.Size{Width: 8, Height: 4}
 	require.NoError(t, geo.SetNodeSize(nodeID, explicit))
 	require.NoError(t, geo.AutoSizeNode(nodeID))
 
 	changed, err := history.Undo()
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, explicit, mustExplicitNodeSize(t, geo, nodeID))
+	require.Equal(t, explicit, explicitNodeSize(t, geo, nodeID))
 
 	changed, err = history.Undo()
 	require.NoError(t, err)
@@ -212,7 +293,7 @@ func TestHistoryReplaysExplicitAndAutoNodeSize(t *testing.T) {
 	changed, err = history.Redo()
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.Equal(t, explicit, mustExplicitNodeSize(t, geo, nodeID))
+	require.Equal(t, explicit, explicitNodeSize(t, geo, nodeID))
 }
 
 func TestHistoryTransactionProperties(t *testing.T) {
@@ -220,25 +301,25 @@ func TestHistoryTransactionProperties(t *testing.T) {
 
 	type state struct {
 		label  string
-		origin Point
-		size   Size
-		order  []Hit
+		origin layout.Point
+		size   layout.Size
+		order  []layout.Hit
 	}
 
 	rapid.Check(t, func(t *rapid.T) {
-		history, err := NewHistory()
+		geo, err := layout.New()
 		require.NoError(t, err)
-		geo, err := New(WithHistory(history))
+		history, err := New(geo)
 		require.NoError(t, err)
-		nodeID, err := geo.NewNodeAt("initial", NewPoint(1, 1))
+		nodeID, err := geo.NewNodeAt("initial", layout.NewPoint(1, 1))
 		require.NoError(t, err)
-		_, err = geo.NewNodeAt("other", NewPoint(20, 1))
+		_, err = geo.NewNodeAt("other", layout.NewPoint(20, 1))
 		require.NoError(t, err)
 		history.Clear()
 
 		states := []state{{
 			label:  "initial",
-			origin: NewPoint(1, 1),
+			origin: layout.NewPoint(1, 1),
 			order:  slices.Collect(geo.DrawOrder()),
 		}}
 		transactionCount := rapid.IntRange(1, 30).Draw(t, "transaction count")
@@ -255,7 +336,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 						Draw(t, fmt.Sprintf("label %d %d", transactionID, operationID))
 					require.NoError(t, geo.SetNodeLabel(nodeID, label))
 				case 1:
-					point := NewPoint(
+					point := layout.NewPoint(
 						rapid.Uint32Range(0, 30).
 							Draw(t, fmt.Sprintf("x %d %d", transactionID, operationID)),
 						rapid.Uint32Range(0, 30).
@@ -269,7 +350,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 					) {
 						require.NoError(t, geo.AutoSizeNode(nodeID))
 					} else {
-						require.NoError(t, geo.SetNodeSize(nodeID, Size{
+						require.NoError(t, geo.SetNodeSize(nodeID, layout.Size{
 							Width: rapid.Uint32Range(4, 20).
 								Draw(t, fmt.Sprintf("width %d %d", transactionID, operationID)),
 							Height: rapid.Uint32Range(2, 10).
@@ -277,7 +358,7 @@ func TestHistoryTransactionProperties(t *testing.T) {
 						}))
 					}
 				case 3:
-					hit := Hit{ID: nodeID, Kind: HitNode}
+					hit := layout.Hit{ID: nodeID, Kind: layout.HitNode}
 					if rapid.Bool().Draw(
 						t,
 						fmt.Sprintf("front %d %d", transactionID, operationID),
@@ -347,4 +428,21 @@ func TestHistoryTransactionProperties(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, changed)
 	})
+}
+
+func centerPort(geo *layout.Layout, nodeID uint32, side ir.Side) (uint32, bool) {
+	graph := geo.Graph()
+	for portID := range geo.NodePorts(nodeID) {
+		if graph.Ports[portID].Side == side && geo.PortUsable(portID) {
+			return portID, true
+		}
+	}
+	return 0, false
+}
+
+func explicitNodeSize(t testing.TB, geo *layout.Layout, nodeID uint32) layout.Size {
+	t.Helper()
+	size, ok := geo.ExplicitNodeSize(nodeID)
+	require.True(t, ok)
+	return size
 }

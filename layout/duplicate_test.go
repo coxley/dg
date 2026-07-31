@@ -10,9 +10,7 @@ import (
 func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	geo, err := New()
 	require.NoError(t, err)
 	left, err := geo.NewNodeAt("left", NewPoint(2, 3))
 	require.NoError(t, err)
@@ -33,11 +31,8 @@ func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
 	}))
 	require.NoError(t, geo.Build())
 	beforeRoute := append([]Point(nil), geo.Edges[internalEdge].Points...)
-	history.Clear()
-
 	geo.Selection().SelectOnly(Hit{ID: left, Kind: HitNode})
 	require.True(t, geo.Selection().Toggle(Hit{ID: right, Kind: HitNode}))
-	transaction := history.Begin()
 	require.NoError(t, geo.DuplicateSelection(4, 5))
 	for edgeID := range geo.Selection().Edges() {
 		require.Len(t, geo.Edges[edgeID].Points, len(beforeRoute))
@@ -46,7 +41,6 @@ func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
 		}
 	}
 	require.NoError(t, geo.Build())
-	require.NoError(t, transaction.Commit())
 
 	nodes, edges := geo.Selection().Counts()
 	require.Equal(t, 2, nodes)
@@ -66,13 +60,6 @@ func TestDuplicateSelectionCopiesContainedGraph(t *testing.T) {
 		Horizontal: AlignCenter,
 		Vertical:   AlignMiddle,
 	}, style)
-
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Len(t, geo.Graph().Nodes, 5)
-	require.False(t, geo.NodeExists(3))
-	require.False(t, geo.NodeExists(4))
 }
 
 func TestDuplicateSelectionReusesTombstones(t *testing.T) {
@@ -91,25 +78,6 @@ func TestDuplicateSelectionReusesTombstones(t *testing.T) {
 	nodes, edges := geo.Selection().Counts()
 	require.Equal(t, benchmarkClusterNodes, nodes)
 	require.Equal(t, 2, edges)
-}
-
-func TestSetRouterIsUndoable(t *testing.T) {
-	t.Parallel()
-
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
-	require.NoError(t, err)
-	before := geo.Router()
-	after := before
-	after.Costs.Crossing++
-
-	geo.SetRouter(after)
-	require.Equal(t, after, geo.Router())
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, before, geo.Router())
 }
 
 func TestCloneIsIndependentAndPreservesSelection(t *testing.T) {
@@ -182,12 +150,10 @@ func TestMoveSelectionPreservesValidInternalRoutes(t *testing.T) {
 	}
 }
 
-func TestTranslateMovesAllGeometryAndIsUndoable(t *testing.T) {
+func TestTranslateMovesAllGeometry(t *testing.T) {
 	t.Parallel()
 
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
+	geo, err := New()
 	require.NoError(t, err)
 	a, err := geo.NewNodeAt("a", NewPoint(2, 3))
 	require.NoError(t, err)
@@ -196,28 +162,13 @@ func TestTranslateMovesAllGeometryAndIsUndoable(t *testing.T) {
 	edgeID := geo.ConnectNodes(a, ir.RightSide, ir.LeftSide, b)
 	require.NoError(t, geo.Build())
 	beforeRoute := append([]Point(nil), geo.Edges[edgeID].Points...)
-	history.Clear()
-
-	transaction := history.Begin()
 	require.NoError(t, geo.Translate(5, 7))
-	require.NoError(t, transaction.Commit())
 
 	require.Equal(t, NewPoint(7, 10), geo.Nodes[a].Rect.Min)
 	require.Equal(t, NewPoint(19, 10), geo.Nodes[b].Rect.Min)
 	for i, point := range beforeRoute {
 		require.Equal(t, point.Add(5, 7), geo.Edges[edgeID].Points[i])
 	}
-
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, NewPoint(2, 3), geo.Nodes[a].Rect.Min)
-	require.Equal(t, NewPoint(14, 3), geo.Nodes[b].Rect.Min)
-	changed, err = history.Redo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, NewPoint(7, 10), geo.Nodes[a].Rect.Min)
-	require.Equal(t, NewPoint(19, 10), geo.Nodes[b].Rect.Min)
 }
 
 func TestSelectionMovesRigidly(t *testing.T) {

@@ -153,17 +153,21 @@ func (l *Layout) SetAttachments(attachments ...Attachment) error {
 		l.restoreAttachmentBuildState(&l.attachmentMutationRollback)
 		return fmt.Errorf("set attachments: %w", err)
 	}
-	if l.history != nil {
+	if l.recordingChanges() {
 		for _, change := range changes {
-			l.history.record(historyChange{
-				kind:             historySetAttachment,
-				id:               change.after.NodeID,
-				beforeAttachment: change.before,
-				afterAttachment:  change.after,
-				beforeAttached:   change.had,
-				afterAttached:    true,
-				beforePoint:      change.beforePoint,
-				afterPoint:       l.origins[change.after.NodeID],
+			l.recordChange(historyChange{
+				Kind: historySetAttachment,
+				ID:   change.after.NodeID,
+				Before: historyChangeState{
+					Attachment: change.before,
+					Attached:   change.had,
+					Point:      change.beforePoint,
+				},
+				After: historyChangeState{
+					Attachment: change.after,
+					Attached:   true,
+					Point:      l.origins[change.after.NodeID],
+				},
 			})
 		}
 	}
@@ -186,14 +190,16 @@ func (l *Layout) DetachNode(nodeID uint32) error {
 		l.restoreAttachmentBuildState(&l.attachmentMutationRollback)
 		return fmt.Errorf("detach node %d: %w", nodeID, err)
 	}
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:             historySetAttachment,
-			id:               nodeID,
-			beforeAttachment: previous,
-			beforeAttached:   true,
-			beforePoint:      l.attachmentMutationRollback.origins[nodeID],
-			afterPoint:       l.origins[nodeID],
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind: historySetAttachment,
+			ID:   nodeID,
+			Before: historyChangeState{
+				Attachment: previous,
+				Attached:   true,
+				Point:      l.attachmentMutationRollback.origins[nodeID],
+			},
+			After: historyChangeState{Point: l.origins[nodeID]},
 		})
 	}
 	return nil

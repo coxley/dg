@@ -25,6 +25,38 @@ type Selection struct {
 	selectedComponent []bool
 }
 
+type selectionState struct {
+	nodes              []bool
+	edges              []bool
+	nodeCount          int
+	edgeCount          int
+	expanded           bool
+	attachmentEdge     uint32
+	attachmentExpanded bool
+}
+
+func (s *Selection) state() selectionState {
+	return selectionState{
+		nodes:              slices.Clone(s.nodes),
+		edges:              slices.Clone(s.edges),
+		nodeCount:          s.nodeCount,
+		edgeCount:          s.edgeCount,
+		expanded:           s.expanded,
+		attachmentEdge:     s.attachmentEdge,
+		attachmentExpanded: s.attachmentExpanded,
+	}
+}
+
+func (s *Selection) restore(state selectionState) {
+	s.nodes = slices.Clone(state.nodes)
+	s.edges = slices.Clone(state.edges)
+	s.nodeCount = state.nodeCount
+	s.edgeCount = state.edgeCount
+	s.expanded = state.expanded
+	s.attachmentEdge = state.attachmentEdge
+	s.attachmentExpanded = state.attachmentExpanded
+}
+
 // Selection returns the layout's current selection.
 func (l *Layout) Selection() *Selection {
 	return &l.selection

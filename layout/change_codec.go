@@ -1,0 +1,330 @@
+package layout
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+
+	"github.com/coxley/dg/ir"
+)
+
+// MarshalJSON encodes snapshot's runtime state.
+func (s Snapshot) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.state)
+}
+
+// UnmarshalJSON decodes and validates snapshot's runtime state.
+func (s *Snapshot) UnmarshalJSON(data []byte) error {
+	var state layoutHistoryState
+	if err := decodeHistoryJSON(data, &state); err != nil {
+		return fmt.Errorf("decode layout snapshot: %w", err)
+	}
+	if err := validateLayoutHistoryState(&state); err != nil {
+		return fmt.Errorf("decode layout snapshot: %w", err)
+	}
+	s.state = state
+	return nil
+}
+
+// MarshalJSON encodes change's runtime state.
+func (c Change) MarshalJSON() ([]byte, error) {
+	return json.Marshal(c.value)
+}
+
+// UnmarshalJSON decodes and validates change's runtime state.
+func (c *Change) UnmarshalJSON(data []byte) error {
+	var change historyChange
+	if err := decodeHistoryJSON(data, &change); err != nil {
+		return fmt.Errorf("decode layout change: %w", err)
+	}
+	if err := validateHistoryChange(change); err != nil {
+		return fmt.Errorf("decode layout change: %w", err)
+	}
+	c.value = change
+	return nil
+}
+
+func decodeHistoryJSON(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("unexpected trailing JSON value")
+	}
+	return nil
+}
+
+func validateLayoutHistoryState(state *layoutHistoryState) error {
+	nodes := len(state.Graph.Nodes)
+	edges := len(state.Graph.Edges)
+	if len(state.Origins) != nodes ||
+		len(state.Sizes) != nodes ||
+		len(state.NodeStyles) != nodes ||
+		len(state.Attachments) != nodes ||
+		len(state.EdgeStyles) != edges ||
+		len(state.EdgeBends) != edges {
+		return errors.New("unaligned layout state")
+	}
+	if err := state.Graph.Validate(); err != nil {
+		return fmt.Errorf("invalid graph: %w", err)
+	}
+	for portID, port := range state.Graph.Ports {
+		if !state.Graph.PortExists(uint32(portID)) {
+			continue
+		}
+		if !validHistorySide(port.Side) || port.Offset < 0 || port.Offset > 1 {
+			return fmt.Errorf("port %d has invalid placement", portID)
+		}
+	}
+	for nodeID, style := range state.NodeStyles {
+		if !style.Valid() {
+			return fmt.Errorf("node %d has invalid style", nodeID)
+		}
+	}
+	for edgeID, style := range state.EdgeStyles {
+		if !style.Valid() || !validPinnedBends(state.EdgeBends[edgeID]) {
+			return fmt.Errorf("edge %d has invalid presentation", edgeID)
+		}
+	}
+	if len(state.Order) != 0 {
+		if err := validateDrawOrder(&state.Graph, state.Order); err != nil {
+			return err
+		}
+	}
+	for nodeID, attachment := range state.Attachments {
+		if attachment == (Attachment{}) {
+			continue
+		}
+		if attachment.NodeID != uint32(nodeID) ||
+			attachment.Position == 0 ||
+			attachment.Position == attachmentPositionMax ||
+			!state.Graph.NodeExists(attachment.NodeID) ||
+			!state.Graph.EdgeExists(attachment.EdgeID) {
+			return errors.New("invalid attachment")
+		}
+		edge := state.Graph.Edges[attachment.EdgeID]
+		if state.Graph.Ports[edge.PortA].Node == attachment.NodeID ||
+			state.Graph.Ports[edge.PortB].Node == attachment.NodeID {
+			return errors.New("attachment node is an edge endpoint")
+		}
+	}
+	state.Graph = state.Graph.Clone()
+	return nil
+}
+
+func validateHistoryChange(change historyChange) error {
+	if change.Kind < historyCreateNode || change.Kind > historySetPinnedBends {
+		return errors.New("invalid change kind")
+	}
+	if change.Kind == historySetLayer && !validHistoryHit(change.LayerHit) {
+		return errors.New("invalid layer target")
+	}
+	if err := validateHistoryChangeState(change.Before); err != nil {
+		return fmt.Errorf("invalid before state: %w", err)
+	}
+	if err := validateHistoryChangeState(change.After); err != nil {
+		return fmt.Errorf("invalid after state: %w", err)
+	}
+	switch change.Kind {
+	case historyCreateNode:
+		if change.After.Node.ID != change.ID {
+			return errors.New("created node ID does not match change ID")
+		}
+	case historyDeleteNode:
+		if change.Before.Node.ID != change.ID {
+			return errors.New("deleted node ID does not match change ID")
+		}
+	case historySetAttachment:
+		if err := validateHistoryAttachmentChange(change); err != nil {
+			return err
+		}
+	default:
+	}
+	return nil
+}
+
+func validateHistoryAttachmentChange(change historyChange) error {
+	for _, state := range [...]historyChangeState{change.Before, change.After} {
+		if !state.Attached {
+			continue
+		}
+		if state.Attachment.NodeID != change.ID ||
+			state.Attachment.Position == 0 ||
+			state.Attachment.Position == attachmentPositionMax {
+			return errors.New("invalid attachment change")
+		}
+	}
+	return nil
+}
+
+func validateHistoryChangeState(state historyChangeState) error {
+	if !state.NodeStyle.Valid() || !state.EdgeStyle.Valid() {
+		return errors.New("invalid style")
+	}
+	if !validPinnedBends(state.Bends) {
+		return errors.New("invalid bends")
+	}
+	if !state.Node.Style.Valid() {
+		return errors.New("invalid node style")
+	}
+	for _, port := range state.Node.Ports {
+		if !validHistorySide(port.Port.Side) || port.Port.Offset < 0 || port.Port.Offset > 1 {
+			return errors.New("invalid node port placement")
+		}
+	}
+	for _, edge := range state.Node.Edges {
+		if !edge.Style.Valid() || !validPinnedBends(edge.Bends) {
+			return errors.New("invalid node edge presentation")
+		}
+	}
+	for _, layer := range state.Node.Layers {
+		if !validHistoryHit(layer.Hit) {
+			return errors.New("invalid node layer")
+		}
+	}
+	return nil
+}
+
+func validHistoryHit(hit Hit) bool {
+	return hit.Kind == HitNode || hit.Kind == HitEdge
+}
+
+func validHistorySide(side ir.Side) bool {
+	return side == ir.Top || side == ir.RightSide || side == ir.Bottom || side == ir.LeftSide
+}
+
+type semanticHistoryState struct {
+	Nodes       []semanticHistoryNode       `json:"nodes"`
+	Ports       []semanticHistoryPort       `json:"ports"`
+	Edges       []semanticHistoryEdge       `json:"edges"`
+	Attachments []semanticHistoryAttachment `json:"attachments,omitempty"`
+	Layers      []semanticHistoryLayer      `json:"layers,omitempty"`
+	Padding     Padding                     `json:"padding"`
+	Router      Router                      `json:"router"`
+}
+
+type semanticHistoryLayer struct {
+	Kind HitKind `json:"kind"`
+	ID   uint32  `json:"id"`
+}
+
+type semanticHistoryNode struct {
+	Label  string    `json:"label"`
+	Origin Point     `json:"origin"`
+	Size   Size      `json:"size,omitzero"`
+	Style  NodeStyle `json:"style,omitzero"`
+	Ports  []uint32  `json:"ports"`
+}
+
+type semanticHistoryPort struct {
+	Side   string  `json:"side"`
+	Offset float32 `json:"offset"`
+}
+
+type semanticHistoryEdge struct {
+	PortA uint32       `json:"port_a"`
+	PortB uint32       `json:"port_b"`
+	Style EdgeStyle    `json:"style,omitzero"`
+	Bends []PinnedBend `json:"bends,omitempty"`
+}
+
+type semanticHistoryAttachment struct {
+	Node     uint32 `json:"node"`
+	Edge     uint32 `json:"edge"`
+	Position uint16 `json:"position"`
+	Anchor   Point  `json:"anchor"`
+}
+
+func semanticHistoryDigest(state layoutHistoryState) (string, error) {
+	if len(state.Order) != 0 {
+		if err := validateDrawOrder(&state.Graph, state.Order); err != nil {
+			return "", fmt.Errorf("hash history state: %w", err)
+		}
+	}
+	semantic := semanticHistoryState{
+		Padding: state.Padding,
+		Router:  state.Router,
+		Nodes:   make([]semanticHistoryNode, 0, len(state.Graph.Nodes)),
+		Ports:   make([]semanticHistoryPort, 0, len(state.Graph.Ports)),
+		Edges:   make([]semanticHistoryEdge, 0, len(state.Graph.Edges)),
+	}
+	portIDs := make([]uint32, len(state.Graph.Ports))
+	nodeIDs := make([]uint32, len(state.Graph.Nodes))
+	for nodeID := range state.Graph.Nodes {
+		if !state.Graph.NodeExists(uint32(nodeID)) {
+			continue
+		}
+		source := state.Graph.Nodes[nodeID]
+		nodeIDs[nodeID] = uint32(len(semantic.Nodes))
+		node := semanticHistoryNode{
+			Label:  source.Label,
+			Origin: state.Origins[nodeID],
+			Size:   state.Sizes[nodeID],
+			Style:  state.NodeStyles[nodeID],
+			Ports:  make([]uint32, 0, len(source.Ports)),
+		}
+		for _, portID := range source.Ports {
+			port := state.Graph.Ports[portID]
+			portIDs[portID] = uint32(len(semantic.Ports))
+			node.Ports = append(node.Ports, portIDs[portID])
+			semantic.Ports = append(semantic.Ports, semanticHistoryPort{
+				Side:   port.Side.String(),
+				Offset: port.Offset,
+			})
+		}
+		semantic.Nodes = append(semantic.Nodes, node)
+	}
+	edgeIDs := make([]uint32, len(state.Graph.Edges))
+	for edgeID := range state.Graph.Edges {
+		if !state.Graph.EdgeExists(uint32(edgeID)) {
+			continue
+		}
+		edge := state.Graph.Edges[edgeID]
+		edgeIDs[edgeID] = uint32(len(semantic.Edges))
+		semantic.Edges = append(semantic.Edges, semanticHistoryEdge{
+			PortA: portIDs[edge.PortA],
+			PortB: portIDs[edge.PortB],
+			Style: state.EdgeStyles[edgeID],
+			Bends: state.EdgeBends[edgeID],
+		})
+	}
+	for _, attachment := range state.Attachments {
+		if attachment == (Attachment{}) {
+			continue
+		}
+		semantic.Attachments = append(
+			semantic.Attachments,
+			semanticHistoryAttachment{
+				Node:     nodeIDs[attachment.NodeID],
+				Edge:     edgeIDs[attachment.EdgeID],
+				Position: attachment.Position,
+				Anchor:   attachment.Anchor,
+			},
+		)
+	}
+	for _, hit := range state.Order {
+		layer := semanticHistoryLayer{Kind: hit.Kind}
+		switch hit.Kind {
+		case HitNode:
+			layer.ID = nodeIDs[hit.ID]
+		case HitEdge:
+			layer.ID = edgeIDs[hit.ID]
+		default:
+			return "", fmt.Errorf("hash history state: invalid layer %+v", hit)
+		}
+		semantic.Layers = append(semantic.Layers, layer)
+	}
+	data, err := json.Marshal(semantic)
+	if err != nil {
+		return "", fmt.Errorf("hash history state: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}

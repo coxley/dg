@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/coxley/dg/history"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/layout"
 )
@@ -137,7 +138,7 @@ const (
 )
 
 type interactionTransaction struct {
-	value layout.Transaction
+	value history.Transaction
 	owner transactionOwner
 }
 

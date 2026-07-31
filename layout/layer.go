@@ -107,13 +107,13 @@ func (l *Layout) setLayerIndex(hit Hit, target int) error {
 		copy(l.drawOrder[target+1:index+1], l.drawOrder[target:index])
 	}
 	l.drawOrder[target] = hit
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:        historySetLayer,
-			id:          hit.ID,
-			layerHit:    hit,
-			beforeLayer: uint32(index),
-			afterLayer:  uint32(target),
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:     historySetLayer,
+			ID:       hit.ID,
+			LayerHit: hit,
+			Before:   historyChangeState{Layer: uint32(index)},
+			After:    historyChangeState{Layer: uint32(target)},
 		})
 	}
 	return nil

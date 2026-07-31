@@ -103,80 +103,6 @@ func TestDrawOrderOptionValidatesCompletePermutation(t *testing.T) {
 	require.True(t, errors.Is(err, ErrLayerObject))
 }
 
-func TestHistoryReplaysLayerChanges(t *testing.T) {
-	t.Parallel()
-
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
-	require.NoError(t, err)
-	back, err := geo.NewNode("back")
-	require.NoError(t, err)
-	front, err := geo.NewNode("front")
-	require.NoError(t, err)
-	history.Clear()
-
-	backHit := Hit{ID: back, Kind: HitNode}
-	require.NoError(t, geo.BringToFront(backHit))
-	require.Equal(t, backHit, slices.Collect(geo.DrawOrder())[1])
-
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(
-		t,
-		[]Hit{
-			{ID: back, Kind: HitNode},
-			{ID: front, Kind: HitNode},
-		},
-		slices.Collect(geo.DrawOrder()),
-	)
-
-	changed, err = history.Redo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, backHit, slices.Collect(geo.DrawOrder())[1])
-}
-
-func TestHistoryReplaysInterleavedLayerTransaction(t *testing.T) {
-	t.Parallel()
-
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
-	require.NoError(t, err)
-	first, err := geo.NewNode("first")
-	require.NoError(t, err)
-	second, err := geo.NewNode("second")
-	require.NoError(t, err)
-	third, err := geo.NewNode("third")
-	require.NoError(t, err)
-	history.Clear()
-
-	firstHit := Hit{ID: first, Kind: HitNode}
-	secondHit := Hit{ID: second, Kind: HitNode}
-	initial := []Hit{
-		firstHit,
-		secondHit,
-		{ID: third, Kind: HitNode},
-	}
-	transaction := history.Begin()
-	require.NoError(t, geo.BringToFront(firstHit))
-	require.NoError(t, geo.BringToFront(secondHit))
-	require.NoError(t, geo.SendToBack(firstHit))
-	require.NoError(t, transaction.Commit())
-	final := slices.Collect(geo.DrawOrder())
-
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, initial, slices.Collect(geo.DrawOrder()))
-	changed, err = history.Redo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, final, slices.Collect(geo.DrawOrder()))
-}
-
 func TestHitsRespectVisibleLayer(t *testing.T) {
 	t.Parallel()
 
@@ -202,35 +128,4 @@ func TestHitsRespectVisibleLayer(t *testing.T) {
 		[]Hit{{ID: back, Kind: HitNode}},
 		slices.Collect(geo.Hits(point)),
 	)
-}
-
-func TestHistoryRestoresDeletedNodeLayerOrder(t *testing.T) {
-	t.Parallel()
-
-	history, err := NewHistory()
-	require.NoError(t, err)
-	geo, err := New(WithHistory(history))
-	require.NoError(t, err)
-	left, err := geo.NewNodeAt("left", NewPoint(2, 2))
-	require.NoError(t, err)
-	middle, err := geo.NewNodeAt("middle", NewPoint(20, 2))
-	require.NoError(t, err)
-	right, err := geo.NewNodeAt("right", NewPoint(40, 2))
-	require.NoError(t, err)
-	firstEdge := geo.ConnectNodes(
-		left,
-		ir.RightSide,
-		ir.LeftSide,
-		middle,
-	)
-	geo.ConnectNodes(middle, ir.RightSide, ir.LeftSide, right)
-	require.NoError(t, geo.SendToBack(Hit{ID: firstEdge, Kind: HitEdge}))
-	before := slices.Collect(geo.DrawOrder())
-	history.Clear()
-
-	require.NoError(t, geo.DeleteNode(middle))
-	changed, err := history.Undo()
-	require.NoError(t, err)
-	require.True(t, changed)
-	require.Equal(t, before, slices.Collect(geo.DrawOrder()))
 }

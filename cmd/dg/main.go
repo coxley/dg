@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/coxley/dg/document"
+	"github.com/coxley/dg/history"
 	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui"
 	"github.com/coxley/dg/ir"
@@ -32,13 +33,21 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	history := geo.History()
+	undo, err := history.New(geo)
+	if err != nil {
+		return fmt.Errorf("configure history: %w", err)
+	}
+	if path != "" {
+		if _, err := undo.Restore(path); err != nil {
+			log.Printf("restore undo history: %v", err)
+		}
+	}
 	defer func() {
-		if err := history.Flush(); err != nil {
+		if err := undo.Flush(); err != nil {
 			log.Printf("flush undo history: %v", err)
 		}
 	}()
-	if err := tui.Run(geo, path, tui.WithSettings(snapshot, store)); err != nil {
+	if err := tui.Run(geo, path, tui.WithHistory(undo), tui.WithSettings(snapshot, store)); err != nil {
 		return fmt.Errorf("run editor: %w", err)
 	}
 	return nil
@@ -48,13 +57,9 @@ func initialLayout(
 	args []string,
 	snapshot settings.Snapshot,
 ) (*layout.Layout, string, error) {
-	history, err := layout.NewHistory()
-	if err != nil {
-		return nil, "", err
-	}
 	switch len(args) {
 	case 0:
-		geo, err := exampleLayoutWithHistory(history, snapshot)
+		geo, err := exampleLayoutWithSettings(snapshot)
 		return geo, "", err
 	case 1:
 		data, err := os.ReadFile(args[0]) //nolint:gosec // The CLI argument intentionally selects an arbitrary diagram.
@@ -65,12 +70,9 @@ func initialLayout(
 		if err != nil {
 			return nil, "", fmt.Errorf("decode diagram %q: %w", args[0], err)
 		}
-		geo, err := doc.Layout(layout.WithHistory(history))
+		geo, err := doc.Layout()
 		if err != nil {
 			return nil, "", fmt.Errorf("load diagram %q: %w", args[0], err)
-		}
-		if _, err := history.Restore(args[0]); err != nil {
-			log.Printf("restore undo history: %v", err)
 		}
 		return geo, args[0], nil
 	default:
@@ -79,18 +81,11 @@ func initialLayout(
 }
 
 func exampleLayout() (*layout.Layout, error) {
-	history, err := layout.NewHistory()
-	if err != nil {
-		return nil, err
-	}
-	return exampleLayoutWithHistory(history, settings.Snapshot{})
+	return exampleLayoutWithSettings(settings.Snapshot{})
 }
 
-func exampleLayoutWithHistory(
-	history *layout.History,
-	snapshot settings.Snapshot,
-) (*layout.Layout, error) {
-	options := []layout.Option{layout.WithHistory(history)}
+func exampleLayoutWithSettings(snapshot settings.Snapshot) (*layout.Layout, error) {
+	var options []layout.Option
 	if snapshot.ApplyToFuture {
 		options = append(options, layout.WithRouter(snapshot.Router))
 	}
@@ -112,6 +107,5 @@ func exampleLayoutWithHistory(
 		return nil, err
 	}
 	geo.ConnectNodes(bar, ir.Bottom, ir.Top, sink)
-	history.Clear()
 	return geo, nil
 }

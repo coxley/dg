@@ -31,6 +31,11 @@ var (
 	Bottom    = sideb.AddValue(2)
 	LeftSide  = sideb.AddValue(3)
 	Sides     = sideb.Enum()
+
+	topText    = [...]byte{'t', 'o', 'p'}
+	rightText  = [...]byte{'r', 'i', 'g', 'h', 't'}
+	bottomText = [...]byte{'b', 'o', 't', 't', 'o', 'm'}
+	leftText   = [...]byte{'l', 'e', 'f', 't'}
 )
 
 func (d Side) String() string {
@@ -46,6 +51,42 @@ func (d Side) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// MarshalText encodes Side by name.
+func (d Side) MarshalText() ([]byte, error) {
+	switch d {
+	case Top:
+		return topText[:], nil
+	case RightSide:
+		return rightText[:], nil
+	case Bottom:
+		return bottomText[:], nil
+	case LeftSide:
+		return leftText[:], nil
+	default:
+		return nil, fmt.Errorf("invalid side %v", d.Value)
+	}
+}
+
+// UnmarshalText decodes Side by name.
+func (d *Side) UnmarshalText(text []byte) error {
+	if d == nil {
+		return errors.New("nil side")
+	}
+	switch string(text) {
+	case "top":
+		*d = Top
+	case "right":
+		*d = RightSide
+	case "bottom":
+		*d = Bottom
+	case "left":
+		*d = LeftSide
+	default:
+		return fmt.Errorf("invalid side %q", text)
+	}
+	return nil
 }
 
 type Node struct {

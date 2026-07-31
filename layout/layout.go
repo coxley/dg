@@ -164,7 +164,8 @@ type Layout struct {
 	attachments                []Attachment
 	attachmentBuildRollback    attachmentBuildSnapshot
 	attachmentMutationRollback attachmentBuildSnapshot
-	history                    *History
+	changeCallback             ChangeCallback
+	replaying                  bool
 	selection                  Selection
 }
 
@@ -184,9 +185,6 @@ func New(options ...Option) (*Layout, error) {
 	l.graph = cloneGraph(l.graph)
 	l.selection.attach(l)
 	if err := l.initializeGeometry(); err != nil {
-		return nil, err
-	}
-	if err := l.history.attach(l); err != nil {
 		return nil, err
 	}
 	return l, nil
@@ -217,18 +215,6 @@ func WithGraph(graph ir.Graph) Option {
 	return func(l *Layout) {
 		l.graph = graph
 	}
-}
-
-// WithHistory records successful mutations in history.
-func WithHistory(history *History) Option {
-	return func(l *Layout) {
-		l.history = history
-	}
-}
-
-// History returns the mutation history attached to the layout.
-func (l *Layout) History() *History {
-	return l.history
 }
 
 // NewNode adds a node at the origin and returns its index. It returns an error
@@ -281,11 +267,13 @@ func (l *Layout) newNodeAt(
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.commitNodePorts(nodeID)
 	l.appendLayer(Hit{ID: nodeID, Kind: HitNode})
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind: historyCreateNode,
-			id:   nodeID,
-			node: l.historyNode(nodeID),
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind: historyCreateNode,
+			ID:   nodeID,
+			After: historyChangeState{
+				Node: l.historyNode(nodeID),
+			},
 		})
 	}
 	return nodeID, nil
@@ -391,12 +379,14 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 		duplicate.NodeID = nodeMap[sourceID] - 1
 		duplicate.EdgeID = edgeMap[attachment.EdgeID] - 1
 		l.setAttachmentState(duplicate.NodeID, duplicate, true)
-		if l.history != nil {
-			l.history.record(historyChange{
-				kind:            historySetAttachment,
-				id:              duplicate.NodeID,
-				afterAttachment: duplicate,
-				afterAttached:   true,
+		if l.recordingChanges() {
+			l.recordChange(historyChange{
+				Kind: historySetAttachment,
+				ID:   duplicate.NodeID,
+				After: historyChangeState{
+					Attachment: duplicate,
+					Attached:   true,
+				},
 			})
 		}
 	}
@@ -444,12 +434,12 @@ func (l *Layout) SetNodeLabel(nodeID uint32, label string) error {
 	l.graph.Nodes[nodeID].Label = label
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:        historySetLabel,
-			id:          nodeID,
-			beforeLabel: previous,
-			afterLabel:  label,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historySetLabel,
+			ID:     nodeID,
+			Before: historyChangeState{Label: previous},
+			After:  historyChangeState{Label: label},
 		})
 	}
 	return nil
@@ -499,12 +489,12 @@ func (l *Layout) setNodeSize(nodeID uint32, size Size) error {
 	}
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:       historySetNodeSize,
-			id:         nodeID,
-			beforeSize: previous,
-			afterSize:  size,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historySetNodeSize,
+			ID:     nodeID,
+			Before: historyChangeState{Size: previous},
+			After:  historyChangeState{Size: size},
 		})
 	}
 	return nil
@@ -527,12 +517,12 @@ func (l *Layout) PlaceNode(nodeID uint32, point Point) error {
 	l.origins[nodeID] = point
 	l.Nodes[nodeID] = node
 	l.commitNodePorts(nodeID)
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:        historyPlaceNode,
-			id:          nodeID,
-			beforePoint: previous,
-			afterPoint:  point,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historyPlaceNode,
+			ID:     nodeID,
+			Before: historyChangeState{Point: previous},
+			After:  historyChangeState{Point: point},
 		})
 	}
 	return nil
@@ -701,13 +691,15 @@ func (l *Layout) ConnectNodes(nodeA uint32, sideA, sideB ir.Side, nodeB uint32) 
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
-	if l.history != nil && !existed {
-		l.history.record(historyChange{
-			kind:           historyCreateEdge,
-			id:             edgeID,
-			afterEdge:      l.graph.Edges[edgeID],
-			afterEdgeStyle: l.edgeStyles[edgeID],
-			afterLayer:     uint32(len(l.drawOrder) - 1),
+	if l.recordingChanges() && !existed {
+		l.recordChange(historyChange{
+			Kind: historyCreateEdge,
+			ID:   edgeID,
+			After: historyChangeState{
+				Edge:      l.graph.Edges[edgeID],
+				EdgeStyle: l.edgeStyles[edgeID],
+				Layer:     uint32(len(l.drawOrder) - 1),
+			},
 		})
 	}
 	return edgeID
@@ -742,13 +734,15 @@ func (l *Layout) ConnectPorts(portA, portB uint32) (uint32, error) {
 		l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
 		l.appendLayer(Hit{ID: edgeID, Kind: HitEdge})
 	}
-	if l.history != nil && !existed {
-		l.history.record(historyChange{
-			kind:           historyCreateEdge,
-			id:             edgeID,
-			afterEdge:      l.graph.Edges[edgeID],
-			afterEdgeStyle: l.edgeStyles[edgeID],
-			afterLayer:     uint32(len(l.drawOrder) - 1),
+	if l.recordingChanges() && !existed {
+		l.recordChange(historyChange{
+			Kind: historyCreateEdge,
+			ID:   edgeID,
+			After: historyChangeState{
+				Edge:      l.graph.Edges[edgeID],
+				EdgeStyle: l.edgeStyles[edgeID],
+				Layer:     uint32(len(l.drawOrder) - 1),
+			},
 		})
 	}
 	return edgeID, nil
@@ -777,18 +771,22 @@ func (l *Layout) ReconnectEdge(edgeID, oldPort, newPort uint32) error {
 	}
 	l.Edges[edgeID] = Edge{}
 	l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
-	if l.history != nil && previous != l.graph.Edges[edgeID] {
+	if l.recordingChanges() && previous != l.graph.Edges[edgeID] {
 		style := l.edgeStyles[edgeID]
 		bends := slices.Clone(l.edgeBends[edgeID])
-		l.history.record(historyChange{
-			kind:            historyReconnectEdge,
-			id:              edgeID,
-			beforeEdge:      previous,
-			afterEdge:       l.graph.Edges[edgeID],
-			beforeEdgeStyle: style,
-			afterEdgeStyle:  style,
-			beforeBends:     bends,
-			afterBends:      slices.Clone(bends),
+		l.recordChange(historyChange{
+			Kind: historyReconnectEdge,
+			ID:   edgeID,
+			Before: historyChangeState{
+				Edge:      previous,
+				EdgeStyle: style,
+				Bends:     bends,
+			},
+			After: historyChangeState{
+				Edge:      l.graph.Edges[edgeID],
+				EdgeStyle: style,
+				Bends:     slices.Clone(bends),
+			},
 		})
 	}
 	return nil
@@ -807,7 +805,7 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 		previousAttachments = append(previousAttachments, attachment)
 	}
 	var rollback layoutHistoryState
-	if len(previousAttachments) != 0 {
+	if len(previousAttachments) != 0 && !l.replaying {
 		rollback = l.historyState()
 	}
 	for _, attachment := range previousAttachments {
@@ -820,7 +818,7 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 	l.Edges[edgeID] = Edge{}
 	l.edgeStyles[edgeID] = EdgeStyle{}
 	l.edgeBends[edgeID] = l.edgeBends[edgeID][:0]
-	if len(previousAttachments) != 0 {
+	if len(previousAttachments) != 0 && !l.replaying {
 		if err := l.Build(); err != nil {
 			if restoreErr := l.restoreHistoryState(rollback); restoreErr != nil {
 				return errors.Join(err, fmt.Errorf(
@@ -833,15 +831,17 @@ func (l *Layout) DeleteEdge(edgeID uint32) error {
 		}
 	}
 	l.selection.discard(Hit{ID: edgeID, Kind: HitEdge})
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:              historyDeleteEdge,
-			id:                edgeID,
-			beforeEdge:        previous,
-			beforeEdgeStyle:   previousStyle,
-			beforeBends:       previousBends,
-			beforeLayer:       uint32(layer),
-			beforeAttachments: previousAttachments,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind: historyDeleteEdge,
+			ID:   edgeID,
+			Before: historyChangeState{
+				Edge:        previous,
+				EdgeStyle:   previousStyle,
+				Bends:       previousBends,
+				Layer:       uint32(layer),
+				Attachments: previousAttachments,
+			},
 		})
 	}
 	return nil
@@ -853,7 +853,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
 	}
 	var previous historyNode
-	if l.history != nil {
+	if l.recordingChanges() {
 		previous = l.historyNode(nodeID)
 	}
 
@@ -887,11 +887,11 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	l.removeLayer(Hit{ID: nodeID, Kind: HitNode})
 	l.selection.discard(Hit{ID: nodeID, Kind: HitNode})
 	l.compactPortLookup()
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind: historyDeleteNode,
-			id:   nodeID,
-			node: previous,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historyDeleteNode,
+			ID:     nodeID,
+			Before: historyChangeState{Node: previous},
 		})
 	}
 	return nil
@@ -1013,11 +1013,11 @@ func (l *Layout) SetRouter(router Router) {
 		return
 	}
 	l.router = router
-	if l.history != nil {
-		l.history.record(historyChange{
-			kind:         historySetRouter,
-			beforeRouter: previous,
-			afterRouter:  router,
+	if l.recordingChanges() {
+		l.recordChange(historyChange{
+			Kind:   historySetRouter,
+			Before: historyChangeState{Router: previous},
+			After:  historyChangeState{Router: router},
 		})
 	}
 }
@@ -1283,7 +1283,7 @@ func (l *Layout) initializeGeometry() error {
 func (l *Layout) nodeGeometry(nodeID uint32, label string, point Point) (Node, error) {
 	size, err := MeasureLabel(label)
 	if err != nil {
-		return Node{}, fmt.Errorf("measure node %d label: %w", nodeID, err)
+		return Node{}, fmt.Errorf("measure node %d Label: %w", nodeID, err)
 	}
 	rect, err := l.nodeRect(nodeID, point, size)
 	if err != nil {
