@@ -37,7 +37,7 @@ export, preferences, and live previews.
 
 ## Packages
 
-- `cmd/dg`: starts the example editor or opens a saved diagram
+- `cmd/dg`: restores the most recent canvas, starts empty, or imports a diagram
 - `document`: maps layouts to and from the versioned JSON schema
 - `ir`: stores semantic objects in `ir.Graph`
 - `history`: records layout changes as undo/redo interactions and persists its

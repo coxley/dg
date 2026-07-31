@@ -11,7 +11,6 @@ import (
 	"github.com/coxley/dg/history"
 	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui"
-	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 	canvasstore "github.com/coxley/dg/store"
 )
@@ -66,12 +65,12 @@ func initialCanvas(
 	args []string,
 	snapshot settings.Snapshot,
 	canvases *canvasstore.Store,
-) (*layout.Layout, document.Document, canvasstore.Entry, error) {
+) (*layout.Layout, document.Document, *canvasstore.Entry, error) {
 	switch len(args) {
 	case 0:
 		entries, err := canvases.List()
 		if err != nil {
-			return nil, document.Document{}, canvasstore.Entry{}, fmt.Errorf("list canvases: %w", err)
+			return nil, document.Document{}, nil, fmt.Errorf("list canvases: %w", err)
 		}
 		if len(entries) != 0 {
 			entry := slices.MaxFunc(entries, func(a, b canvasstore.Entry) int {
@@ -79,65 +78,38 @@ func initialCanvas(
 			})
 			doc, err := canvases.Load(entry)
 			if err != nil {
-				return nil, document.Document{}, canvasstore.Entry{}, fmt.Errorf("load recent canvas: %w", err)
+				return nil, document.Document{}, nil, fmt.Errorf("load recent canvas: %w", err)
 			}
 			geo, err := doc.Convert()
 			if err != nil {
-				return nil, document.Document{}, canvasstore.Entry{}, fmt.Errorf("convert recent canvas: %w", err)
+				return nil, document.Document{}, nil, fmt.Errorf("convert recent canvas: %w", err)
 			}
-			return geo, doc, entry, nil
+			return geo, doc, &entry, nil
 		}
-		geo, err := exampleLayoutWithSettings(snapshot)
+		geo, err := emptyLayoutWithSettings(snapshot)
 		if err != nil {
-			return nil, document.Document{}, canvasstore.Entry{}, err
+			return nil, document.Document{}, nil, err
 		}
-		doc := document.New(geo)
-		entry, err := canvases.CreateDraft(doc)
-		if err != nil {
-			return nil, document.Document{}, canvasstore.Entry{}, fmt.Errorf("create initial draft: %w", err)
-		}
-		return geo, doc, entry, nil
+		return geo, document.New(geo), nil, nil
 	case 1:
 		entry, doc, err := canvases.Import(args[0])
 		if err != nil {
-			return nil, document.Document{}, canvasstore.Entry{}, fmt.Errorf("import diagram %q: %w", args[0], err)
+			return nil, document.Document{}, nil, fmt.Errorf("import diagram %q: %w", args[0], err)
 		}
 		geo, err := doc.Convert()
 		if err != nil {
-			return nil, document.Document{}, canvasstore.Entry{}, fmt.Errorf("load diagram %q: %w", args[0], err)
+			return nil, document.Document{}, nil, fmt.Errorf("load diagram %q: %w", args[0], err)
 		}
-		return geo, doc, entry, nil
+		return geo, doc, &entry, nil
 	default:
-		return nil, document.Document{}, canvasstore.Entry{}, errors.New("usage: dg [path]")
+		return nil, document.Document{}, nil, errors.New("usage: dg [path]")
 	}
 }
 
-func exampleLayout() (*layout.Layout, error) {
-	return exampleLayoutWithSettings(settings.Snapshot{})
-}
-
-func exampleLayoutWithSettings(snapshot settings.Snapshot) (*layout.Layout, error) {
+func emptyLayoutWithSettings(snapshot settings.Snapshot) (*layout.Layout, error) {
 	var options []layout.Option
 	if snapshot.ApplyToFuture {
 		options = append(options, layout.WithRouter(snapshot.Router))
 	}
-	geo, err := layout.New(options...)
-	if err != nil {
-		return nil, err
-	}
-	sink, err := geo.NewNodeAt("sinks", layout.NewPoint(7, 6))
-	if err != nil {
-		return nil, err
-	}
-	foo, err := geo.NewNodeAt("foo", layout.NewPoint(4, 0))
-	if err != nil {
-		return nil, err
-	}
-	geo.ConnectNodes(foo, ir.Bottom, ir.Top, sink)
-	bar, err := geo.NewNodeAt("bar", layout.NewPoint(12, 0))
-	if err != nil {
-		return nil, err
-	}
-	geo.ConnectNodes(bar, ir.Bottom, ir.Top, sink)
-	return geo, nil
+	return layout.New(options...)
 }

@@ -11,19 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExampleLayoutBuilds(t *testing.T) {
-	t.Parallel()
-
-	geo, err := exampleLayout()
-	require.NoError(t, err)
-	require.NoError(t, geo.Build())
-}
-
 func TestInitialLayoutReadsDocument(t *testing.T) {
 	t.Parallel()
 
-	geo, err := exampleLayout()
-	require.NoError(t, err)
+	geo := mustLayoutWithLabel(t, "imported")
 	doc := document.New(geo)
 	source := newCanvasStore(t)
 	entry, err := source.Create("", "Imported", doc)
@@ -34,9 +25,10 @@ func TestInitialLayoutReadsDocument(t *testing.T) {
 	canvases := newCanvasStore(t)
 	loaded, loadedDocument, imported, err := initialCanvas([]string{path}, settings.Snapshot{}, canvases)
 	require.NoError(t, err)
+	require.NotNil(t, imported)
 	require.True(t, imported.Draft)
 	require.Equal(t, doc.ID, loadedDocument.ID)
-	require.Equal(t, "sinks", loaded.Label(0))
+	require.Equal(t, "imported", loaded.Label(0))
 	require.NoError(t, loaded.Build())
 	require.FileExists(t, path)
 }
@@ -52,21 +44,27 @@ func TestInitialLayoutRejectsExtraArguments(t *testing.T) {
 	require.EqualError(t, err, "usage: dg [path]")
 }
 
-func TestInitialLayoutUsesInjectedRouterForNewDiagram(t *testing.T) {
+func TestInitialCanvasStartsTransientEmptyWithInjectedRouter(t *testing.T) {
 	t.Parallel()
 
 	router := layout.DefaultRouter()
 	router.Costs.Step = 37
+	canvases := newCanvasStore(t)
 
 	geo, doc, entry, err := initialCanvas(nil, settings.Snapshot{
 		Router:        router,
 		ApplyToFuture: true,
-	}, newCanvasStore(t))
+	}, canvases)
 
 	require.NoError(t, err)
-	require.True(t, entry.Draft)
+	require.Nil(t, entry)
 	require.NotEmpty(t, doc.ID)
+	require.Empty(t, geo.Nodes)
+	require.Empty(t, geo.Edges)
 	require.Equal(t, router, geo.Router())
+	entries, err := canvases.List()
+	require.NoError(t, err)
+	require.Empty(t, entries)
 }
 
 func TestInitialCanvasLoadsMostRecentlyModifiedRecord(t *testing.T) {
@@ -85,6 +83,7 @@ func TestInitialCanvasLoadsMostRecentlyModifiedRecord(t *testing.T) {
 
 	geo, doc, entry, err := initialCanvas(nil, settings.Snapshot{}, canvases)
 	require.NoError(t, err)
+	require.NotNil(t, entry)
 	require.Equal(t, second.ID, doc.ID)
 	require.Equal(t, secondEntry.ID, entry.ID)
 	require.Equal(t, "second", geo.Label(0))
