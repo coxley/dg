@@ -7,6 +7,7 @@ import (
 
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -17,22 +18,112 @@ func TestRoundTripProperties(t *testing.T) {
 	documents := generatedDocument(0)
 	rapid.Check(t, func(t *rapid.T) {
 		want := documents.Draw(t, "document")
-		geo, err := want.Layout()
+		geo, err := want.Convert()
 		require.NoError(t, err)
-		require.Equal(t, want, FromLayout(geo))
+		updated := want
+		updated.Update(geo)
+		require.Equal(t, want, updated)
 
-		first, err := Marshal(geo)
+		first, err := Marshal(updated)
 		require.NoError(t, err)
 		got, err := Unmarshal(first)
 		require.NoError(t, err)
 		require.Equal(t, want, got)
 
-		loaded, err := got.Layout()
+		loaded, err := got.Convert()
 		require.NoError(t, err)
-		second, err := Marshal(loaded)
+		got.Update(loaded)
+		second, err := Marshal(got)
 		require.NoError(t, err)
 		require.Equal(t, first, second)
 	})
+}
+
+func TestNewAndUpdatePreserveIdentityAndCapacity(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	for range 8 {
+		_, err := geo.NewNode("node")
+		require.NoError(t, err)
+	}
+	doc := New(geo)
+	require.Equal(t, uuid.Version(4), doc.ID.Version())
+	id := doc.ID
+	nodeCapacity := cap(doc.Nodes)
+	portCapacity := cap(doc.Ports)
+
+	require.NoError(t, geo.DeleteNode(7))
+	doc.Update(geo)
+	require.Equal(t, id, doc.ID)
+	require.GreaterOrEqual(t, cap(doc.Nodes), nodeCapacity)
+	require.GreaterOrEqual(t, cap(doc.Ports), portCapacity)
+}
+
+func TestConvertIntoReusesLayoutAndPreservesCallback(t *testing.T) {
+	t.Parallel()
+
+	first := validDocument()
+	second := validDocument()
+	second.Nodes[0].Label = "replacement"
+	second.Nodes = append(second.Nodes, Node{Label: "third", Ports: []uint32{2}})
+	second.Ports = append(second.Ports, Port{Side: SideTop, Offset: 0.5})
+	second.Layers = []Layer{
+		{Kind: LayerNode, ID: 0},
+		{Kind: LayerNode, ID: 1},
+		{Kind: LayerNode, ID: 2},
+		{Kind: LayerEdge, ID: 0},
+	}
+
+	geo, err := first.Convert()
+	require.NoError(t, err)
+	require.True(t, geo.Selection().SelectOnly(layout.Hit{ID: 0, Kind: layout.HitNode}))
+	changes := 0
+	require.NoError(t, geo.SetChangeCallback(func(layout.Change) { changes++ }))
+	pointer := geo
+	require.NoError(t, second.ConvertInto(geo))
+	require.Same(t, pointer, geo)
+	require.Equal(t, "replacement", geo.Label(0))
+	require.True(t, geo.Selection().Empty())
+	require.Zero(t, changes)
+	require.NoError(t, geo.SetNodeLabel(0, "edited"))
+	require.Equal(t, 1, changes)
+}
+
+func TestConvertIntoFailureLeavesLayoutUnchanged(t *testing.T) {
+	t.Parallel()
+
+	doc := validDocument()
+	geo, err := doc.Convert()
+	require.NoError(t, err)
+	require.True(t, geo.Selection().SelectOnly(layout.Hit{ID: 0, Kind: layout.HitNode}))
+	doc.Nodes[0].Style.Border = "invalid"
+
+	err = doc.ConvertInto(geo)
+	require.ErrorContains(t, err, "unknown border")
+	require.Equal(t, "source", geo.Label(0))
+	require.True(t, geo.Selection().Contains(layout.Hit{ID: 0, Kind: layout.HitNode}))
+}
+
+func TestConvertIntoAlternatesRetainedCapacity(t *testing.T) {
+	t.Parallel()
+
+	largeLayout, err := layout.New()
+	require.NoError(t, err)
+	for range 16 {
+		_, err := largeLayout.NewNode("node")
+		require.NoError(t, err)
+	}
+	large := New(largeLayout)
+	small := validDocument()
+	geo, err := layout.New()
+	require.NoError(t, err)
+	require.NoError(t, large.ConvertInto(geo))
+	largeNodeCapacity := cap(geo.Nodes)
+	require.NoError(t, small.ConvertInto(geo))
+	require.NoError(t, large.ConvertInto(geo))
+	require.GreaterOrEqual(t, cap(geo.Nodes), largeNodeCapacity)
 }
 
 func TestInvalidPortOffsetProperties(t *testing.T) {
@@ -51,7 +142,7 @@ func TestInvalidPortOffsetProperties(t *testing.T) {
 		doc := validDocument()
 		doc.Ports[0].Offset = offsets.Draw(t, "offset")
 
-		_, err := doc.Layout()
+		_, err := doc.Convert()
 		require.ErrorContains(t, err, "outside [0, 1]")
 	})
 }
@@ -71,20 +162,20 @@ func TestMarshalCompactsDeletedSlots(t *testing.T) {
 	require.NoError(t, geo.DeleteNode(deleted))
 	require.NoError(t, geo.Build())
 
-	doc := FromLayout(geo)
+	doc := New(geo)
 	require.Equal(t, []string{"source", "sink"}, []string{doc.Nodes[0].Label, doc.Nodes[1].Label})
 	require.Len(t, doc.Ports, 24)
 	require.Len(t, doc.Edges, 1)
 	require.Less(t, doc.Edges[0].PortA, uint32(len(doc.Ports)))
 	require.Less(t, doc.Edges[0].PortB, uint32(len(doc.Ports)))
 
-	data, err := Marshal(geo)
+	data, err := Marshal(doc)
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"version": 1`)
+	require.Contains(t, string(data), `"version": 2`)
 	require.NotContains(t, string(data), "points")
 }
 
-func TestUnmarshalVersionOne(t *testing.T) {
+func TestUnmarshalRejectsVersionOne(t *testing.T) {
 	t.Parallel()
 
 	data := []byte(`{
@@ -100,13 +191,8 @@ func TestUnmarshalVersionOne(t *testing.T) {
 			}
 		}
 	}`)
-	doc, err := Unmarshal(data)
-	require.NoError(t, err)
-	require.Equal(t, CurrentVersion, doc.Version)
-	geo, err := doc.Layout()
-	require.NoError(t, err)
-	require.Equal(t, layout.Padding{Left: 1, Right: 1}, geo.Padding())
-	require.Equal(t, layout.DefaultRouter(), geo.Router())
+	_, err := Unmarshal(data)
+	require.ErrorIs(t, err, ErrUnsupportedVersion)
 }
 
 func TestRoundTripMultilineLabelAndExplicitSize(t *testing.T) {
@@ -116,11 +202,13 @@ func TestRoundTripMultilineLabelAndExplicitSize(t *testing.T) {
 	doc.Nodes[0].Label = "one\ntwo three"
 	doc.Nodes[0].Size = Size{Width: 9, Height: 4}
 
-	geo, err := doc.Layout()
+	geo, err := doc.Convert()
 	require.NoError(t, err)
-	require.Equal(t, doc, FromLayout(geo))
+	updated := doc
+	updated.Update(geo)
+	require.Equal(t, doc, updated)
 
-	data, err := Marshal(geo)
+	data, err := Marshal(updated)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"size"`)
 	decoded, err := Unmarshal(data)
@@ -153,10 +241,11 @@ func TestRoundTripPinnedBends(t *testing.T) {
 	require.NoError(t, geo.SetPinnedBends(edgeID, bends))
 	require.NoError(t, geo.Build())
 
-	data, err := Marshal(geo)
+	doc := New(geo)
+	data, err := Marshal(doc)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"bends"`)
-	doc, err := Unmarshal(data)
+	doc, err = Unmarshal(data)
 	require.NoError(t, err)
 	require.Equal(t, []PinnedBend{
 		{
@@ -171,12 +260,13 @@ func TestRoundTripPinnedBends(t *testing.T) {
 		},
 	}, doc.Edges[0].Bends)
 
-	loaded, err := doc.Layout()
+	loaded, err := doc.Convert()
 	require.NoError(t, err)
 	got, err := loaded.PinnedBends(0)
 	require.NoError(t, err)
 	require.Equal(t, bends, got)
-	second, err := Marshal(loaded)
+	doc.Update(loaded)
+	second, err := Marshal(doc)
 	require.NoError(t, err)
 	require.Equal(t, data, second)
 }
@@ -191,7 +281,7 @@ func TestDocumentRejectsInvalidPinnedBendDirection(t *testing.T) {
 		Outgoing: DirectionSouth,
 	}}
 
-	_, err := doc.Layout()
+	_, err := doc.Convert()
 	require.ErrorContains(t, err, `unknown direction "diagonal"`)
 }
 
@@ -215,16 +305,19 @@ func TestRoundTripAttachment(t *testing.T) {
 	))
 	require.NoError(t, geo.AttachNode(node, edge, point))
 
-	data, err := Marshal(geo)
+	doc := New(geo)
+	data, err := Marshal(doc)
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"attachments"`)
-	doc, err := Unmarshal(data)
+	doc, err = Unmarshal(data)
 	require.NoError(t, err)
 	require.Len(t, doc.Attachments, 1)
 
-	loaded, err := doc.Layout()
+	loaded, err := doc.Convert()
 	require.NoError(t, err)
-	require.Equal(t, doc, FromLayout(loaded))
+	updated := doc
+	updated.Update(loaded)
+	require.Equal(t, doc, updated)
 	got, ok := loaded.NodeAttachment(doc.Attachments[0].Node)
 	require.True(t, ok)
 	require.Equal(t, doc.Attachments[0].Edge, got.EdgeID)
@@ -269,13 +362,15 @@ func TestRoundTripAttachmentProperties(t *testing.T) {
 		))
 		require.NoError(t, geo.AttachNode(node, edge, point))
 
-		data, err := Marshal(geo)
+		doc := New(geo)
+		data, err := Marshal(doc)
 		require.NoError(t, err)
-		doc, err := Unmarshal(data)
+		doc, err = Unmarshal(data)
 		require.NoError(t, err)
-		loaded, err := doc.Layout()
+		loaded, err := doc.Convert()
 		require.NoError(t, err)
-		second, err := Marshal(loaded)
+		doc.Update(loaded)
+		second, err := Marshal(doc)
 		require.NoError(t, err)
 		require.Equal(t, data, second)
 	})
@@ -345,7 +440,7 @@ func TestDocumentAttachmentValidation(t *testing.T) {
 
 			doc := validAttachmentDocument(t)
 			test.mutate(&doc)
-			_, err := doc.Layout()
+			_, err := doc.Convert()
 			require.ErrorContains(t, err, test.want)
 		})
 	}
@@ -367,7 +462,7 @@ func validAttachmentDocument(t testing.TB) Document {
 	point := documentEdgeMiddle(geo.Edges[edge].Points)
 	require.NoError(t, geo.PlaceNode(node, layout.NewPoint(point.X-1, point.Y-1)))
 	require.NoError(t, geo.AttachNode(node, edge, point))
-	return FromLayout(geo)
+	return New(geo)
 }
 
 func documentEdgeMiddle(points []layout.Point) layout.Point {
@@ -417,12 +512,12 @@ func TestUnmarshalRejectsInvalidJSONShape(t *testing.T) {
 	}{
 		{
 			name: "unknown field",
-			data: `{"version":1,"nodes":[],"ports":[],"edges":[],"options":{},"unknown":true}`,
+			data: `{"version":2,"id":"123e4567-e89b-42d3-a456-426614174000","nodes":[],"ports":[],"edges":[],"options":{},"unknown":true}`,
 			want: "unknown field",
 		},
 		{
 			name: "trailing value",
-			data: `{"version":1,"nodes":[],"ports":[],"edges":[],"options":{}} {}`,
+			data: `{"version":2,"id":"123e4567-e89b-42d3-a456-426614174000","nodes":[],"ports":[],"edges":[],"options":{}} {}`,
 			want: "trailing JSON value",
 		},
 	}
@@ -559,7 +654,7 @@ func TestDocumentValidation(t *testing.T) {
 
 			doc := validDocument()
 			test.mutate(&doc)
-			_, err := doc.Layout()
+			_, err := doc.Convert()
 			require.ErrorContains(t, err, test.want)
 		})
 	}
@@ -570,16 +665,17 @@ func TestDocumentRejectsUnsupportedVersion(t *testing.T) {
 
 	doc := validDocument()
 	doc.Version++
-	_, err := doc.Layout()
+	_, err := doc.Convert()
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 
-	_, err = Unmarshal([]byte(`{"version":2,"future_field":true}`))
+	_, err = Unmarshal([]byte(`{"version":3,"future_field":true}`))
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 }
 
 func validDocument() Document {
 	return Document{
 		Version: CurrentVersion,
+		ID:      uuid.New(),
 		Nodes: []Node{
 			{
 				Label:  "source",
@@ -665,6 +761,7 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 		verticalPadding := rapid.Uint8Range(0, 4).Draw(t, "vertical padding")
 		doc := Document{
 			Version: CurrentVersion,
+			ID:      uuid.New(),
 			Nodes:   make([]Node, 0, nodeCount),
 			Ports:   make([]Port, 0, portCount),
 			Edges:   make([]Edge, 0),

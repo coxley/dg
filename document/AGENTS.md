@@ -9,6 +9,7 @@
 
 `Document` stores:
 
+- a required UUIDv4 identity
 - live nodes, ordered ports, and edges
 - node origins and optional explicit sizes
 - node border, stroke, and text alignment
@@ -22,9 +23,14 @@ The zero value of optional style fields represents the runtime default.
 
 ## Conversion rules
 
-Export compacts runtime tombstones and remaps every node, port, edge, and layer
-reference. Import recreates independent runtime slices and validates enum
-values, offsets, IDs, and layers.
+`New` exports a Layout with a fresh identity. `Update` preserves identity while
+reusing document capacity. Export compacts runtime tombstones and remaps every
+node, port, edge, and layer reference.
+
+`Convert` creates an independent Layout. `ConvertInto` atomically replaces an
+existing Layout through its retained staging state, preserving the Layout
+pointer and change callback. Import validates enum values, offsets, IDs, and
+layers and clears transient selection on success.
 
 Persist routing constraints, but not computed routes, raster cells, selection,
 free lists, geometry scratch, history, or frontend state. Layout rebuilds
@@ -35,9 +41,8 @@ conversion explicit so schema evolution does not leak into engine types.
 
 ## Compatibility
 
-Never reinterpret an existing field silently. Add a new document version when
-a change cannot preserve old meaning. Keep old readers deterministic: reject
-unsupported versions with `ErrUnsupportedVersion`.
+Version 2 is the only accepted schema. Reject every other version with
+`ErrUnsupportedVersion`; the project does not retain legacy readers yet.
 
 When adding runtime capabilities:
 

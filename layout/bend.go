@@ -47,12 +47,16 @@ func (l *Layout) SetPinnedBends(edgeID uint32, bends []PinnedBend) error {
 	if slices.Equal(previous, bends) {
 		return nil
 	}
-	l.edgeBends[edgeID] = slices.Clone(bends)
+	var before []PinnedBend
+	if l.recordingChanges() {
+		before = slices.Clone(previous)
+	}
+	l.edgeBends[edgeID] = append(l.edgeBends[edgeID][:0], bends...)
 	if l.recordingChanges() {
 		l.recordChange(historyChange{
 			Kind:   historySetPinnedBends,
 			ID:     edgeID,
-			Before: historyChangeState{Bends: slices.Clone(previous)},
+			Before: historyChangeState{Bends: before},
 			After:  historyChangeState{Bends: slices.Clone(bends)},
 		})
 	}

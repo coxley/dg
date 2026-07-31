@@ -118,7 +118,8 @@ observer already owns it.
 `Replay` suppresses callbacks, applies one complete history entry, builds once,
 and restores its prior snapshot on failure. Exact node and edge slot recovery
 remains private to `layout`, preserving tombstones and stable IDs. Change
-construction clones slice payloads before invoking the callback.
+construction gives the callback value-owned slice payloads, cloning once at
+the producer when necessary.
 
 `history.History` installs the callback and retains the `*layout.Layout`:
 
@@ -361,6 +362,8 @@ Status: complete.
 - Keep the repository green at the phase gate.
 
 ### Phase 2: reusable layout conversion
+
+Status: complete.
 
 - Add atomic Layout state replacement while preserving callbacks and capacity.
 - Add document schema v2 UUIDs.

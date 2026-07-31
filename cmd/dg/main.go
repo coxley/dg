@@ -29,7 +29,7 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
 	}
-	geo, path, err := initialLayout(args, snapshot)
+	geo, doc, path, err := initialLayout(args, snapshot)
 	if err != nil {
 		return err
 	}
@@ -47,7 +47,13 @@ func run(args []string) error {
 			log.Printf("flush undo history: %v", err)
 		}
 	}()
-	if err := tui.Run(geo, path, tui.WithHistory(undo), tui.WithSettings(snapshot, store)); err != nil {
+	if err := tui.Run(
+		geo,
+		path,
+		tui.WithDocument(doc),
+		tui.WithHistory(undo),
+		tui.WithSettings(snapshot, store),
+	); err != nil {
 		return fmt.Errorf("run editor: %w", err)
 	}
 	return nil
@@ -56,27 +62,30 @@ func run(args []string) error {
 func initialLayout(
 	args []string,
 	snapshot settings.Snapshot,
-) (*layout.Layout, string, error) {
+) (*layout.Layout, document.Document, string, error) {
 	switch len(args) {
 	case 0:
 		geo, err := exampleLayoutWithSettings(snapshot)
-		return geo, "", err
+		if err != nil {
+			return nil, document.Document{}, "", err
+		}
+		return geo, document.New(geo), "", nil
 	case 1:
 		data, err := os.ReadFile(args[0]) //nolint:gosec // The CLI argument intentionally selects an arbitrary diagram.
 		if err != nil {
-			return nil, "", fmt.Errorf("read diagram %q: %w", args[0], err)
+			return nil, document.Document{}, "", fmt.Errorf("read diagram %q: %w", args[0], err)
 		}
 		doc, err := document.Unmarshal(data)
 		if err != nil {
-			return nil, "", fmt.Errorf("decode diagram %q: %w", args[0], err)
+			return nil, document.Document{}, "", fmt.Errorf("decode diagram %q: %w", args[0], err)
 		}
-		geo, err := doc.Layout()
+		geo, err := doc.Convert()
 		if err != nil {
-			return nil, "", fmt.Errorf("load diagram %q: %w", args[0], err)
+			return nil, document.Document{}, "", fmt.Errorf("load diagram %q: %w", args[0], err)
 		}
-		return geo, args[0], nil
+		return geo, doc, args[0], nil
 	default:
-		return nil, "", errors.New("usage: dg [path]")
+		return nil, document.Document{}, "", errors.New("usage: dg [path]")
 	}
 }
 

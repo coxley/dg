@@ -255,6 +255,11 @@ suppress change callbacks.
 The `history` package owns transactions, undo/redo cursors, coalescing use, and
 cache persistence. Layout must not import it.
 
+`Replace` configures a retained staging Layout and swaps it into the receiver
+only after configuration succeeds. It preserves the receiver pointer and
+change callback, clears selection, and keeps the previous state as the next
+staging buffer.
+
 ## Performance
 
 Reuse `routeScratch`, `draftPorts`, grid buffers, and change storage. Keep

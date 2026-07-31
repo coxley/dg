@@ -1653,8 +1653,10 @@ func snapshotHelpCommand(model *Model) helpCommandSnapshot {
 		case layout.HitPort:
 		}
 	}
+	doc := document.New(model.geo)
+	doc.ID = model.document.ID
 	return helpCommandSnapshot{
-		document:       document.FromLayout(model.geo),
+		document:       doc,
 		selection:      selection,
 		order:          order,
 		nodeOrigins:    nodeOrigins,
@@ -4174,7 +4176,7 @@ func requireSavedLabel(t testing.TB, path, want string) {
 	require.NoError(t, err)
 	doc, err := document.Unmarshal(data)
 	require.NoError(t, err)
-	geo, err := doc.Layout()
+	geo, err := doc.Convert()
 	require.NoError(t, err)
 	require.Equal(t, want, geo.Label(0))
 }

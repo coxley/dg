@@ -424,16 +424,39 @@ func (g *Graph) Validate() error {
 
 // Clone returns an independent graph with reconstructed free lists.
 func (g Graph) Clone() Graph {
-	cloned := Graph{
-		Nodes: slices.Clone(g.Nodes),
-		Edges: slices.Clone(g.Edges),
-		Ports: slices.Clone(g.Ports),
-	}
-	for i := range cloned.Nodes {
-		cloned.Nodes[i].Ports = slices.Clone(cloned.Nodes[i].Ports)
-	}
-	cloned.rebuildFreeLists()
+	var cloned Graph
+	g.CloneInto(&cloned)
 	return cloned
+}
+
+// CloneInto replaces dst with an independent graph while retaining its capacity.
+func (g Graph) CloneInto(dst *Graph) {
+	previousNodes := len(dst.Nodes)
+	if len(g.Nodes) < previousNodes {
+		clear(dst.Nodes[len(g.Nodes):])
+	}
+	dst.Nodes = slices.Grow(dst.Nodes[:0], len(g.Nodes))[:len(g.Nodes)]
+	dst.Edges = resizeGraphSlice(dst.Edges, len(g.Edges))
+	dst.Ports = resizeGraphSlice(dst.Ports, len(g.Ports))
+	copy(dst.Edges, g.Edges)
+	copy(dst.Ports, g.Ports)
+	for i := range g.Nodes {
+		var ports []uint32
+		if i < previousNodes {
+			ports = dst.Nodes[i].Ports
+		}
+		ports = slices.Grow(ports[:0], len(g.Nodes[i].Ports))
+		ports = append(ports, g.Nodes[i].Ports...)
+		dst.Nodes[i] = Node{Label: g.Nodes[i].Label, Ports: ports}
+	}
+	dst.rebuildFreeLists()
+}
+
+func resizeGraphSlice[S ~[]E, E any](values S, length int) S {
+	values = slices.Grow(values[:0], length)
+	values = values[:length]
+	clear(values)
+	return values
 }
 
 // PickCenterPort returns the first port on the side, which is our center port. This

@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/history"
 	"github.com/coxley/dg/internal/settings"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
@@ -63,9 +64,10 @@ func (m mode) String() string {
 
 // Model coordinates terminal interaction with a layout.
 type Model struct {
-	geo     *layout.Layout
-	history *history.History
-	theme   Theme
+	geo      *layout.Layout
+	history  *history.History
+	document document.Document
+	theme    Theme
 
 	cursor      layout.Point
 	viewport    layout.Point
@@ -123,6 +125,14 @@ type modelOptions struct {
 	settings settings.Snapshot
 	store    *settings.Store
 	history  *history.History
+	document *document.Document
+}
+
+// WithDocument preserves value as the persisted identity of geo.
+func WithDocument(value document.Document) Option {
+	return func(options *modelOptions) {
+		options.document = &value
+	}
 }
 
 // WithSettings configures the initial settings snapshot and its durable store.
@@ -163,6 +173,11 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 		theme:         DefaultTheme(true),
 		styledRuns:    make(map[styledRunKey]string),
 		settingsStore: configured.store,
+	}
+	if configured.document == nil {
+		m.document = document.New(geo)
+	} else {
+		m.document = *configured.document
 	}
 	m.helpInspector = newHelpInspector(m.theme.Help)
 	resolver, err := chrome.NewResolver(applicationBindings)

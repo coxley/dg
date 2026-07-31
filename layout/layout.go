@@ -167,6 +167,7 @@ type Layout struct {
 	changeCallback             ChangeCallback
 	replaying                  bool
 	selection                  Selection
+	replacement                *Layout
 }
 
 // Option configures a Layout.
@@ -188,6 +189,59 @@ func New(options ...Option) (*Layout, error) {
 		return nil, err
 	}
 	return l, nil
+}
+
+// Replace builds the next state in retained staging storage and atomically
+// installs it after configure succeeds.
+func (l *Layout) Replace(configure func(*Layout) error, options ...Option) error {
+	if l == nil {
+		return errors.New("replace nil layout")
+	}
+	if configure == nil {
+		return errors.New("replace layout configure callback must not be nil")
+	}
+	next := l.replacement
+	if next == nil {
+		next = &Layout{}
+		next.selection.attach(next)
+	}
+	if err := next.reset(options...); err != nil {
+		return fmt.Errorf("initialize replacement layout: %w", err)
+	}
+	if err := configure(next); err != nil {
+		return fmt.Errorf("configure replacement layout: %w", err)
+	}
+	l.installReplacement(next)
+	return nil
+}
+
+func (l *Layout) reset(options ...Option) error {
+	configured := Layout{
+		padding: Padding{Left: 1, Right: 1},
+		router:  DefaultRouter(),
+	}
+	for _, option := range options {
+		option(&configured)
+	}
+	configured.graph.CloneInto(&l.graph)
+	l.padding = configured.padding
+	l.router = configured.router
+	l.drawOrder = append(l.drawOrder[:0], configured.drawOrder...)
+	l.selection.Clear()
+	return l.initializeGeometry()
+}
+
+func (l *Layout) installReplacement(next *Layout) {
+	callback := l.changeCallback
+	*l, *next = *next, *l
+	l.changeCallback = callback
+	next.changeCallback = nil
+	l.replacement = next
+	next.replacement = nil
+	l.selection.attach(l)
+	l.selection.Clear()
+	next.selection.attach(next)
+	next.selection.Clear()
 }
 
 // WithPadding sets symmetric horizontal and vertical node padding.
@@ -1247,17 +1301,17 @@ func (l *Layout) initializeGeometry() error {
 		return fmt.Errorf("load graph: %w", err)
 	}
 
-	l.origins = make([]Point, len(l.graph.Nodes))
-	l.explicitSizes = make([]Size, len(l.graph.Nodes))
-	l.nodeStyles = make([]NodeStyle, len(l.graph.Nodes))
-	l.Nodes = make([]Node, len(l.graph.Nodes))
-	l.attachments = make([]Attachment, len(l.graph.Nodes))
-	l.Ports = make([]Port, len(l.graph.Ports))
-	l.portUsable = make([]bool, len(l.graph.Ports))
+	l.origins = resizeLayoutSlice(l.origins, len(l.graph.Nodes))
+	l.explicitSizes = resizeLayoutSlice(l.explicitSizes, len(l.graph.Nodes))
+	l.nodeStyles = resizeLayoutSlice(l.nodeStyles, len(l.graph.Nodes))
+	l.Nodes = resizeLayoutSlice(l.Nodes, len(l.graph.Nodes))
+	l.attachments = resizeLayoutSlice(l.attachments, len(l.graph.Nodes))
+	l.Ports = resizeLayoutSlice(l.Ports, len(l.graph.Ports))
+	l.portUsable = resizeLayoutSlice(l.portUsable, len(l.graph.Ports))
 	l.initializePortLookup()
-	l.Edges = make([]Edge, len(l.graph.Edges))
-	l.edgeStyles = make([]EdgeStyle, len(l.graph.Edges))
-	l.edgeBends = make([][]PinnedBend, len(l.graph.Edges))
+	l.Edges = resizeLayoutEdges(l.Edges, len(l.graph.Edges))
+	l.edgeStyles = resizeLayoutSlice(l.edgeStyles, len(l.graph.Edges))
+	l.edgeBends = resizePinnedBends(l.edgeBends, len(l.graph.Edges))
 	if err := l.initializeDrawOrder(); err != nil {
 		return err
 	}
@@ -1278,6 +1332,41 @@ func (l *Layout) initializeGeometry() error {
 		l.commitNodePorts(nodeID)
 	}
 	return nil
+}
+
+func resizeLayoutSlice[S ~[]E, E any](values S, length int) S {
+	values = slices.Grow(values[:0], length)
+	values = values[:length]
+	clear(values)
+	return values
+}
+
+func resizeLayoutEdges(edges []Edge, length int) []Edge {
+	previous := len(edges)
+	edges = slices.Grow(edges[:0], length)
+	edges = edges[:length]
+	for i := range edges {
+		if i < previous {
+			edges[i].Points = edges[i].Points[:0]
+		} else {
+			edges[i] = Edge{}
+		}
+	}
+	return edges
+}
+
+func resizePinnedBends(bends [][]PinnedBend, length int) [][]PinnedBend {
+	previous := len(bends)
+	bends = slices.Grow(bends[:0], length)
+	bends = bends[:length]
+	for i := range bends {
+		if i < previous {
+			bends[i] = bends[i][:0]
+		} else {
+			bends[i] = nil
+		}
+	}
+	return bends
 }
 
 func (l *Layout) nodeGeometry(nodeID uint32, label string, point Point) (Node, error) {

@@ -12,15 +12,17 @@ import (
 
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
+	"github.com/google/uuid"
 )
 
-const CurrentVersion uint32 = 1
+const CurrentVersion uint32 = 2
 
 var ErrUnsupportedVersion = errors.New("unsupported document version")
 
 // Document is the persisted representation of a diagram.
 type Document struct {
 	Version     uint32       `json:"version"`
+	ID          uuid.UUID    `json:"id"`
 	Nodes       []Node       `json:"nodes"`
 	Ports       []Port       `json:"ports"`
 	Edges       []Edge       `json:"edges"`
@@ -193,31 +195,40 @@ type Costs struct {
 	EndpointStep uint32 `json:"endpoint_step"`
 }
 
-// FromLayout returns a compact document containing the layout's live objects.
-func FromLayout(geo *layout.Layout) Document {
+// New returns a compact document with a fresh identity.
+func New(geo *layout.Layout) Document {
+	doc := Document{ID: uuid.New()}
+	doc.Update(geo)
+	return doc
+}
+
+// Update replaces the document contents while preserving its identity and capacity.
+func (d *Document) Update(geo *layout.Layout) {
 	graph := geo.Graph()
 	padding := geo.Padding()
 	router := geo.Router()
-	doc := Document{
-		Version: CurrentVersion,
-		Nodes:   make([]Node, 0, len(graph.Nodes)),
-		Ports:   make([]Port, 0, len(graph.Ports)),
-		Edges:   make([]Edge, 0, len(graph.Edges)),
-		Options: Options{
-			Padding: Padding{
-				Horizontal: padding.Left,
-				Vertical:   padding.Top,
+	previousNodes := d.Nodes[:cap(d.Nodes)]
+	previousEdges := d.Edges[:cap(d.Edges)]
+	d.Version = CurrentVersion
+	d.Nodes = d.Nodes[:0]
+	d.Ports = d.Ports[:0]
+	d.Edges = d.Edges[:0]
+	d.Attachments = d.Attachments[:0]
+	d.Layers = d.Layers[:0]
+	d.Options = Options{
+		Padding: Padding{
+			Horizontal: padding.Left,
+			Vertical:   padding.Top,
+		},
+		Router: Router{
+			Costs: Costs{
+				Step:         router.Costs.Step,
+				SharedStep:   router.Costs.SharedStep,
+				Bend:         router.Costs.Bend,
+				Crossing:     router.Costs.Crossing,
+				EndpointStep: router.Costs.EndpointStep,
 			},
-			Router: Router{
-				Costs: Costs{
-					Step:         router.Costs.Step,
-					SharedStep:   router.Costs.SharedStep,
-					Bend:         router.Costs.Bend,
-					Crossing:     router.Costs.Crossing,
-					EndpointStep: router.Costs.EndpointStep,
-				},
-				ReroutePasses: router.ReroutePasses,
-			},
+			ReroutePasses: router.ReroutePasses,
 		},
 	}
 
@@ -228,14 +239,19 @@ func FromLayout(geo *layout.Layout) Document {
 			continue
 		}
 		source := &graph.Nodes[nodeID]
-		nodeIDs[nodeID] = uint32(len(doc.Nodes))
+		compactID := len(d.Nodes)
+		nodeIDs[nodeID] = uint32(compactID)
+		var ports []uint32
+		if compactID < len(previousNodes) {
+			ports = previousNodes[compactID].Ports
+		}
 		node := Node{
 			Label: source.Label,
 			Origin: Point{
 				X: geo.Nodes[nodeID].Rect.Min.X,
 				Y: geo.Nodes[nodeID].Rect.Min.Y,
 			},
-			Ports: make([]uint32, 0, len(source.Ports)),
+			Ports: slices.Grow(ports[:0], len(source.Ports)),
 		}
 		style, _ := geo.NodeStyle(uint32(nodeID))
 		node.Style = documentNodeStyle(style)
@@ -244,14 +260,14 @@ func FromLayout(geo *layout.Layout) Document {
 		}
 		for _, portID := range source.Ports {
 			port := graph.Ports[portID]
-			portIDs[portID] = uint32(len(doc.Ports))
+			portIDs[portID] = uint32(len(d.Ports))
 			node.Ports = append(node.Ports, portIDs[portID])
-			doc.Ports = append(doc.Ports, Port{
+			d.Ports = append(d.Ports, Port{
 				Side:   Side(port.Side.String()),
 				Offset: port.Offset,
 			})
 		}
-		doc.Nodes = append(doc.Nodes, node)
+		d.Nodes = append(d.Nodes, node)
 	}
 	edgeIDs := make([]uint32, len(graph.Edges))
 	for edgeID := range graph.Edges {
@@ -261,12 +277,17 @@ func FromLayout(geo *layout.Layout) Document {
 		edge := graph.Edges[edgeID]
 		style, _ := geo.EdgeStyle(uint32(edgeID))
 		bends, _ := geo.PinnedBends(uint32(edgeID))
-		edgeIDs[edgeID] = uint32(len(doc.Edges))
-		doc.Edges = append(doc.Edges, Edge{
+		compactID := len(d.Edges)
+		edgeIDs[edgeID] = uint32(compactID)
+		var previousBends []PinnedBend
+		if compactID < len(previousEdges) {
+			previousBends = previousEdges[compactID].Bends
+		}
+		d.Edges = append(d.Edges, Edge{
 			PortA: portIDs[edge.PortA],
 			PortB: portIDs[edge.PortB],
 			Style: documentEdgeStyle(style),
-			Bends: documentPinnedBends(bends),
+			Bends: documentPinnedBendsInto(previousBends[:0], bends),
 		})
 	}
 	for nodeID := range graph.Nodes {
@@ -277,7 +298,7 @@ func FromLayout(geo *layout.Layout) Document {
 		if !ok {
 			continue
 		}
-		doc.Attachments = append(doc.Attachments, Attachment{
+		d.Attachments = append(d.Attachments, Attachment{
 			Node:     nodeIDs[attachment.NodeID],
 			Edge:     edgeIDs[attachment.EdgeID],
 			Position: attachment.Position,
@@ -287,12 +308,12 @@ func FromLayout(geo *layout.Layout) Document {
 	for hit := range geo.DrawOrder() {
 		switch hit.Kind {
 		case layout.HitNode:
-			doc.Layers = append(doc.Layers, Layer{
+			d.Layers = append(d.Layers, Layer{
 				Kind: LayerNode,
 				ID:   nodeIDs[hit.ID],
 			})
 		case layout.HitEdge:
-			doc.Layers = append(doc.Layers, Layer{
+			d.Layers = append(d.Layers, Layer{
 				Kind: LayerEdge,
 				ID:   edgeIDs[hit.ID],
 			})
@@ -300,12 +321,11 @@ func FromLayout(geo *layout.Layout) Document {
 			continue
 		}
 	}
-	return doc
 }
 
-// Marshal returns an indented JSON encoding of geo.
-func Marshal(geo *layout.Layout) ([]byte, error) {
-	data, err := json.MarshalIndent(FromLayout(geo), "", "  ")
+// Marshal returns an indented JSON encoding of d.
+func Marshal(d Document) ([]byte, error) {
+	data, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal document: %w", err)
 	}
@@ -340,16 +360,49 @@ func Unmarshal(data []byte) (Document, error) {
 	case !errors.Is(err, io.EOF):
 		return Document{}, fmt.Errorf("decode document trailing data: %w", err)
 	}
-	if _, err := doc.Layout(); err != nil {
+	if _, err := doc.Convert(); err != nil {
 		return Document{}, err
 	}
 	return doc, nil
 }
 
-// Layout validates d and returns an independent editable layout.
-func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
+// Convert validates d and returns an independent editable layout.
+func (d Document) Convert(options ...layout.Option) (*layout.Layout, error) {
+	options, err := d.conversionOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	geo, err := layout.New(options...)
+	if err != nil {
+		return nil, fmt.Errorf("create layout: %w", err)
+	}
+	if err := d.populate(geo); err != nil {
+		return nil, err
+	}
+	return geo, nil
+}
+
+// ConvertInto atomically replaces dst while retaining its reusable storage.
+func (d Document) ConvertInto(dst *layout.Layout, options ...layout.Option) error {
+	if dst == nil {
+		return errors.New("convert document into nil layout")
+	}
+	options, err := d.conversionOptions(options)
+	if err != nil {
+		return err
+	}
+	if err := dst.Replace(d.populate, options...); err != nil {
+		return fmt.Errorf("replace layout: %w", err)
+	}
+	return nil
+}
+
+func (d Document) conversionOptions(options []layout.Option) ([]layout.Option, error) {
 	if d.Version != CurrentVersion {
 		return nil, fmt.Errorf("%w: %d", ErrUnsupportedVersion, d.Version)
+	}
+	if d.ID == uuid.Nil || d.ID.Version() != 4 {
+		return nil, errors.New("document requires a UUIDv4 identity")
 	}
 	graph, err := d.graph()
 	if err != nil {
@@ -378,65 +431,65 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		),
 		layout.WithRouter(router),
 	}
-	geo, err := layout.New(slices.Concat(options, baseOptions)...)
-	if err != nil {
-		return nil, fmt.Errorf("create layout: %w", err)
-	}
+	return slices.Concat(options, baseOptions), nil
+}
+
+func (d Document) populate(geo *layout.Layout) error {
 	for nodeID, node := range d.Nodes {
 		style, err := node.Style.layoutStyle()
 		if err != nil {
-			return nil, fmt.Errorf("style node %d: %w", nodeID, err)
+			return fmt.Errorf("style node %d: %w", nodeID, err)
 		}
 		if err := geo.SetNodeStyle(uint32(nodeID), style); err != nil {
-			return nil, fmt.Errorf("style node %d: %w", nodeID, err)
+			return fmt.Errorf("style node %d: %w", nodeID, err)
 		}
 		if node.Size.Width != 0 || node.Size.Height != 0 {
 			if err := geo.SetNodeSize(uint32(nodeID), layout.Size{
 				Width:  node.Size.Width,
 				Height: node.Size.Height,
 			}); err != nil {
-				return nil, fmt.Errorf("size node %d: %w", nodeID, err)
+				return fmt.Errorf("size node %d: %w", nodeID, err)
 			}
 		}
 		if err := geo.PlaceNode(uint32(nodeID), layout.NewPoint(node.Origin.X, node.Origin.Y)); err != nil {
-			return nil, fmt.Errorf("place node %d: %w", nodeID, err)
+			return fmt.Errorf("place node %d: %w", nodeID, err)
 		}
 	}
 	for edgeID, edge := range d.Edges {
 		style, err := edge.Style.layoutStyle()
 		if err != nil {
-			return nil, fmt.Errorf("style edge %d: %w", edgeID, err)
+			return fmt.Errorf("style edge %d: %w", edgeID, err)
 		}
 		if err := geo.SetEdgeStyle(uint32(edgeID), style); err != nil {
-			return nil, fmt.Errorf("style edge %d: %w", edgeID, err)
+			return fmt.Errorf("style edge %d: %w", edgeID, err)
 		}
 		bends, err := edge.layoutPinnedBends()
 		if err != nil {
-			return nil, fmt.Errorf("bend edge %d: %w", edgeID, err)
+			return fmt.Errorf("bend edge %d: %w", edgeID, err)
 		}
 		if err := geo.SetPinnedBends(uint32(edgeID), bends); err != nil {
-			return nil, fmt.Errorf("bend edge %d: %w", edgeID, err)
+			return fmt.Errorf("bend edge %d: %w", edgeID, err)
 		}
 	}
 	seenAttachments := make([]uint32, 0, len(d.Attachments))
 	attachments := make([]layout.Attachment, 0, len(d.Attachments))
 	for i, attachment := range d.Attachments {
 		if uint64(attachment.Node) >= uint64(len(d.Nodes)) {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"attachment %d references unknown node %d",
 				i,
 				attachment.Node,
 			)
 		}
 		if uint64(attachment.Edge) >= uint64(len(d.Edges)) {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"attachment %d references unknown edge %d",
 				i,
 				attachment.Edge,
 			)
 		}
 		if slices.Contains(seenAttachments, attachment.Node) {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"attachment %d duplicates node %d",
 				i,
 				attachment.Node,
@@ -451,9 +504,9 @@ func (d Document) Layout(options ...layout.Option) (*layout.Layout, error) {
 		})
 	}
 	if err := geo.SetAttachments(attachments...); err != nil {
-		return nil, fmt.Errorf("restore attachments: %w", err)
+		return fmt.Errorf("restore attachments: %w", err)
 	}
-	return geo, nil
+	return nil
 }
 
 func documentNodeStyle(style layout.NodeStyle) NodeStyle {
@@ -546,11 +599,11 @@ func documentEdgeStyle(style layout.EdgeStyle) EdgeStyle {
 	}
 }
 
-func documentPinnedBends(bends []layout.PinnedBend) []PinnedBend {
+func documentPinnedBendsInto(dst []PinnedBend, bends []layout.PinnedBend) []PinnedBend {
 	if len(bends) == 0 {
-		return nil
+		return dst[:0]
 	}
-	result := make([]PinnedBend, len(bends))
+	result := slices.Grow(dst[:0], len(bends))[:len(bends)]
 	for i, bend := range bends {
 		result[i] = PinnedBend{
 			Point:    Point{X: bend.Point.X, Y: bend.Point.Y},

@@ -24,14 +24,16 @@ func TestInitialLayoutReadsDocument(t *testing.T) {
 
 	geo, err := exampleLayout()
 	require.NoError(t, err)
-	data, err := document.Marshal(geo)
+	doc := document.New(geo)
+	data, err := document.Marshal(doc)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "diagram.json")
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 
-	loaded, gotPath, err := initialLayout([]string{path}, settings.Snapshot{})
+	loaded, loadedDocument, gotPath, err := initialLayout([]string{path}, settings.Snapshot{})
 	require.NoError(t, err)
 	require.Equal(t, path, gotPath)
+	require.Equal(t, doc.ID, loadedDocument.ID)
 	require.Equal(t, "sinks", loaded.Label(0))
 	require.NoError(t, loaded.Build())
 }
@@ -39,7 +41,7 @@ func TestInitialLayoutReadsDocument(t *testing.T) {
 func TestInitialLayoutRejectsExtraArguments(t *testing.T) {
 	t.Parallel()
 
-	_, _, err := initialLayout(
+	_, _, _, err := initialLayout(
 		[]string{"one.json", "two.json"},
 		settings.Snapshot{},
 	)
@@ -52,12 +54,13 @@ func TestInitialLayoutUsesInjectedRouterForNewDiagram(t *testing.T) {
 	router := layout.DefaultRouter()
 	router.Costs.Step = 37
 
-	geo, path, err := initialLayout(nil, settings.Snapshot{
+	geo, doc, path, err := initialLayout(nil, settings.Snapshot{
 		Router:        router,
 		ApplyToFuture: true,
 	})
 
 	require.NoError(t, err)
 	require.Empty(t, path)
+	require.NotEmpty(t, doc.ID)
 	require.Equal(t, router, geo.Router())
 }

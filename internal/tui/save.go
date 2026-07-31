@@ -255,7 +255,8 @@ func (m *Model) saveFromDialog(message saveDocumentMsg) {
 }
 
 func (m *Model) save(path string) bool {
-	data, err := document.Marshal(m.geo)
+	m.document.Update(m.geo)
+	data, err := document.Marshal(m.document)
 	if err != nil {
 		m.setError(err.Error())
 		return false
