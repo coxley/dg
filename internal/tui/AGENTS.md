@@ -149,6 +149,11 @@ Back leaves a docked sidebar visible but returns keyboard focus to the canvas;
 Back or an outside click dismisses a drawer. Ctrl-B opens, focuses, refocuses,
 or closes it.
 
+Backspace or Delete on a named canvas moves it to Drafts without changing its
+document identity. The active canvas flushes before demotion and remains open
+as that draft. Delete permanently removes an inactive draft; the active draft
+remains protected. Clear Drafts preserves the active draft.
+
 Root renders the selected cells and pairs that text with a portable layout
 fragment. Native clipboard writes publish both formats atomically. External
 applications consume the rendered text; paste into dg validates and inserts

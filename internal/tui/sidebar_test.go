@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -107,6 +108,81 @@ func TestSidebarDeletesDraftsWithActivePreservationAndConfirmation(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, model.entry.ID, entries[0].ID)
+}
+
+func TestSidebarDeleteMovesNamedCanvasToDrafts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("active", func(t *testing.T) {
+		t.Parallel()
+
+		model, nodeID, store := newStoredTestModel(t, "original")
+		named, err := store.Name(*model.entry, "", "Canvas")
+		require.NoError(t, err)
+		model.setActiveEntry(named)
+		model.updateCatalog(store.Reconcile(model.catalog))
+		require.NoError(t, model.geo.SetNodeLabel(nodeID, "changed"))
+		focusSidebarItem(t, model, "canvas:/Canvas")
+
+		model.deleteFocusedCanvas()
+
+		require.NotNil(t, model.entry)
+		require.True(t, model.entry.Draft)
+		require.Equal(t, named.ID, model.entry.ID)
+		require.Equal(t, "dg - Draft", model.windowTitle)
+		require.Equal(t, "moved Canvas to Drafts", model.status)
+		loaded, err := store.Load(*model.entry)
+		require.NoError(t, err)
+		require.Equal(t, "changed", loaded.Nodes[0].Label)
+		entries, err := store.List()
+		require.NoError(t, err)
+		require.Equal(t, []canvasstore.Entry{*model.entry}, entries)
+	})
+
+	t.Run("inactive", func(t *testing.T) {
+		t.Parallel()
+
+		model, _, store := newStoredTestModel(t, "active")
+		active := *model.entry
+		named, err := store.Create("", "Canvas", document.New(mustLayoutWithLabel(t, "named")))
+		require.NoError(t, err)
+		model.updateCatalog(store.Reconcile(model.catalog))
+		focusSidebarItem(t, model, "canvas:/Canvas")
+
+		model.deleteFocusedCanvas()
+
+		require.Equal(t, active.ID, model.entry.ID)
+		require.True(t, model.entry.Draft)
+		entries, err := store.List()
+		require.NoError(t, err)
+		require.Len(t, entries, 2)
+		require.False(t, slices.ContainsFunc(entries, func(entry canvasstore.Entry) bool {
+			return !entry.Draft && entry.Name == named.Name
+		}))
+		require.True(t, slices.ContainsFunc(entries, func(entry canvasstore.Entry) bool {
+			return entry.Draft && entry.ID == named.ID
+		}))
+	})
+}
+
+func TestSidebarDeleteRemovesOnlyInactiveDraft(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "active")
+	active := *model.entry
+	other, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, "other")))
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	model.switchSidebarTab(1)
+	focusSidebarItem(t, model, chrome.FocusID("draft:"+active.ID.String()))
+	model.deleteFocusedCanvas()
+	require.Equal(t, "cannot delete the active draft", model.status)
+
+	focusSidebarItem(t, model, chrome.FocusID("draft:"+other.ID.String()))
+	model.deleteFocusedCanvas()
+	entries, err := store.List()
+	require.NoError(t, err)
+	require.Equal(t, []canvasstore.Entry{active}, entries)
 }
 
 func BenchmarkSidebarCatalog1000(b *testing.B) {

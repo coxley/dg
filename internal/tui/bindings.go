@@ -67,7 +67,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeSidebar, Chords: chrome.Keys("enter"), Command: commandSidebarActivate, Label: "open item"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("right", "l"), Command: commandSidebarTabNext, Label: "next tab"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("left", "h"), Command: commandSidebarTabPrev, Label: "previous tab"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("backspace", "delete"), Command: commandSidebarDelete, Label: "delete draft"},
+	{Scope: scopeSidebar, Chords: chrome.Keys("backspace", "delete"), Command: commandSidebarDelete, Label: "delete canvas"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("ctrl+n"), Command: commandNewCanvas, Label: "new canvas"},
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
@@ -543,7 +543,7 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 	case commandSidebarTabPrev:
 		return m.switchSidebarTab(-1)
 	case commandSidebarDelete:
-		m.deleteFocusedDraft()
+		m.deleteFocusedCanvas()
 	default:
 		panic("unhandled chrome command " + command)
 	}

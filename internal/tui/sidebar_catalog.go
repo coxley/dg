@@ -168,21 +168,48 @@ func (m *Model) activateSidebar() tea.Cmd {
 	return nil
 }
 
-func (m *Model) deleteFocusedDraft() {
+func (m *Model) deleteFocusedCanvas() {
 	item, ok := m.sidebar.focusedItem()
-	if !ok || item.Kind != sidebarItemRecord || !item.Entry.Draft {
+	if !ok || item.Kind != sidebarItemRecord {
 		return
 	}
-	if m.entry != nil && sameCanvas(*m.entry, item.Entry) {
+	entry := item.Entry
+	active := m.entry != nil && sameCanvas(*m.entry, entry)
+	if !entry.Draft {
+		m.demoteCanvas(entry, active)
+		return
+	}
+	if active {
 		m.setError("cannot delete the active draft")
 		return
 	}
-	if err := m.canvasStore.Delete(item.Entry); err != nil {
+	if err := m.canvasStore.Delete(entry); err != nil {
 		m.setError(fmt.Sprintf("delete draft: %v", err))
 		return
 	}
-	event := m.canvasStore.Reconcile(m.catalog)
-	m.updateCatalog(event)
+	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+}
+
+func (m *Model) demoteCanvas(entry canvasstore.Entry, active bool) {
+	title := canvasTitle(entry)
+	if active {
+		if err := m.flushActive(); err != nil {
+			m.setError(fmt.Sprintf("save canvas before deletion: %v", err))
+			return
+		}
+		entry = *m.entry
+	}
+	draft, err := m.canvasStore.Demote(entry)
+	if err != nil {
+		m.setError(fmt.Sprintf("move canvas to drafts: %v", err))
+		return
+	}
+	if active {
+		m.setActiveEntry(draft)
+	}
+	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+	m.status = fmt.Sprintf("moved %s to Drafts", title)
+	m.statusError = ""
 }
 
 func (s *sidebarState) focusedItem() (sidebarItem, bool) {
