@@ -47,19 +47,32 @@ func (m *Model) updatePersistence(message tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m *Model) persistActive() error {
-	if m.canvasStore == nil || m.entry == nil {
-		return errors.New("no active canvas store entry")
+	if m.canvasStore == nil {
+		return errors.New("no active canvas store")
 	}
 	m.document.Update(m.geo)
-	entry, err := m.canvasStore.Save(*m.entry, m.document)
+	var (
+		entry canvasstore.Entry
+		err   error
+	)
+	created := m.entry == nil
+	if created {
+		entry, err = m.canvasStore.CreateDraft(m.document)
+	} else {
+		entry, err = m.canvasStore.Save(*m.entry, m.document)
+	}
 	if err != nil {
 		return fmt.Errorf("autosave canvas: %w", err)
 	}
 	m.setActiveEntry(entry)
-	for i := range m.catalog {
-		if sameCanvas(m.catalog[i], entry) {
-			m.catalog[i] = entry
-			break
+	if created {
+		m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+	} else {
+		for i := range m.catalog {
+			if sameCanvas(m.catalog[i], entry) {
+				m.catalog[i] = entry
+				break
+			}
 		}
 	}
 	if err := m.history.Save(m.document); err != nil {
@@ -74,7 +87,7 @@ func (m *Model) persistActive() error {
 func (m *Model) flushActive() error {
 	m.interruptInteraction()
 	var errs []error
-	if m.canvasStore != nil && m.entry != nil && m.dirty != m.saved {
+	if m.canvasStore != nil && m.dirty != m.saved {
 		errs = append(errs, m.persistActive())
 	}
 	if m.history != nil && m.history.Dirty() {
@@ -144,6 +157,9 @@ func (m *Model) setActiveEntry(entry canvasstore.Entry) {
 func (m *Model) syncWindowTitle() {
 	m.windowTitle = "dg"
 	if m.entry == nil {
+		if m.canvasStore != nil {
+			m.windowTitle += " - Draft"
+		}
 		return
 	}
 	if m.entry.Draft {

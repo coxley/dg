@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/coxley/dg/document"
@@ -30,23 +29,24 @@ func (m *Model) createCanvas() error {
 	if m.preferences.applyToFuture {
 		options = append(options, layout.WithRouter(m.preferences.baseline.Router))
 	}
-	blank, err := layout.New(options...)
-	if err != nil {
-		return fmt.Errorf("create layout: %w", err)
+	if err := m.history.Reset(func() error {
+		return m.geo.Replace(func(*layout.Layout) error { return nil }, options...)
+	}); err != nil {
+		return err
 	}
-	entry, err := m.canvasStore.CreateDraft(document.New(blank))
-	if err != nil {
-		return fmt.Errorf("create draft: %w", err)
-	}
-	if err := m.switchCanvas(entry); err != nil {
-		deleteErr := m.canvasStore.Delete(entry)
-		return errors.Join(err, deleteErr)
+	m.document = document.New(m.geo)
+	m.entry = nil
+	m.syncWindowTitle()
+	m.saved = m.dirty
+	m.viewport = layout.NewPoint(0, 0)
+	m.clearSelection()
+	if err := m.rebuild(); err != nil {
+		return err
 	}
 	m.cursor = layout.Point{}
 	m.target = layout.Hit{}
 	m.active = 0
 	m.hits = m.hits[:0]
-	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
 	m.status = "new draft"
 	m.statusError = ""
 	return nil

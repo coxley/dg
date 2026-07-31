@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestControlNCreatesBlankDurableDraftAndFlushesPreviousCanvas(t *testing.T) {
+func TestControlNCreatesTransientBlankAndFlushesPreviousCanvas(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID, store := newStoredTestModel(t, "original")
@@ -21,11 +21,11 @@ func TestControlNCreatesBlankDurableDraftAndFlushesPreviousCanvas(t *testing.T) 
 	require.NoError(t, model.geo.SetNodeLabel(nodeID, "changed"))
 	require.NoError(t, transaction.Commit())
 
-	require.NotNil(t, updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl})))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
 
 	require.Same(t, geo, model.geo)
 	require.NotEqual(t, previousID, model.document.ID)
-	require.True(t, model.entry.Draft)
+	require.Nil(t, model.entry)
 	require.Empty(t, slices.Collect(model.geo.DrawOrder()))
 	require.False(t, model.history.CanUndo())
 	require.Equal(t, "new draft", model.status)
@@ -36,7 +36,7 @@ func TestControlNCreatesBlankDurableDraftAndFlushesPreviousCanvas(t *testing.T) 
 	require.Equal(t, "changed", loaded.Nodes[nodeID].Label)
 	entries, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, entries, 2)
+	require.Len(t, entries, 1)
 }
 
 func TestNewCanvasUsesSavedFutureRouter(t *testing.T) {
@@ -48,9 +48,67 @@ func TestNewCanvasUsesSavedFutureRouter(t *testing.T) {
 	model.preferences.applyToFuture = true
 	model.preferences.baseline.Router = router
 
-	require.NotNil(t, updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl})))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
 
 	require.Equal(t, router, model.geo.Router())
+}
+
+func TestTransientCanvasMaterializesAfterContentAndPersistsEmptyAgain(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "original")
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
+	transientID := model.document.ID
+
+	transaction := model.history.Begin()
+	nodeID, err := model.geo.NewNode("content")
+	require.NoError(t, err)
+	require.NoError(t, transaction.Commit())
+	updateModel(t, model, autosaveMsg(model.dirty))
+	require.NotNil(t, model.entry)
+	require.True(t, model.entry.Draft)
+	require.Equal(t, transientID, model.entry.ID)
+	loaded, err := store.Load(*model.entry)
+	require.NoError(t, err)
+	require.Equal(t, "content", loaded.Nodes[0].Label)
+
+	transaction = model.history.Begin()
+	require.NoError(t, model.geo.DeleteNode(nodeID))
+	require.NoError(t, model.geo.Build())
+	require.NoError(t, transaction.Commit())
+	updateModel(t, model, autosaveMsg(model.dirty))
+	loaded, err = store.Load(*model.entry)
+	require.NoError(t, err)
+	require.Empty(t, loaded.Nodes)
+}
+
+func TestRepeatedControlNDoesNotAccumulateDrafts(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "original")
+	for range 100 {
+		updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
+	}
+
+	require.Nil(t, model.entry)
+	entries, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+}
+
+func TestNamingTransientCanvasMaterializesNamedRecord(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "original")
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
+	model.saveFromDialog(saveDocumentMsg{Name: "Empty"})
+
+	require.NotNil(t, model.entry)
+	require.False(t, model.entry.Draft)
+	require.Equal(t, "Empty", model.entry.Name)
+	entries, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
 }
 
 func TestNewCanvasStopsWhenCurrentCanvasCannotFlush(t *testing.T) {
@@ -94,4 +152,21 @@ func TestNewCanvasUsesControlNWithoutPrimaryProjection(t *testing.T) {
 		)
 		require.False(t, ok)
 	}
+}
+
+func BenchmarkModelNewCanvasTransient(b *testing.B) {
+	model, _, store := newStoredTestModel(b, "original")
+	message := tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		updated, command := model.Update(message)
+		if updated != model || command != nil {
+			b.Fatal("new transient canvas returned an unexpected update")
+		}
+	}
+	b.StopTimer()
+	entries, err := store.List()
+	require.NoError(b, err)
+	require.Len(b, entries, 1)
 }

@@ -128,11 +128,11 @@ func (m *Model) requestSave() {
 		m.setError(finishOperation)
 		return
 	}
-	if m.canvasStore == nil || m.entry == nil {
+	if m.canvasStore == nil {
 		m.setError("no canvas store configured")
 		return
 	}
-	if m.entry.Draft {
+	if m.entry == nil || m.entry.Draft {
 		m.dialogs.OpenSave()
 		m.status = ""
 		return
@@ -154,7 +154,13 @@ func (m *Model) saveFromDialog(message saveDocumentMsg) {
 		m.setError("enter a canvas name")
 		return
 	}
-	if m.entry == nil || !m.entry.Draft {
+	if m.entry == nil {
+		if err := m.persistActive(); err != nil {
+			m.setError(err.Error())
+			return
+		}
+	}
+	if !m.entry.Draft {
 		m.setError("only drafts can be named")
 		return
 	}
