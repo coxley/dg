@@ -172,9 +172,10 @@ scrollbar. The floating navigation remains terminal-anchored while a dock
 opens or closes. It stays on the canvas fast path when fully contained and
 uses its compositor layer only where a dock overlaps it.
 
-Keyboard entry into the sidebar switches to, reveals, and focuses the active
-canvas row. It expands the active canvas's section when necessary. Pointer
-entry preserves the clicked target.
+Keyboard entry into the sidebar preserves the selected tab. It reveals and
+focuses the active canvas when present there, expanding its section when
+necessary; otherwise, it focuses the first row. Pointer entry preserves the
+clicked target.
 
 Dragging a named canvas onto a section header or one of its canvases moves it
 to that section. Dropping it on the Canvases header or unused list space moves

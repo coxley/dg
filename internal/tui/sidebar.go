@@ -523,6 +523,21 @@ func (s *sidebarState) focusActiveItem() bool {
 	return false
 }
 
+func (s *sidebarState) focusFirstItem() bool {
+	for _, item := range s.declaration.Items {
+		if item.Kind == 0 {
+			continue
+		}
+		if !s.focusTarget(item.ID) {
+			return false
+		}
+		s.focus.Reveal(s.viewport)
+		s.render()
+		return true
+	}
+	return false
+}
+
 func (s *sidebarState) tabAt(point chrome.Point) (sidebarTab, bool) {
 	for _, plan := range s.tabs {
 		if plan.Rect.Contains(point) {
@@ -634,19 +649,17 @@ func (m *Model) toggleSidebar() tea.Cmd {
 }
 
 func (m *Model) focusActiveSidebarItem() {
-	if m.entry == nil {
+	if m.entry == nil || m.entry.Draft != m.sidebar.drafts {
+		m.sidebar.focusFirstItem()
 		return
 	}
-	rebuild := m.sidebar.drafts != m.entry.Draft
-	m.sidebar.drafts = m.entry.Draft
 	if section := m.entry.Section; !m.entry.Draft && section != "" && m.sidebar.collapsed[section] {
 		m.sidebar.collapsed[section] = false
-		rebuild = true
-	}
-	if rebuild {
 		m.rebuildSidebarCatalog()
 	}
-	m.sidebar.focusActiveItem()
+	if !m.sidebar.focusActiveItem() {
+		m.sidebar.focusFirstItem()
+	}
 }
 
 func (m *Model) syncSidebarShortcut() {

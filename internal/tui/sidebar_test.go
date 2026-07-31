@@ -191,16 +191,35 @@ func TestSidebarStartsOpenAndClickFocusesIt(t *testing.T) {
 func TestSidebarKeyboardFocusesActiveCanvas(t *testing.T) {
 	t.Parallel()
 
-	t.Run("open draft tab", func(t *testing.T) {
+	t.Run("preserve canvases tab", func(t *testing.T) {
 		t.Parallel()
 
-		model, _, _ := newStoredTestModel(t, "active")
-		active := *model.entry
+		model, _, store := newStoredTestModel(t, "active")
+		canvas, err := store.Create("", "Architecture", document.New(mustLayoutWithLabel(t, "named")))
+		require.NoError(t, err)
+		model.updateCatalog(store.Reconcile(model.catalog))
 		model.sidebar.openInitially()
 
 		updateModelCommand(t, model, sidebarKey())
 
 		require.True(t, model.sidebar.focused)
+		require.False(t, model.sidebar.drafts)
+		item, ok := model.sidebar.focusedItem()
+		require.True(t, ok)
+		require.Equal(t, canvas.ID, item.Entry.ID)
+	})
+
+	t.Run("active draft on current tab", func(t *testing.T) {
+		t.Parallel()
+
+		model, _, _ := newStoredTestModel(t, "active")
+		active := *model.entry
+		model.sidebar.drafts = true
+		model.rebuildSidebarCatalog()
+		model.sidebar.openInitially()
+
+		updateModelCommand(t, model, sidebarKey())
+
 		require.True(t, model.sidebar.drafts)
 		item, ok := model.sidebar.focusedItem()
 		require.True(t, ok)
