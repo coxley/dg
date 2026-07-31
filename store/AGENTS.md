@@ -35,8 +35,18 @@ share mutable slices with cached data or another load.
 declared by package `history`. Blob data lives below the disposable cache
 directory, not beside portable canvas files.
 
+## Catalog
+
+Catalog scans use `*.dg` and `*/*.dg` against the preferred directory plus the
+durable drafts directory. `Watch` observes the preferred root, direct section
+directories, and drafts with fsnotify. Events only invalidate state; a
+debounced full scan remains authoritative. `Reconcile` provides the same scan
+for focus recovery. Catalog events distinguish Store-authored revisions from
+external changes and report watcher, scan, and closure states explicitly.
+
 ## Verification
 
 Test revision conflicts, name collisions, draft promotion recovery, one-level
-scanning, gzip bounds, returned-value ownership, LRU eviction, and concurrent
-creation. Benchmark both warm and cold large-document loads and catalog scans.
+scanning, watcher bursts and dynamic sections, gzip bounds, returned-value
+ownership, LRU eviction, and concurrent creation. Benchmark both warm and cold
+large-document loads and catalog scans.

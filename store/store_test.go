@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const externalLabel = "external"
+
 func newTestStore(t testing.TB, options ...Option) *Store {
 	t.Helper()
 	root := t.TempDir()
@@ -82,6 +84,20 @@ func TestStoreReturnsIndependentDocuments(t *testing.T) {
 	require.Equal(t, "original", second.Nodes[0].Label)
 }
 
+func TestStoreLoadIntoReusesDocumentCapacity(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	entry, err := store.Create("", "Canvas", testDocument(t, "original"))
+	require.NoError(t, err)
+	var dst document.Document
+	require.NoError(t, store.LoadInto(entry, &dst))
+	capacity := cap(dst.Nodes)
+	require.NoError(t, store.LoadInto(entry, &dst))
+	require.Equal(t, capacity, cap(dst.Nodes))
+	require.Equal(t, "original", dst.Nodes[0].Label)
+}
+
 func TestStoreRejectsStaleRevision(t *testing.T) {
 	t.Parallel()
 
@@ -91,7 +107,7 @@ func TestStoreRejectsStaleRevision(t *testing.T) {
 	require.NoError(t, err)
 	path := store.namedPath("", "Canvas")
 	external := doc
-	external.Nodes[0].Label = "external"
+	external.Nodes[0].Label = externalLabel
 	data, err := encodeDocument(external)
 	require.NoError(t, err)
 	require.NoError(t, replaceFile(path, data))

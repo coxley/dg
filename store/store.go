@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +82,7 @@ type Store struct {
 	stateDir  string
 	cacheDir  string
 	warm      warmCache
+	self      map[string]Revision
 }
 
 // New opens a Store rooted at preferred and recovers interrupted draft promotion.
@@ -122,6 +122,7 @@ func New(preferred string, options ...Option) (*Store, error) {
 		stateDir:  filepath.Clean(config.stateDir),
 		cacheDir:  filepath.Clean(config.cacheDir),
 		warm:      newWarmCache(config.warmCount, config.warmBytes),
+		self:      make(map[string]Revision),
 	}
 	if err := os.MkdirAll(store.preferred, 0o700); err != nil {
 		return nil, fmt.Errorf("create preferred directory: %w", err)
@@ -156,6 +157,7 @@ func (s *Store) Create(section, name string, doc document.Document) (Entry, erro
 	entry, err := entryFromFile(path, section, name, false, doc.ID)
 	if err == nil {
 		s.warm.put(warmKey(path, entry.Revision), data)
+		s.self[path] = entry.Revision
 	}
 	return entry, err
 }
@@ -181,54 +183,67 @@ func (s *Store) CreateDraft(doc document.Document) (Entry, error) {
 	entry, err := entryFromFile(path, "", "", true, doc.ID)
 	if err == nil {
 		s.warm.put(warmKey(path, entry.Revision), data)
+		s.self[path] = entry.Revision
 	}
 	return entry, err
 }
 
 // Load reads and validates entry, returning independently owned document data.
 func (s *Store) Load(entry Entry) (document.Document, error) {
+	var doc document.Document
+	if err := s.LoadInto(entry, &doc); err != nil {
+		return document.Document{}, err
+	}
+	return doc, nil
+}
+
+// LoadInto reads and validates entry while reusing dst document capacity.
+// An error may leave dst partially decoded.
+func (s *Store) LoadInto(entry Entry, dst *document.Document) error {
+	if dst == nil {
+		return errors.New("load canvas into nil document")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	path, err := s.entryPath(entry)
 	if err != nil {
-		return document.Document{}, err
+		return err
 	}
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return document.Document{}, ErrEntryNotFound
+		return ErrEntryNotFound
 	}
 	if err != nil {
-		return document.Document{}, fmt.Errorf("inspect canvas: %w", err)
+		return fmt.Errorf("inspect canvas: %w", err)
 	}
 	if info.ModTime().UnixNano() != entry.Revision.Modified || info.Size() != entry.Revision.Size {
-		return document.Document{}, ErrRevision
+		return ErrRevision
 	}
 	data, ok := s.warm.get(warmKey(path, entry.Revision))
 	if !ok {
 		data, err = os.ReadFile(path) //nolint:gosec // Entry validation confines the path to Store roots.
 		if errors.Is(err, fs.ErrNotExist) {
-			return document.Document{}, ErrEntryNotFound
+			return ErrEntryNotFound
 		}
 		if err != nil {
-			return document.Document{}, fmt.Errorf("read canvas: %w", err)
+			return fmt.Errorf("read canvas: %w", err)
 		}
 		revision, revisionErr := revisionFor(path, data)
 		if revisionErr != nil {
-			return document.Document{}, revisionErr
+			return revisionErr
 		}
 		if revision != entry.Revision {
-			return document.Document{}, ErrRevision
+			return ErrRevision
 		}
 		s.warm.put(warmKey(path, entry.Revision), data)
 	}
-	doc, err := decodeDocument(data)
-	if err != nil {
-		return document.Document{}, fmt.Errorf("decode canvas: %w", err)
+	if err := decodeDocumentInto(data, dst); err != nil {
+		return fmt.Errorf("decode canvas: %w", err)
 	}
-	if doc.ID != entry.ID {
-		return document.Document{}, ErrRevision
+	if dst.ID != entry.ID {
+		return ErrRevision
 	}
-	return doc, nil
+	return nil
 }
 
 // Save atomically replaces entry when its observed revision still matches.
@@ -255,6 +270,7 @@ func (s *Store) Save(entry Entry, doc document.Document) (Entry, error) {
 	updated, err := entryFromFile(path, entry.Section, entry.Name, entry.Draft, doc.ID)
 	if err == nil {
 		s.warm.put(warmKey(path, updated.Revision), data)
+		s.self[path] = updated.Revision
 	}
 	return updated, err
 }
@@ -289,7 +305,12 @@ func (s *Store) Move(entry Entry, section, name string) (Entry, error) {
 		return Entry{}, fmt.Errorf("move canvas: %w", err)
 	}
 	s.warm.remove(warmKey(source, entry.Revision))
-	return entryFromFile(target, section, name, false, entry.ID)
+	updated, err := entryFromFile(target, section, name, false, entry.ID)
+	if err == nil {
+		s.self[source] = Revision{}
+		s.self[target] = updated.Revision
+	}
+	return updated, err
 }
 
 // Name promotes a draft to a named canvas, preserving its identity.
@@ -335,6 +356,8 @@ func (s *Store) Name(entry Entry, section, name string) (Entry, error) {
 	updated, err := entryFromFile(target, section, name, false, entry.ID)
 	if err == nil {
 		s.warm.put(warmKey(target, updated.Revision), data)
+		s.self[source] = Revision{}
+		s.self[target] = updated.Revision
 	}
 	return updated, err
 }
@@ -357,6 +380,7 @@ func (s *Store) Delete(entry Entry) error {
 		return fmt.Errorf("delete canvas: %w", err)
 	}
 	s.warm.remove(warmKey(path, entry.Revision))
+	s.self[path] = Revision{}
 	return nil
 }
 
@@ -384,51 +408,7 @@ func (s *Store) ClearDrafts(preserve uuid.UUID) (int, error) {
 
 // List scans named canvases and drafts and returns valid records.
 func (s *Store) List() ([]Entry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var entries []Entry
-	patterns := []string{"*.dg", "*/*.dg"}
-	root := os.DirFS(s.preferred)
-	for _, pattern := range patterns {
-		names, err := fs.Glob(root, pattern)
-		if err != nil {
-			return nil, fmt.Errorf("scan canvases: %w", err)
-		}
-		for _, relative := range names {
-			section, file := filepath.Split(relative)
-			section = strings.TrimSuffix(section, string(filepath.Separator))
-			entry, err := s.inspectNamed(section, strings.TrimSuffix(file, ".dg"))
-			if err == nil {
-				entries = append(entries, entry)
-			}
-		}
-	}
-	drafts, err := fs.Glob(os.DirFS(s.draftsDir()), "*.dg")
-	if err != nil {
-		return nil, fmt.Errorf("scan drafts: %w", err)
-	}
-	for _, file := range drafts {
-		id, err := uuid.Parse(strings.TrimSuffix(file, ".dg"))
-		if err != nil {
-			continue
-		}
-		entry, err := s.inspectDraft(id)
-		if err == nil {
-			entries = append(entries, entry)
-		}
-	}
-	slices.SortFunc(entries, func(a, b Entry) int {
-		if a.Draft != b.Draft {
-			if a.Draft {
-				return 1
-			}
-			return -1
-		}
-		if a.Section != b.Section {
-			return strings.Compare(a.Section, b.Section)
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
+	entries, _ := s.scanCatalog()
 	return entries, nil
 }
 

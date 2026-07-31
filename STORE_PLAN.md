@@ -394,6 +394,8 @@ Status: complete.
 
 ### Phase 5: catalog watching
 
+Status: complete.
+
 - Add the two glob patterns, one-level sections, fsnotify invalidation, and
   reconciliation.
 - Test newly created/deleted directories, event bursts, watcher errors,

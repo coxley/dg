@@ -334,36 +334,65 @@ func Marshal(d Document) ([]byte, error) {
 
 // Unmarshal decodes and validates one JSON document.
 func Unmarshal(data []byte) (Document, error) {
-	var header struct {
-		Version uint32 `json:"version"`
+	doc := Document{}
+	if err := UnmarshalInto(data, &doc); err != nil {
+		return Document{}, err
 	}
-	if err := json.NewDecoder(bytes.NewReader(data)).Decode(&header); err != nil {
-		return Document{}, fmt.Errorf("decode document header: %w", err)
-	}
-	if header.Version != CurrentVersion {
-		return Document{}, fmt.Errorf("%w: %d", ErrUnsupportedVersion, header.Version)
-	}
+	return doc, nil
+}
 
+// UnmarshalInto decodes and validates one JSON document while reusing dst capacity.
+// An error may leave dst partially decoded.
+func UnmarshalInto(data []byte, dst *Document) error {
+	if dst == nil {
+		return errors.New("decode document into nil destination")
+	}
+	dst.resetForDecode()
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-
-	doc := Document{}
-	doc.Options.Router.Costs.EndpointStep = layout.DefaultRouter().Costs.EndpointStep
-	if err := decoder.Decode(&doc); err != nil {
-		return Document{}, fmt.Errorf("decode document: %w", err)
+	if err := decoder.Decode(dst); err != nil {
+		if dst.Version != 0 && dst.Version != CurrentVersion {
+			return fmt.Errorf("%w: %d", ErrUnsupportedVersion, dst.Version)
+		}
+		return fmt.Errorf("decode document: %w", err)
+	}
+	if dst.Version != CurrentVersion {
+		return fmt.Errorf("%w: %d", ErrUnsupportedVersion, dst.Version)
 	}
 	var trailing json.RawMessage
 	err := decoder.Decode(&trailing)
 	switch {
 	case err == nil:
-		return Document{}, errors.New("decode document: trailing JSON value")
+		return errors.New("decode document: trailing JSON value")
 	case !errors.Is(err, io.EOF):
-		return Document{}, fmt.Errorf("decode document trailing data: %w", err)
+		return fmt.Errorf("decode document trailing data: %w", err)
 	}
-	if _, err := doc.Convert(); err != nil {
-		return Document{}, err
+	if _, err := dst.Convert(); err != nil {
+		return err
 	}
-	return doc, nil
+	return nil
+}
+
+func (d *Document) resetForDecode() {
+	nodes := d.Nodes[:cap(d.Nodes)]
+	for i := range nodes {
+		ports := nodes[i].Ports[:0]
+		nodes[i] = Node{Ports: ports}
+	}
+	edges := d.Edges[:cap(d.Edges)]
+	for i := range edges {
+		bends := edges[i].Bends[:0]
+		edges[i] = Edge{Bends: bends}
+	}
+	d.Version = 0
+	d.ID = uuid.Nil
+	d.Nodes = nodes[:0]
+	d.Ports = d.Ports[:0]
+	d.Edges = edges[:0]
+	d.Attachments = d.Attachments[:0]
+	d.Layers = d.Layers[:0]
+	d.Options = Options{}
+	d.Options.Router.Costs.EndpointStep = layout.DefaultRouter().Costs.EndpointStep
 }
 
 // Convert validates d and returns an independent editable layout.

@@ -24,6 +24,19 @@ func BenchmarkStoreSwitch(b *testing.B) {
 			}
 		}
 	})
+	b.Run("WarmInto", func(b *testing.B) {
+		var doc document.Document
+		if err := store.LoadInto(entry, &doc); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			if err := store.LoadInto(entry, &doc); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 	b.Run("Cold", func(b *testing.B) {
 		path := store.namedPath(entry.Section, entry.Name)
 		key := warmKey(path, entry.Revision)

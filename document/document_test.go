@@ -532,6 +532,35 @@ func TestUnmarshalRejectsInvalidJSONShape(t *testing.T) {
 	}
 }
 
+func TestUnmarshalIntoReusesCapacityAndClearsOmittedFields(t *testing.T) {
+	t.Parallel()
+
+	first := validDocument()
+	first.Nodes[0].Style.Border = BorderRounded
+	first.Edges[0].Bends = []PinnedBend{{
+		Point:    Point{X: 10, Y: 10},
+		Incoming: DirectionEast,
+		Outgoing: DirectionSouth,
+	}}
+	data, err := Marshal(first)
+	require.NoError(t, err)
+	var dst Document
+	require.NoError(t, UnmarshalInto(data, &dst))
+	nodes := &dst.Nodes[0]
+	nodeCapacity := cap(dst.Nodes)
+	portCapacity := cap(nodes.Ports)
+
+	second := validDocument()
+	second.ID = first.ID
+	data, err = Marshal(second)
+	require.NoError(t, err)
+	require.NoError(t, UnmarshalInto(data, &dst))
+	require.Equal(t, nodeCapacity, cap(dst.Nodes))
+	require.Equal(t, portCapacity, cap(dst.Nodes[0].Ports))
+	require.Equal(t, NodeStyle{}, dst.Nodes[0].Style)
+	require.Empty(t, dst.Edges[0].Bends)
+}
+
 func TestDocumentValidation(t *testing.T) {
 	t.Parallel()
 

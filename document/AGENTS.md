@@ -27,6 +27,10 @@ The zero value of optional style fields represents the runtime default.
 reusing document capacity. Export compacts runtime tombstones and remaps every
 node, port, edge, and layer reference.
 
+`Unmarshal` decodes once and validates the complete document. `UnmarshalInto`
+reuses top-level and nested slice capacity; callers must treat its destination
+as undefined after an error.
+
 `Convert` creates an independent Layout. `ConvertInto` atomically replaces an
 existing Layout through its retained staging state, preserving the Layout
 pointer and change callback. Import validates enum values, offsets, IDs, and

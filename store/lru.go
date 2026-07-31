@@ -1,6 +1,9 @@
 package store
 
-import "container/list"
+import (
+	"container/list"
+	"strings"
+)
 
 type warmValue struct {
 	key  string
@@ -63,4 +66,12 @@ func (c *warmCache) remove(key string) {
 	delete(c.entries, key)
 	c.bytes -= len(value.data)
 	c.order.Remove(element)
+}
+
+func (c *warmCache) removePrefix(prefix string) {
+	for key := range c.entries {
+		if strings.HasPrefix(key, prefix) {
+			c.remove(key)
+		}
+	}
 }
