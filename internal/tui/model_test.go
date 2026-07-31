@@ -137,6 +137,34 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
 
+func TestNewAllowsCanvasStoreWithoutActiveEntry(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	doc := document.New(geo)
+	root := t.TempDir()
+	store, err := canvasstore.New(
+		filepath.Join(root, "canvases"),
+		canvasstore.WithStateDir(filepath.Join(root, "state")),
+		canvasstore.WithCacheDir(filepath.Join(root, "cache")),
+	)
+	require.NoError(t, err)
+
+	model, err := New(
+		geo,
+		WithDocument(doc),
+		WithCanvasStore(store, nil),
+		testModelSettings(),
+	)
+
+	require.NoError(t, err)
+	require.Same(t, store, model.canvasStore)
+	require.Nil(t, model.entry)
+	require.Equal(t, doc.ID, model.document.ID)
+	require.Equal(t, "dg - Draft", model.windowTitle)
+}
+
 func TestNewStartsWithoutSelectionOrFocusHighlight(t *testing.T) {
 	t.Parallel()
 
@@ -4372,7 +4400,7 @@ func newStoredTestModel(t testing.TB, label string) (*Model, uint32, *canvasstor
 		geo,
 		WithDocument(doc),
 		WithHistory(history),
-		WithCanvasStore(store, entry),
+		WithCanvasStore(store, &entry),
 		testModelSettings(),
 	)
 	require.NoError(t, err)

@@ -171,11 +171,16 @@ func WithHistory(value *history.History) Option {
 	}
 }
 
-// WithCanvasStore configures durable storage and the active record.
-func WithCanvasStore(value *canvasstore.Store, active canvasstore.Entry) Option {
+// WithCanvasStore configures durable storage and an optional active record.
+func WithCanvasStore(value *canvasstore.Store, active *canvasstore.Entry) Option {
 	return func(options *modelOptions) {
 		options.canvasStore = value
-		options.entry = &active
+		if active == nil {
+			options.entry = nil
+			return
+		}
+		entry := *active
+		options.entry = &entry
 	}
 }
 
@@ -195,8 +200,8 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	if configured.history != nil && configured.history.Layout() != geo {
 		return nil, errors.New("configured history belongs to a different layout")
 	}
-	if (configured.canvasStore == nil) != (configured.entry == nil) {
-		return nil, errors.New("canvas store and active entry must be configured together")
+	if configured.canvasStore == nil && configured.entry != nil {
+		return nil, errors.New("active entry requires a canvas store")
 	}
 	if configured.document != nil && configured.entry != nil && configured.document.ID != configured.entry.ID {
 		return nil, errors.New("configured document and active entry identities differ")
