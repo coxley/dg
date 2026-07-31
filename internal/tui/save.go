@@ -45,6 +45,7 @@ func (b *saveDialogBody) Reset() {
 
 func (b *saveDialogBody) newForm() *chrome.Form {
 	return chrome.NewForm(chrome.FormDeclaration{
+		DefaultAction: saveConfirmAction,
 		Fields: []chrome.FormField{
 			{
 				ID: saveNameField, Label: "Canvas name", Kind: chrome.TextField,

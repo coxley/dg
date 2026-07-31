@@ -390,6 +390,7 @@ func (m *Model) openExport(text, preferredPrefix string, payload []byte) {
 	m.exportData = append(m.exportData[:0], payload...)
 	m.style = styleForPrefix(preferredPrefix)
 	m.form = chrome.NewForm(chrome.FormDeclaration{
+		DefaultAction: exportCopy,
 		Fields: []chrome.FormField{{
 			ID: exportStyle, Label: "Copy selection as", Kind: chrome.SelectField,
 			Options: exportOptions(m.style),

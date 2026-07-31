@@ -346,6 +346,7 @@ func preferenceDeclarationWithTints(
 	darkTints, lightTints []TintOption,
 ) chrome.FormDeclaration {
 	return chrome.FormDeclaration{
+		DefaultAction: actionSave,
 		Fields: []chrome.FormField{
 			numberField(fieldStep, "Step cost", uint64(value.Router.Costs.Step), math.MaxUint32),
 			numberField(fieldSharedStep, "Shared-step cost", uint64(value.Router.Costs.SharedStep), math.MaxUint32),

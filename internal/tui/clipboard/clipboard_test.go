@@ -219,7 +219,6 @@ func TestExportUsesSemanticFormTraversalAndAccessibleAction(t *testing.T) {
 
 	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
 	require.Equal(t, LineHash, model.Style())
-	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	_, command := model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
 	require.NotNil(t, command)
 	message := command().(UpdateMsg)

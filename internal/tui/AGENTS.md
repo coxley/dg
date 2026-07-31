@@ -139,6 +139,11 @@ opens the bounded filesystem adapter. Save applies the current form; Save as
 Defaults also enables the persisted router for new diagrams. Growing form
 spacers anchor actions to the body bottom.
 
+Enter submits the primary action from ordinary form fields: Save in
+Preferences, Copy in Export, and Name Canvas in the naming form. Fields with
+their own Enter action take precedence, including the preferences directory
+picker. Enter on an explicitly focused button submits that button.
+
 The sidebar uses an application-declared Pane with separate Canvases and Drafts
 tabs. Canvases groups root records and collapsible one-level sections; Drafts
 shows newest-first modification times and clear/delete actions. Width follows

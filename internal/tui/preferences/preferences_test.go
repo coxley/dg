@@ -26,14 +26,10 @@ func TestModelUpdatesRouterCost(t *testing.T) {
 	require.Equal(t, 1, model.FieldFlash(0))
 }
 
-func TestKeyboardTraversalSubmitsSaveByDefault(t *testing.T) {
+func TestEnterSubmitsSaveByDefault(t *testing.T) {
 	t.Parallel()
 
 	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	for range len(preferenceDeclaration(Value{Router: layout.DefaultRouter()}).Fields) {
-		_, _ = model.Update(keyPress(tea.KeyDown, ""))
-	}
-	require.Equal(t, actionSave, model.FocusID())
 	dispatch(t, model, keyPress(tea.KeyEnter, ""))
 
 	action, completed := model.Completed()

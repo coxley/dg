@@ -25,6 +25,8 @@ form geometry and traversal, and `directorypicker` owns filesystem navigation.
   `h`/`j`/`k`/`l` provide equivalent navigation.
 - The directory picker stays collapsed until Right, `l`, or Enter opens its
   zoomed subview. Escape or `q` closes that subview before it closes the modal.
+- Enter on any other preference field submits Save. Focused actions still
+  submit their own Save, Save as Defaults, or Cancel behavior.
 - Do not add filesystem-picker or generic form geometry back to the preference
   declaration.
 

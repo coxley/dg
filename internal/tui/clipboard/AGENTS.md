@@ -19,6 +19,7 @@ atomic multi-format writes.
   than `64 << 20` bytes.
 - Export formats the plain-text value and carries the original fragment into
   the same atomic write.
+- Enter on the export style field submits Copy with the current style.
 - `ReadPaste` returns structural data only when its CRC32 envelope matches the
   terminal's pasted text.
 - `OpenExportMsg`, `CloseExportMsg`, `CopiedMsg`, and `ErrorMsg` report

@@ -3494,9 +3494,9 @@ func TestModelNamesDraftAndNamedControlSSavesImmediately(t *testing.T) {
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
 	model.dialogs.save.SetValue("RFCs", "Proposal 1")
-	model.handleDialogResult(model.dialogs.save.Update(chrome.FormSubmitMsg{
-		ID: saveConfirmAction,
-	}))
+	command := updateModelCommand(t, model, keyPress(tea.KeyEnter, ""))
+	require.NotNil(t, command)
+	updateModel(t, model, command())
 
 	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
