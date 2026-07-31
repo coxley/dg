@@ -1,0 +1,42 @@
+# Store package guide
+
+## Responsibility
+
+`store` persists named canvases, durable drafts, and disposable history blobs.
+It owns gzip encoding, filesystem revisions, atomic replacement, draft
+promotion recovery, and the compressed warm cache. It imports `document` and
+does not import `layout`, `history`, or frontend packages.
+
+## Records
+
+Named entries use `(Section, Name)` identity below the preferred directory.
+Draft entries use their document UUID below the application state directory.
+Names and sections contain one path component; sections are optional and only
+one level deep. `Entry.Revision` guards replacement, movement, and deletion
+against unseen external writes.
+
+`.dg` files contain exactly one gzip member with versioned document JSON.
+Decode rejects additional members and JSON larger than `64 << 20` bytes.
+Writes create a same-directory temporary file before link or rename. Creation
+never replaces an existing name.
+
+Draft naming writes the named record before deleting the draft. A promotion
+journal removes a duplicate draft after restart when the named write completed.
+If the named write did not complete, recovery preserves the draft.
+
+## Warm data and history
+
+The warm cache retains immutable compressed values with both a five-entry and
+`16 << 20`-byte limit by default. It does not admit a value larger than the
+byte budget. Store returns independently decoded documents, so callers never
+share mutable slices with cached data or another load.
+
+`History` returns a name-keyed blob adapter compatible with the cache interface
+declared by package `history`. Blob data lives below the disposable cache
+directory, not beside portable canvas files.
+
+## Verification
+
+Test revision conflicts, name collisions, draft promotion recovery, one-level
+scanning, gzip bounds, returned-value ownership, LRU eviction, and concurrent
+creation. Benchmark both warm and cold large-document loads and catalog scans.

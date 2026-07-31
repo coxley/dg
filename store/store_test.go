@@ -1,0 +1,346 @@
+package store
+
+import (
+	"bytes"
+	"compress/gzip"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/coxley/dg/document"
+	"github.com/coxley/dg/layout"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+)
+
+func newTestStore(t testing.TB, options ...Option) *Store {
+	t.Helper()
+	root := t.TempDir()
+	options = append([]Option{
+		WithStateDir(filepath.Join(root, "state")),
+		WithCacheDir(filepath.Join(root, "cache")),
+	}, options...)
+	store, err := New(filepath.Join(root, "canvases"), options...)
+	require.NoError(t, err)
+	return store
+}
+
+func testDocument(t testing.TB, label string) document.Document {
+	t.Helper()
+	geo, err := layout.New()
+	require.NoError(t, err)
+	_, err = geo.NewNode(label)
+	require.NoError(t, err)
+	return document.New(geo)
+}
+
+func TestStoreNamedCanvasLifecycle(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "first")
+	entry, err := store.Create("RFCs", "Proposal 1", doc)
+	require.NoError(t, err)
+	require.Equal(t, "RFCs", entry.Section)
+	require.Equal(t, "Proposal 1", entry.Name)
+	require.Equal(t, doc.ID, entry.ID)
+	require.False(t, entry.Draft)
+
+	loaded, err := store.Load(entry)
+	require.NoError(t, err)
+	require.Equal(t, "first", loaded.Nodes[0].Label)
+	loaded.Nodes[0].Label = "changed"
+	updated, err := store.Save(entry, loaded)
+	require.NoError(t, err)
+	require.NotEqual(t, entry.Revision, updated.Revision)
+
+	moved, err := store.Move(updated, "", "Architecture")
+	require.NoError(t, err)
+	require.Empty(t, moved.Section)
+	require.Equal(t, "Architecture", moved.Name)
+	loaded, err = store.Load(moved)
+	require.NoError(t, err)
+	require.Equal(t, "changed", loaded.Nodes[0].Label)
+	require.NoError(t, store.Delete(moved))
+	_, err = store.Load(moved)
+	require.ErrorIs(t, err, ErrEntryNotFound)
+}
+
+func TestStoreReturnsIndependentDocuments(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	entry, err := store.Create("", "Canvas", testDocument(t, "original"))
+	require.NoError(t, err)
+	first, err := store.Load(entry)
+	require.NoError(t, err)
+	second, err := store.Load(entry)
+	require.NoError(t, err)
+	first.Nodes[0].Label = "mutated"
+	require.Equal(t, "original", second.Nodes[0].Label)
+}
+
+func TestStoreRejectsStaleRevision(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "original")
+	entry, err := store.Create("", "Canvas", doc)
+	require.NoError(t, err)
+	path := store.namedPath("", "Canvas")
+	external := doc
+	external.Nodes[0].Label = "external"
+	data, err := encodeDocument(external)
+	require.NoError(t, err)
+	require.NoError(t, replaceFile(path, data))
+
+	_, err = store.Load(entry)
+	require.ErrorIs(t, err, ErrRevision)
+	_, err = store.Save(entry, doc)
+	require.ErrorIs(t, err, ErrRevision)
+	require.ErrorIs(t, store.Delete(entry), ErrRevision)
+}
+
+func TestStoreCreateAndNameDoNotReplaceExistingCanvas(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	named, err := store.Create("", "Canvas", testDocument(t, "named"))
+	require.NoError(t, err)
+	_, err = store.Create("", "Canvas", testDocument(t, "other"))
+	require.ErrorIs(t, err, ErrEntryExists)
+	draft, err := store.CreateDraft(testDocument(t, "draft"))
+	require.NoError(t, err)
+	_, err = store.Name(draft, "", "Canvas")
+	require.ErrorIs(t, err, ErrEntryExists)
+	loaded, err := store.Load(named)
+	require.NoError(t, err)
+	require.Equal(t, "named", loaded.Nodes[0].Label)
+	_, err = store.Load(draft)
+	require.NoError(t, err)
+}
+
+func TestStoreNamesDraftAndRecoversCompletedPromotion(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	preferred := filepath.Join(root, "canvases")
+	state := filepath.Join(root, "state")
+	cache := filepath.Join(root, "cache")
+	store, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	doc := testDocument(t, "draft")
+	draft, err := store.CreateDraft(doc)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(store.draftPath(doc.ID))
+	require.NoError(t, err)
+	require.NoError(t, store.writePromotion(promotion{DraftID: doc.ID, Name: "Named"}))
+	require.NoError(t, writeNew(store.namedPath("", "Named"), data))
+
+	reopened, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	_, err = reopened.Load(draft)
+	require.ErrorIs(t, err, ErrEntryNotFound)
+	entries, err := reopened.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "Named", entries[0].Name)
+}
+
+func TestStoreListsOneLevelAndClearsDrafts(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	_, err := store.Create("", "Root", testDocument(t, "root"))
+	require.NoError(t, err)
+	_, err = store.Create("Section", "Child", testDocument(t, "child"))
+	require.NoError(t, err)
+	preserve, err := store.CreateDraft(testDocument(t, "preserve"))
+	require.NoError(t, err)
+	_, err = store.CreateDraft(testDocument(t, "remove"))
+	require.NoError(t, err)
+	deep := filepath.Join(store.preferred, "One", "Two")
+	require.NoError(t, os.MkdirAll(deep, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(deep, "Ignored.dg"), []byte("invalid"), 0o600))
+
+	entries, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 4)
+	removed, err := store.ClearDrafts(preserve.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+	entries, err = store.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+}
+
+func TestStoreValidatesLocations(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "node")
+	for _, location := range [][2]string{
+		{"", ""},
+		{"", "."},
+		{"", ".."},
+		{"", "a/b"},
+		{"a/b", "name"},
+		{"..", "name"},
+	} {
+		_, err := store.Create(location[0], location[1], doc)
+		require.Error(t, err)
+	}
+}
+
+func TestDocumentCodecRejectsMultipleMembersAndOversize(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := encodeDocument(testDocument(t, "node"))
+	require.NoError(t, err)
+	_, err = decodeDocument(append(append([]byte(nil), encoded...), encoded...))
+	require.ErrorContains(t, err, "multiple gzip members")
+
+	var oversized bytes.Buffer
+	writer := gzip.NewWriter(&oversized)
+	_, err = writer.Write(make([]byte, maxDocumentSize+1))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	_, err = decodeDocument(oversized.Bytes())
+	require.ErrorContains(t, err, "exceeds")
+}
+
+func TestBlobStoreOwnsValuesAndUsesFilesystemSemantics(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	blobs := store.History()
+	value := []byte("history")
+	require.NoError(t, blobs.Write("key", value))
+	value[0] = 'X'
+	loaded, err := blobs.Read("key")
+	require.NoError(t, err)
+	require.Equal(t, []byte("history"), loaded)
+	loaded[0] = 'X'
+	again, err := blobs.Read("key")
+	require.NoError(t, err)
+	require.Equal(t, []byte("history"), again)
+	_, err = blobs.Read("missing")
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = blobs.Read("../escape")
+	require.Error(t, err)
+}
+
+func TestWarmCacheEnforcesCountAndByteBudget(t *testing.T) {
+	t.Parallel()
+
+	cache := newWarmCache(2, 5)
+	cache.put("one", []byte("12"))
+	cache.put("two", []byte("34"))
+	cache.put("three", []byte("5"))
+	_, ok := cache.get("one")
+	require.False(t, ok)
+	_, ok = cache.get("two")
+	require.True(t, ok)
+	cache.put("large", []byte("123456"))
+	_, ok = cache.get("large")
+	require.False(t, ok)
+}
+
+func TestStoreRejectsInvalidDraftIdentity(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "node")
+	doc.ID = uuid.Nil
+	_, err := store.CreateDraft(doc)
+	require.Error(t, err)
+}
+
+func TestStoreMissingEntryErrors(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "node")
+	entry := Entry{Name: "Missing", ID: doc.ID}
+	_, err := store.Load(entry)
+	require.ErrorIs(t, err, ErrEntryNotFound)
+	_, err = store.Save(entry, doc)
+	require.ErrorIs(t, err, ErrEntryNotFound)
+	require.ErrorIs(t, store.Delete(entry), ErrEntryNotFound)
+}
+
+func TestStorePromotionJournalWithoutTargetPreservesDraft(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	preferred := filepath.Join(root, "canvases")
+	state := filepath.Join(root, "state")
+	cache := filepath.Join(root, "cache")
+	store, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	draft, err := store.CreateDraft(testDocument(t, "draft"))
+	require.NoError(t, err)
+	require.NoError(t, store.writePromotion(promotion{DraftID: draft.ID, Name: "Missing"}))
+
+	reopened, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	_, err = reopened.Load(draft)
+	require.NoError(t, err)
+	_, err = os.Stat(reopened.promotionPath())
+	require.ErrorIs(t, err, fs.ErrNotExist)
+}
+
+func TestStoreRejectsDocumentIdentityChange(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	entry, err := store.Create("", "Canvas", testDocument(t, "one"))
+	require.NoError(t, err)
+	_, err = store.Save(entry, testDocument(t, "two"))
+	require.Error(t, err)
+}
+
+func TestStoreMoveReportsMissingAndCollision(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	first, err := store.Create("", "First", testDocument(t, "first"))
+	require.NoError(t, err)
+	_, err = store.Create("", "Second", testDocument(t, "second"))
+	require.NoError(t, err)
+	_, err = store.Move(first, "", "Second")
+	require.ErrorIs(t, err, ErrEntryExists)
+	require.NoError(t, os.Remove(store.namedPath("", "First")))
+	_, err = store.Move(first, "", "Third")
+	require.ErrorIs(t, err, ErrEntryNotFound)
+}
+
+func TestStoreCreateCollisionIsRaceFree(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "node")
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := store.Create("", "Canvas", doc)
+			results <- err
+		}()
+	}
+	errs := []error{<-results, <-results}
+	require.Equal(t, 1, countErrors(errs, nil))
+	require.Equal(t, 1, countErrors(errs, ErrEntryExists))
+}
+
+func countErrors(errs []error, target error) int {
+	count := 0
+	for _, err := range errs {
+		if err == nil && target == nil || target != nil && errors.Is(err, target) {
+			count++
+		}
+	}
+	return count
+}

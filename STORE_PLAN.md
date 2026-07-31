@@ -381,6 +381,8 @@ Status: complete.
 
 ### Phase 4: Store core
 
+Status: complete.
+
 - Add `.dg` codec, Entry CRUD, revision-checked atomic writes, naming, moves,
   backups, drafts, promotion recovery, and history blob storage.
 - Add the compressed LRU and scan/switch benchmarks.
