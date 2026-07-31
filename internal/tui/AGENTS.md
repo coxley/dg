@@ -48,6 +48,9 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
   above it; dock motion never shifts the toolbar
 - cursor display is limited to label editing
 - left drag moves objects or creates rectangles and lines
+- rectangle and line tools remain active after successful creation so repeated
+  drags create repeated objects; q returns either tool to Cursor before a
+  subsequent q quits
 - the line tool always waits for a fresh source drag; selecting a port or edge
   before activation does not seed a connection or reconnect
 - a line press and release snap to the closest usable port within two Manhattan

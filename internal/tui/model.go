@@ -1022,13 +1022,15 @@ func (m *Model) completeConnectionTo(destination uint32) {
 		m.setError(err.Error())
 		return
 	}
-	m.interaction.tool = toolNavigate
 	m.target = layout.Hit{ID: edgeID, Kind: layout.HitEdge}
 	m.selectOnly(m.target)
 	m.clearConnection()
 	m.refreshHits()
 	m.selectTarget()
 	m.status = ""
+	if m.interaction.tool == toolConnect {
+		m.status = dragFromSource
+	}
 }
 
 func (m *Model) deleteActive() {

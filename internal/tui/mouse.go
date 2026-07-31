@@ -395,7 +395,6 @@ func (m *Model) updateConnectionMotion(mouse tea.Mouse) {
 			m.setError(err.Error())
 			return
 		}
-		m.interaction.tool = toolConnect
 		m.interaction.gesture = pointerGesture{kind: gestureConnection}
 		m.cursor = point
 		m.refreshHits()
@@ -404,7 +403,7 @@ func (m *Model) updateConnectionMotion(mouse tea.Mouse) {
 		m.status = ""
 		return
 	}
-	if m.interaction.tool == toolConnect &&
+	if m.interaction.session.kind == sessionConnection &&
 		m.interaction.gesture.kind == gestureConnection &&
 		mouse.Button == tea.MouseLeft {
 		if point, ok := m.documentPoint(mouse.X, mouse.Y); ok {
@@ -512,14 +511,13 @@ func (m *Model) startRectangle(point layout.Point) {
 
 func (m *Model) finishRectangle() {
 	m.interaction.resetGesture()
-	m.interaction.tool = toolNavigate
 	if err := m.commitTransaction(); err != nil {
 		m.setError(err.Error())
 		return
 	}
 	m.refreshHits()
 	m.selectTarget()
-	m.status = ""
+	m.status = "drag to create a rectangle"
 }
 
 func (m *Model) resizeNode(point layout.Point) {
@@ -594,11 +592,7 @@ func resizeCornerPoint(rect layout.Rect, corner resizeCorner) layout.Point {
 }
 
 func (m *Model) abortResize(resizeErr error) {
-	rectangle := m.interaction.gesture.kind == gestureRectangle
 	m.interaction.resetGesture()
-	if rectangle {
-		m.interaction.tool = toolNavigate
-	}
 	m.setError(errors.Join(
 		resizeErr,
 		m.cancelTransaction(),

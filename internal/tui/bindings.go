@@ -102,7 +102,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeCanvas, Chords: []chrome.Chord{chrome.Primary("a")}, Command: commandExpand, Label: "expand selection"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+c", "super+c"), Command: commandCopy, Label: "copy"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("esc"), Command: commandCancel, Label: "cancel tool"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("q"), Command: commandQuit, Label: "quit"},
+	{Scope: scopeCanvas, Chords: chrome.Keys("q"), Command: commandQuit, Label: "cursor / quit"},
 	{Scope: scopeGlobal, Chords: chrome.Keys("?"), Command: commandHelp, Label: "toggle help"},
 	{Scope: scopeGlobal, Chords: []chrome.Chord{chrome.Primary("p")}, Command: commandPreferences, Label: string(scopePreferences)},
 	{Scope: scopeGlobal, Chords: []chrome.Chord{chrome.Primary("s")}, Command: commandSave, Label: string(commandSave)},
@@ -521,6 +521,10 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		}
 		m.openPreferences()
 	case commandQuit:
+		if m.cancelCommandRelevant() {
+			m.cancelMode()
+			return nil
+		}
 		m.interruptInteraction()
 		return m.handleFlushRequest(flushRequestMsg{quit: true})
 	case commandSave:

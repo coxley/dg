@@ -243,7 +243,7 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 
-	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, modeRectangle, model.interaction.mode())
 	require.True(t, model.geo.NodeExists(nodeID))
 	require.Equal(t, "", model.geo.Label(nodeID))
 	size, explicit := model.geo.ExplicitNodeSize(nodeID)
@@ -255,6 +255,8 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 		Kind: layout.HitNode,
 	}))
 
+	updateModel(t, model, keyPress('q', "q"))
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	updateModel(t, model, keyPress('u', "u"))
 	require.False(t, model.geo.NodeExists(nodeID))
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
@@ -275,6 +277,48 @@ func TestModelSwitchesDirectlyBetweenDrawingTools(t *testing.T) {
 	require.Equal(t, modeRectangle, model.interaction.mode())
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, modeNavigate, model.interaction.mode())
+}
+
+func TestModelQReturnsDrawingToolToCursorBeforeQuitting(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, keyPress('l', "l"))
+
+	command := updateModelCommand(t, model, keyPress('q', "q"))
+	require.Nil(t, command)
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, nav.Cursor, model.activeTool())
+
+	command = updateModelCommand(t, model, keyPress('q', "q"))
+	require.NotNil(t, command)
+	_, ok := command().(tea.QuitMsg)
+	require.True(t, ok)
+}
+
+func TestModelRectangleToolCreatesRepeatedRectangles(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, keyPress('r', "r"))
+	for _, rect := range []struct{ x1, y1, x2, y2 int }{
+		{x1: 15, y1: 8, x2: 22, y2: 12},
+		{x1: 30, y1: 8, x2: 37, y2: 12},
+	} {
+		updateModel(t, model, tea.MouseClickMsg{
+			X: rect.x1, Y: rect.y1, Button: tea.MouseLeft,
+		})
+		updateModel(t, model, tea.MouseMotionMsg{
+			X: rect.x2, Y: rect.y2, Button: tea.MouseLeft,
+		})
+		updateModel(t, model, tea.MouseReleaseMsg{
+			X: rect.x2, Y: rect.y2, Button: tea.MouseLeft,
+		})
+		require.Equal(t, modeRectangle, model.interaction.mode())
+	}
+
+	require.Len(t, model.geo.Nodes, 3)
 }
 
 func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
@@ -352,6 +396,7 @@ func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
 	style, ok := model.geo.NodeStyle(created)
 	require.True(t, ok)
 	require.Equal(t, model.nodeStyle, style)
+	updateModel(t, model, keyPress('q', "q"))
 
 	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 	require.NoError(t, model.rebuild())
@@ -1251,7 +1296,7 @@ func helpMovementCommandPerformed(
 	switch commandID {
 	case commandActivate:
 		return after.edgeCount == before.edgeCount+1 &&
-			after.tool == toolNavigate &&
+			after.tool == toolConnect &&
 			after.session.kind == sessionNone
 	case commandCancel:
 		return model.interaction.idle() &&
@@ -1357,6 +1402,11 @@ func helpChromeCommandPerformed(
 	case commandPreferences:
 		return after.dialog == surfacePreferences && after.preferenceEdit
 	case commandQuit:
+		if helpQuitCancelsInteraction(before) {
+			return command == nil && after.tool == toolNavigate &&
+				after.session.kind == sessionNone &&
+				after.gesture.kind == gestureNone
+		}
 		if command == nil {
 			return false
 		}
@@ -1367,6 +1417,29 @@ func helpChromeCommandPerformed(
 	case commandSidebar:
 		return after.sidebarOpen != before.sidebarOpen ||
 			after.sidebarFocused != before.sidebarFocused
+	default:
+		return false
+	}
+}
+
+func helpQuitCancelsInteraction(before helpCommandSnapshot) bool {
+	if before.tool != toolNavigate || before.session.kind != sessionNone {
+		return true
+	}
+	switch before.gesture.kind {
+	case gestureRectangle,
+		gestureDuplicatePending,
+		gestureDuplicate,
+		gestureAreaSelection,
+		gestureConnectionPending,
+		gestureConnection:
+		return true
+	case gestureNone,
+		gestureMove,
+		gestureResize,
+		gestureBend,
+		gestureLabelPress:
+		return false
 	default:
 		return false
 	}
@@ -2941,10 +3014,9 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 		Y:      int(drop.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, modeConnect, model.interaction.mode())
 	require.True(t, model.geo.EdgeExists(0))
 
-	updateModel(t, model, keyPress('l', "l"))
 	require.Equal(t, modeConnect, model.interaction.mode())
 	require.Equal(t, sessionNone, model.interaction.session.kind)
 	secondSource := model.geo.Ports[portExiting(t, model, right, 1)].Anchor
@@ -2964,7 +3036,7 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 		Y:      int(secondDestination.Y),
 		Button: tea.MouseLeft,
 	})
-	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, modeConnect, model.interaction.mode())
 	require.True(t, model.geo.EdgeExists(1))
 }
 
