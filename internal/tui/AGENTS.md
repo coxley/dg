@@ -102,8 +102,8 @@ layout.
 
 ## Dialogs, settings, sidebar, and clipboard
 
-Save, Export, Preferences, and Notice declare distinct workspace surfaces
-through one dialog controller. Left-dragging empty dialog cells moves a
+Name Canvas, Export, Preferences, Confirmation, and Notice declare distinct
+workspace surfaces through one dialog controller. Left-dragging empty dialog cells moves a
 floating shell; right-dragging resizes it. Fit alone selects floating or
 full-screen placement. One retained dialog plan supplies rendering and local
 pointer coordinates. Back and outside-click behavior comes from each
@@ -120,11 +120,15 @@ opens the bounded filesystem adapter. Save applies the current form; Save as
 Defaults also enables the persisted router for new diagrams. Growing form
 spacers anchor actions to the body bottom.
 
-The sidebar uses an application-declared Pane. It docks at wide regular sizes
-and becomes a compact overlay drawer at 80 columns or fewer. One workspace
-transition owns the dock boundary and canvas origin. Back leaves a docked
-sidebar visible but returns keyboard focus to the canvas; Back or an outside
-click dismisses a drawer. Ctrl-B opens, focuses, refocuses, or closes it.
+The sidebar uses an application-declared Pane with separate Canvases and Drafts
+tabs. Canvases groups root records and collapsible one-level sections; Drafts
+shows newest-first modification times and clear/delete actions. Width follows
+the widest known content with a 30-cell minimum and remains stable across tabs
+and collapse. It docks only while preserving 48 canvas cells and otherwise
+becomes a drawer. One workspace transition owns the boundary and canvas origin.
+Back leaves a docked sidebar visible but returns keyboard focus to the canvas;
+Back or an outside click dismisses a drawer. Ctrl-B opens, focuses, refocuses,
+or closes it.
 
 Root renders the selected cells, then sends that text to the clipboard model.
 Copy uses Super-C or Ctrl-C. The first copy waits 300 ms. A second copy in that
@@ -154,7 +158,7 @@ enhancement message.
 - `{` and `}`: send to back or front
 - `u` or Ctrl-Z: undo
 - Ctrl-R or Ctrl-Y: redo
-- Ctrl-S: save
+- Ctrl-S: name a draft or report/save named-canvas autosave
 - `?`: help and preferences
 - Ctrl-B: open or close sidebar
 - `q`: quit

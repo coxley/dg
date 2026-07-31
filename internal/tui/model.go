@@ -108,7 +108,6 @@ type Model struct {
 	height      int
 	status      string
 	statusError string
-	path        string
 	dirty       uint64
 	saved       uint64
 
@@ -171,10 +170,10 @@ func WithCanvasStore(value *canvasstore.Store, active canvasstore.Entry) Option 
 
 // New returns a TUI model for geo.
 func New(geo *layout.Layout, options ...Option) (*Model, error) {
-	return newModel(geo, "", options...)
+	return newModel(geo, options...)
 }
 
-func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error) {
+func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	if geo == nil {
 		return nil, errors.New("nil layout")
 	}
@@ -202,7 +201,6 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 	m := &Model{
 		geo:           geo,
 		history:       configured.history,
-		path:          path,
 		theme:         DefaultTheme(true),
 		styledRuns:    make(map[styledRunKey]string),
 		settingsStore: configured.settingsStore,
@@ -232,6 +230,7 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 		},
 		Footer: "Esc canvas",
 	}, m.theme.Sidebar)
+	m.rebuildSidebarCatalog()
 	m.syncSidebarShortcut()
 	m.clipboard = clipboardview.New(m.theme.ExportForm)
 	m.dialogs = newDialogController(m.theme, m.clipboard, m.preferenceValue())
@@ -275,7 +274,7 @@ func newModel(geo *layout.Layout, path string, options ...Option) (*Model, error
 
 // Run starts an interactive terminal editor for geo.
 func Run(geo *layout.Layout, options ...Option) error {
-	model, err := newModel(geo, "", options...)
+	model, err := newModel(geo, options...)
 	if err != nil {
 		return err
 	}

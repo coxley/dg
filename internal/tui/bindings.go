@@ -50,6 +50,10 @@ const (
 	commandSidebar         chrome.CommandID = "sidebar"
 	commandSidebarNext     chrome.CommandID = "sidebar-next"
 	commandSidebarPrevious chrome.CommandID = "sidebar-previous"
+	commandSidebarActivate chrome.CommandID = "sidebar-activate"
+	commandSidebarTabNext  chrome.CommandID = "sidebar-tab-next"
+	commandSidebarTabPrev  chrome.CommandID = "sidebar-tab-previous"
+	commandSidebarDelete   chrome.CommandID = "sidebar-delete"
 	commandTextHorizontal  chrome.CommandID = "text-horizontal"
 	commandTextVertical    chrome.CommandID = "text-vertical"
 	commandUndo            chrome.CommandID = "undo"
@@ -59,6 +63,10 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeSidebar, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "return to canvas"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("tab", "down", "j"), Command: commandSidebarNext, Label: "next item"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("shift+tab", "up", "k"), Command: commandSidebarPrevious, Label: "previous item"},
+	{Scope: scopeSidebar, Chords: chrome.Keys("enter"), Command: commandSidebarActivate, Label: "open item"},
+	{Scope: scopeSidebar, Chords: chrome.Keys("right", "l"), Command: commandSidebarTabNext, Label: "next tab"},
+	{Scope: scopeSidebar, Chords: chrome.Keys("left", "h"), Command: commandSidebarTabPrev, Label: "previous tab"},
+	{Scope: scopeSidebar, Chords: chrome.Keys("backspace", "delete"), Command: commandSidebarDelete, Label: "delete draft"},
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
 	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
@@ -156,8 +164,12 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 		commandQuit,
 		commandSave,
 		commandSidebar,
+		commandSidebarActivate,
+		commandSidebarDelete,
 		commandSidebarNext,
-		commandSidebarPrevious:
+		commandSidebarPrevious,
+		commandSidebarTabNext,
+		commandSidebarTabPrev:
 		return m.updateChromeCommand(message.Command)
 	default:
 		panic("unhandled semantic command " + message.Command)
@@ -249,6 +261,8 @@ func (m *Model) canvasCommandAvailable(command chrome.CommandID) bool {
 		commandRedo,
 		commandUndo:
 		return m.canvasEditCommandAvailable(command)
+	case commandSave:
+		return m.canvasStore != nil
 	default:
 		return true
 	}
@@ -516,6 +530,14 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		m.sidebar.moveFocus(1)
 	case commandSidebarPrevious:
 		m.sidebar.moveFocus(-1)
+	case commandSidebarActivate:
+		return m.activateSidebar()
+	case commandSidebarTabNext:
+		return m.switchSidebarTab(1)
+	case commandSidebarTabPrev:
+		return m.switchSidebarTab(-1)
+	case commandSidebarDelete:
+		m.deleteFocusedDraft()
 	default:
 		panic("unhandled chrome command " + command)
 	}

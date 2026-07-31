@@ -48,6 +48,7 @@ func (m *Model) updateCatalog(event canvasstore.CatalogEvent) {
 	}
 	if event.Entries != nil {
 		m.catalog = event.Entries
+		m.rebuildSidebarCatalog()
 	}
 	if m.entry == nil {
 		return

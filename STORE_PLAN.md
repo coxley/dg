@@ -412,6 +412,8 @@ Status: complete.
 
 ### Phase 7: sidebar and naming
 
+Status: complete.
+
 - Refactor flat sidebar items into semantic tab, section, record, and action
   rows.
 - Add content-driven sizing, Canvases/Drafts, naming, collapse, deletion, and

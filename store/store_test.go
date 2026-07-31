@@ -160,6 +160,16 @@ func TestStoreCreateAndNameDoNotReplaceExistingCanvas(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStoreAllowsSameNameInDifferentSections(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	_, err := store.Create("Interviews", "Candidate", testDocument(t, "first"))
+	require.NoError(t, err)
+	_, err = store.Create("RFCs", "Candidate", testDocument(t, "second"))
+	require.NoError(t, err)
+}
+
 func TestStoreNamesDraftAndRecoversCompletedPromotion(t *testing.T) {
 	t.Parallel()
 

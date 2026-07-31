@@ -132,7 +132,6 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	require.Equal(t, defaultLightTint.ID, model.preferences.baseline.LightTint)
 	require.NotNil(t, model.dialogs.preferences.model)
 	require.NotNil(t, model.dialogs.save.form)
-	require.NotNil(t, model.dialogs.save.picker)
 	require.NotNil(t, model.clipboard)
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 }
@@ -832,7 +831,7 @@ func TestDialogControllerOwnsDistinctModalSurfacesAndScopes(t *testing.T) {
 			name: "save dialog",
 			id:   surfaceSave,
 			open: func(model *Model) {
-				model.dialogs.OpenSave(model.preferences.baseline.SaveDirectory)
+				model.dialogs.OpenSave()
 			},
 		},
 		{
@@ -888,7 +887,7 @@ func TestDialogShellMovesEveryFloatingSurface(t *testing.T) {
 		case surfacePreferences:
 			model.openPreferences()
 		case surfaceSave:
-			model.dialogs.OpenSave(model.preferences.baseline.SaveDirectory)
+			model.dialogs.OpenSave()
 		case surfaceExport:
 			model.dialogs.OpenExport()
 		case surfaceNotice:
@@ -3460,107 +3459,77 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 func TestModelViewShowsSaveForm(t *testing.T) {
 	t.Parallel()
 
-	model, _ := newTestModel(t)
-	model.preferences.baseline.SaveDirectory = t.TempDir()
+	model, _, _ := newStoredTestModel(t, "node")
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	view := model.View()
 
-	require.Contains(t, view.Content, "Directory")
+	require.Contains(t, view.Content, "Canvas name")
+	require.Contains(t, view.Content, "Section (optional)")
 	require.Nil(t, view.Cursor)
 }
 
-func TestModelSavesWithPathPromptAndReusesPath(t *testing.T) {
+func TestModelNamesDraftAndNamedControlSSavesImmediately(t *testing.T) {
 	t.Parallel()
 
-	model, nodeID := newTestModel(t)
-	dir := t.TempDir()
-	path := filepath.Join(dir, defaultSaveName)
+	model, nodeID, store := newStoredTestModel(t, "node")
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
-	model.dialogs.save.SetValue(dir, defaultSaveName)
+	model.dialogs.save.SetValue("RFCs", "Proposal 1")
 	model.handleDialogResult(model.dialogs.save.Update(chrome.FormSubmitMsg{
 		ID: saveConfirmAction,
 	}))
 
 	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
-	require.Equal(t, path, model.path)
-	require.Equal(t, "saved "+path, model.status)
-	requireSavedLabel(t, path, "node")
+	require.Equal(t, "RFCs", model.entry.Section)
+	require.Equal(t, "Proposal 1", model.entry.Name)
+	require.Equal(t, "named RFCs/Proposal 1", model.status)
 
 	require.NoError(t, model.geo.SetNodeLabel(nodeID, "updated"))
 	require.NoError(t, model.rebuild())
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-
-	require.Equal(t, modeNavigate, model.interaction.mode())
-	requireSavedLabel(t, path, "updated")
+	loaded, err := store.Load(*model.entry)
+	require.NoError(t, err)
+	require.Equal(t, "updated", loaded.Nodes[0].Label)
+	require.Equal(t, "autosaved", model.status)
 }
 
-func TestModelSaveFailureKeepsDraftOpen(t *testing.T) {
+func TestModelNameCollisionKeepsDraftDialogOpen(t *testing.T) {
 	t.Parallel()
 
-	model, _ := newTestModel(t)
+	model, _, store := newStoredTestModel(t, "draft")
+	_, err := store.Create("RFCs", "Proposal", document.New(mustLayoutWithLabel(t, "named")))
+	require.NoError(t, err)
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	directory := filepath.Join(t.TempDir(), "missing")
-	model.dialogs.save.SetValue(directory, "draft.json")
+	model.dialogs.save.SetValue("RFCs", "Proposal")
 
 	model.handleDialogResult(model.dialogs.save.Update(chrome.FormSubmitMsg{
 		ID: saveConfirmAction,
 	}))
 
 	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
-	require.Equal(t, directory, model.dialogs.save.directory)
-	require.Equal(t, "draft.json", model.dialogs.save.name)
-	require.Empty(t, model.path)
-	require.Contains(t, model.status, "save diagram:")
-}
-
-func TestModelSaveFormBrowsesRealPaths(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "diagram-one.json"), nil, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "diagram-two.json"), nil, 0o600))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "nested"), 0o700))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, ".hidden"), 0o700))
-
-	model, _ := newTestModel(t)
-	model.preferences.baseline.SaveDirectory = dir
-	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
-	require.NotNil(t, command)
-	updateModel(t, model, command())
-	require.True(t, model.dialogs.save.picker.Opened())
-
-	views := model.View().Content
-	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
-	views += model.View().Content
-	updateModelCommand(t, model, keyPress(tea.KeyDown, ""))
-	views += model.View().Content
-	require.Contains(t, views, "nested")
-	require.NotContains(t, views, "diagram-one.json")
-	require.NotContains(t, views, "diagram-two.json")
-	require.NotContains(t, views, ".hidden")
+	require.Equal(t, "RFCs", model.dialogs.save.section)
+	require.Equal(t, "Proposal", model.dialogs.save.name)
+	require.True(t, model.entry.Draft)
+	require.Contains(t, model.status, "already exists")
 }
 
 func TestModelSaveTextInputTypesAndPastesWithoutParentCommands(t *testing.T) {
 	t.Parallel()
 
-	model, _ := newTestModel(t)
+	model, _, _ := newStoredTestModel(t, "node")
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
 	require.Equal(t, saveNameField, model.dialogs.save.form.FocusID())
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
 	updateModel(t, model, keyPress('q', "q"))
-	updateModel(t, model, tea.PasteMsg{Content: "uick.json\n"})
-	require.Equal(t, "quick.json", model.dialogs.save.name)
+	updateModel(t, model, tea.PasteMsg{Content: "uick Canvas\n"})
+	require.Equal(t, "quick Canvas", model.dialogs.save.name)
 	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
-	require.Contains(t, model.dialogs.save.form.AccessibleLines(), "File name: quick.json")
+	require.Contains(t, model.dialogs.save.form.AccessibleLines(), "Canvas name: quick Canvas")
 }
 
 func TestModelMouseSelectsAndDragsNode(t *testing.T) {
@@ -4275,18 +4244,6 @@ func mustEdgeStyle(t testing.TB, model *Model, edgeID uint32) layout.EdgeStyle {
 	style, ok := model.geo.EdgeStyle(edgeID)
 	require.True(t, ok)
 	return style
-}
-
-func requireSavedLabel(t testing.TB, path, want string) {
-	t.Helper()
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	doc, err := document.Unmarshal(data)
-	require.NoError(t, err)
-	geo, err := doc.Convert()
-	require.NoError(t, err)
-	require.Equal(t, want, geo.Label(0))
 }
 
 func newTwoNodeModel(t testing.TB) (*Model, uint32, uint32) {

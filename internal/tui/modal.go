@@ -52,6 +52,7 @@ var dialogSpecs = [...]dialogSpec{
 	{ID: surfaceSave, DismissOutside: true},
 	{ID: surfaceExport, DismissOutside: true},
 	{ID: surfaceNotice, Variant: modalview.Notice, DismissAnyKey: true},
+	{ID: surfaceConfirmation, DismissOutside: true},
 }
 
 type dialogPlan struct {
@@ -61,15 +62,16 @@ type dialogPlan struct {
 
 // dialogController owns dialog selection, shell geometry, and body routing.
 type dialogController struct {
-	active      chrome.SurfaceID
-	shell       modalview.Model
-	preferences *preferenceDialogBody
-	save        *saveDialogBody
-	export      exportDialogBody
-	notice      noticeDialogBody
-	plan        dialogPlan
-	screen      chrome.Size
-	avoidTop    int
+	active       chrome.SurfaceID
+	shell        modalview.Model
+	preferences  *preferenceDialogBody
+	save         *saveDialogBody
+	export       exportDialogBody
+	notice       noticeDialogBody
+	confirmation *confirmationDialogBody
+	plan         dialogPlan
+	screen       chrome.Size
+	avoidTop     int
 }
 
 func newDialogController(
@@ -87,8 +89,9 @@ func newDialogController(
 			preferenceWidth,
 			theme.Preferences,
 		),
-		save:   newSaveDialogBody(theme.Save),
-		export: exportDialogBody{clipboard: clipboard},
+		save:         newSaveDialogBody(theme.Save),
+		export:       exportDialogBody{clipboard: clipboard},
+		confirmation: newConfirmationDialogBody(theme.Confirmation),
 	}
 }
 
@@ -101,8 +104,8 @@ func (d *dialogController) OpenPreferences(value preferenceDialogValue) {
 	d.open(surfacePreferences)
 }
 
-func (d *dialogController) OpenSave(directory string) {
-	d.save.Reset(directory)
+func (d *dialogController) OpenSave() {
+	d.save.Reset()
 	d.open(surfaceSave)
 }
 
@@ -117,6 +120,11 @@ func (d *dialogController) OpenNotice(
 	d.notice.Reset(text, returnTo)
 	d.open(surfaceNotice)
 	return d.notice.Generation()
+}
+
+func (d *dialogController) OpenConfirmation(title, message, confirm string, result tea.Msg) {
+	d.confirmation.Reset(title, message, confirm, result)
+	d.open(surfaceConfirmation)
 }
 
 func (d *dialogController) open(id chrome.SurfaceID) {
@@ -315,6 +323,7 @@ func (d *dialogController) SetStyles(theme Theme) {
 	d.preferences.SetStyles(theme.Preferences)
 	d.save.SetStyles(theme.Save)
 	d.export.SetStyles(theme.ExportForm)
+	d.confirmation.SetStyles(theme.Confirmation)
 }
 
 func (d *dialogController) activeBody() dialogBody {
@@ -327,6 +336,8 @@ func (d *dialogController) activeBody() dialogBody {
 		return &d.export
 	case surfaceNotice:
 		return &d.notice
+	case surfaceConfirmation:
+		return d.confirmation
 	default:
 		return nil
 	}
@@ -519,6 +530,8 @@ func (m *Model) handleDialogResult(result dialogBodyResult) tea.Cmd {
 	case noticeDismissedMsg:
 		m.dialogs.notice.Clear()
 		m.dialogs.Restore(message.ReturnTo)
+	case clearDraftsMsg:
+		m.clearDrafts()
 	default:
 		panic("unhandled dialog message")
 	}

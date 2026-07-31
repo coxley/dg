@@ -1,16 +1,130 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/coxley/dg/layout"
+	canvasstore "github.com/coxley/dg/store"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSidebarBuildsCanvasSectionsAndDraftTab(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "active draft")
+	for _, location := range [][2]string{
+		{"", "Architecture"},
+		{"", "Databases"},
+		{"Interviews", "Candidate 1"},
+		{"Interviews", "Candidate 2"},
+		{"RFCs", "Proposal.bak"},
+	} {
+		_, err := store.Create(location[0], location[1], document.New(mustLayoutWithLabel(t, location[1])))
+		require.NoError(t, err)
+	}
+	_, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, "other draft")))
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+
+	labels := sidebarLabels(model)
+	require.Equal(t, []string{
+		"Architecture",
+		"Databases",
+		"▾ [Interviews]",
+		"  Candidate 1",
+		"  Candidate 2",
+		"▾ [RFCs]",
+		"  Proposal.bak [backup]",
+	}, labels)
+	wantWidth := model.sidebar.desired
+	focusSidebarItem(t, model, "section:Interviews")
+	model.activateSidebar()
+	require.NotContains(t, sidebarLabels(model), "  Candidate 1")
+	require.Equal(t, wantWidth, model.sidebar.desired)
+
+	model.switchSidebarTab(1)
+	require.Equal(t, "Canvases  [Drafts]", model.sidebar.declaration.Header)
+	require.Equal(t, wantWidth, model.sidebar.desired)
+	require.Len(t, model.sidebar.declaration.Items, 3)
+	for _, item := range model.sidebar.declaration.Items[:2] {
+		require.NotContains(t, item.Label, "draft")
+		require.NotEmpty(t, item.Label)
+	}
+	require.Equal(t, "Clear Drafts...", model.sidebar.declaration.Items[2].Label)
+}
+
+func TestSidebarContentWidthControlsDockBoundary(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "draft")
+	name := strings.Repeat("界", 20)
+	_, err := store.Create("", name, document.New(mustLayoutWithLabel(t, "wide")))
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	require.Greater(t, model.sidebar.desired, sidebarMinimumWidth)
+
+	updateModel(t, model, tea.WindowSizeMsg{
+		Width:  model.sidebar.desired + sidebarCanvasMinimum,
+		Height: 20,
+	})
+	updateModelCommand(t, model, sidebarKey())
+	require.Equal(t, sidebarDocked, model.sidebar.placement)
+	updateModelCommand(t, model, tea.WindowSizeMsg{
+		Width:  model.sidebar.desired + sidebarCanvasMinimum - 1,
+		Height: 20,
+	})
+	require.Equal(t, sidebarDrawer, model.sidebar.placement)
+}
+
+func TestSidebarDeletesDraftsWithActivePreservationAndConfirmation(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "active")
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
+	for i := range 3 {
+		_, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, fmt.Sprintf("draft %d", i))))
+		require.NoError(t, err)
+	}
+	model.updateCatalog(store.Reconcile(model.catalog))
+	model.switchSidebarTab(1)
+	focusSidebarItem(t, model, "drafts:clear")
+	model.activateSidebar()
+	require.Equal(t, surfaceConfirmation, model.dialogs.ActiveID())
+	model.syncWorkspace()
+	require.Contains(t, model.dialogs.confirmation.View(), "Delete 3 canvases?")
+	model.handleDialogResult(model.dialogs.Update(chrome.FormSubmitMsg{ID: confirmationAccept}))
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
+	require.Equal(t, "deleted 3 canvases", model.status)
+	entries, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, model.entry.ID, entries[0].ID)
+}
+
+func BenchmarkSidebarCatalog1000(b *testing.B) {
+	model, _, _ := newStoredTestModel(b, "active")
+	model.catalog = make([]canvasstore.Entry, 1000)
+	for i := range model.catalog {
+		model.catalog[i] = canvasstore.Entry{
+			Section: fmt.Sprintf("Section %02d", i%20),
+			Name:    fmt.Sprintf("Canvas %04d", i),
+			ID:      uuid.New(),
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		model.rebuildSidebarCatalog()
+	}
+}
 
 func TestSidebarAdaptsFocusAndBackToPlacement(t *testing.T) {
 	t.Parallel()
@@ -72,9 +186,11 @@ func TestSidebarAdaptsFocusAndBackToPlacement(t *testing.T) {
 		t.Parallel()
 
 		model, _ := newTestModel(t)
-		updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
+		updateModel(t, model, tea.WindowSizeMsg{Width: sidebarPreferredWidth + sidebarCanvasMinimum - 1, Height: 16})
 		updateModelCommand(t, model, sidebarKey())
 		require.Equal(t, sidebarDrawer, model.sidebar.placement)
+		updateModelCommand(t, model, tea.WindowSizeMsg{Width: sidebarPreferredWidth + sidebarCanvasMinimum, Height: 16})
+		require.Equal(t, sidebarDocked, model.sidebar.placement)
 	})
 }
 
@@ -135,7 +251,8 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 		require.Equal(t, geometry.Canvas.X+int(model.cursor.X-model.viewport.X), x)
 		navigation, ok := model.surfacePlan(surfaceNavigation)
 		require.True(t, ok)
-		require.Equal(t, navigationRect, navigation.Rect)
+		require.Equal(t, navigationRect.Width, navigation.Rect.Width)
+		require.GreaterOrEqual(t, navigation.Rect.X, geometry.Canvas.X)
 
 		lines := strings.Split(strings.TrimSuffix(ansi.Strip(model.View().Content), "\n"), "\n")
 		require.Len(t, lines, 20)
@@ -148,21 +265,22 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 	require.Equal(t, sidebarPreferredWidth, boundaries[len(boundaries)-1])
 }
 
-func TestDockedSidebarKeepsNavigationWorkspaceAnchoredAtMinimumWidth(t *testing.T) {
+func TestDockedSidebarKeepsNavigationCanvasAnchoredAtMinimumWidth(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: compactWidthThreshold, Height: 16})
 	navigation, ok := model.surfacePlan(surfaceNavigation)
 	require.True(t, ok)
-	want := navigation.Rect
+	wantWidth := navigation.Rect.Width
 	updateModelCommand(t, model, sidebarKey())
 
 	for model.workspace.SurfaceMoving(surfaceSidebar) {
 		updateModelCommand(t, model, sidebarMotionMessage(model))
 		navigation, ok := model.surfacePlan(surfaceNavigation)
 		require.True(t, ok)
-		require.Equal(t, want, navigation.Rect)
+		require.Equal(t, wantWidth, navigation.Rect.Width)
+		require.GreaterOrEqual(t, navigation.Rect.X, model.workspace.Geometry().Canvas.X)
 		lines := strings.Split(ansi.Strip(model.View().Content), "\n")
 		for _, line := range lines {
 			require.LessOrEqual(t, ansi.StringWidth(line), compactWidthThreshold)
@@ -171,7 +289,7 @@ func TestDockedSidebarKeepsNavigationWorkspaceAnchoredAtMinimumWidth(t *testing.
 		require.Equal(
 			t,
 			navigationLine,
-			ansi.Cut(lines[want.Y], want.X, want.Right()),
+			ansi.Cut(lines[navigation.Rect.Y], navigation.Rect.X, navigation.Rect.Right()),
 		)
 	}
 }
@@ -401,6 +519,27 @@ func TestSidebarFooterUsesShortcutVocabulary(t *testing.T) {
 
 func sidebarKey() tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: 'b', Mod: tea.ModCtrl})
+}
+
+func sidebarLabels(model *Model) []string {
+	labels := make([]string, len(model.sidebar.declaration.Items))
+	for i, item := range model.sidebar.declaration.Items {
+		labels[i] = item.Label
+	}
+	return labels
+}
+
+func focusSidebarItem(t testing.TB, model *Model, id chrome.FocusID) {
+	t.Helper()
+	model.sidebar.show()
+	for range len(model.sidebar.declaration.Items) {
+		_, focused := model.sidebar.focus.Current()
+		if focused == id {
+			return
+		}
+		model.sidebar.moveFocus(1)
+	}
+	t.Fatalf("sidebar item %q not found", id)
 }
 
 func advanceSidebar(t testing.TB, model *Model) {

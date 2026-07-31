@@ -7,15 +7,16 @@ import (
 )
 
 const (
-	surfaceCanvas      chrome.SurfaceID = "canvas"
-	surfaceNavigation  chrome.SurfaceID = "navigation"
-	surfaceHelp        chrome.SurfaceID = "help"
-	surfaceSidebar     chrome.SurfaceID = "sidebar"
-	surfaceNone        chrome.SurfaceID = ""
-	surfacePreferences chrome.SurfaceID = "preferences-dialog"
-	surfaceSave        chrome.SurfaceID = "save-dialog"
-	surfaceExport      chrome.SurfaceID = "export-dialog"
-	surfaceNotice      chrome.SurfaceID = "notice-dialog"
+	surfaceCanvas       chrome.SurfaceID = "canvas"
+	surfaceNavigation   chrome.SurfaceID = "navigation"
+	surfaceHelp         chrome.SurfaceID = "help"
+	surfaceSidebar      chrome.SurfaceID = "sidebar"
+	surfaceNone         chrome.SurfaceID = ""
+	surfacePreferences  chrome.SurfaceID = "preferences-dialog"
+	surfaceSave         chrome.SurfaceID = "save-dialog"
+	surfaceExport       chrome.SurfaceID = "export-dialog"
+	surfaceNotice       chrome.SurfaceID = "notice-dialog"
+	surfaceConfirmation chrome.SurfaceID = "confirmation-dialog"
 )
 
 const (
@@ -62,7 +63,7 @@ func (m *Model) syncWorkspace() {
 		chrome.Surface{
 			ID:        surfaceNavigation,
 			Role:      chrome.SurfaceFloating,
-			Anchor:    chrome.AnchorWorkspace,
+			Anchor:    chrome.AnchorCanvas,
 			Requested: m.nav.Bounds(),
 			Priority:  surfacePriorityNavigation,
 			Visible:   m.nav.Bounds().Width != 0,
@@ -159,7 +160,9 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 		m.workspace.Capture(surfaceCanvas)
 	case surfaceSidebar:
 		surface, _ := m.surfacePlan(surfaceSidebar)
-		m.sidebar.click(point, surface)
+		if m.sidebar.click(point, surface) {
+			return m.activateSidebar()
+		}
 		if m.sidebar.capturesPointer() {
 			m.workspace.Capture(surfaceSidebar)
 		}

@@ -7,13 +7,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/coxley/dg/internal/tui/chrome"
+	canvasstore "github.com/coxley/dg/store"
 )
 
 const (
-	sidebarPreferredWidth = 26
-	sidebarMinimumWidth   = 24
+	sidebarPreferredWidth = 30
+	sidebarMinimumWidth   = 30
 	sidebarCanvasMinimum  = 48
-	compactWidthThreshold = 81
+	compactWidthThreshold = sidebarMinimumWidth + sidebarCanvasMinimum
 	sidebarMotionFPS      = 60
 	sidebarMotionInterval = time.Second / sidebarMotionFPS
 )
@@ -26,9 +27,20 @@ const (
 )
 
 type sidebarItem struct {
-	ID    chrome.FocusID
-	Label string
+	ID      chrome.FocusID
+	Label   string
+	Kind    sidebarItemKind
+	Section string
+	Entry   canvasstore.Entry
 }
+
+type sidebarItemKind uint8
+
+const (
+	sidebarItemRecord sidebarItemKind = iota + 1
+	sidebarItemSection
+	sidebarItemClearDrafts
+)
 
 type sidebarDeclaration struct {
 	Header string
@@ -46,6 +58,9 @@ type sidebarState struct {
 	open        bool
 	focused     bool
 	generation  uint64
+	drafts      bool
+	collapsed   map[string]bool
+	desired     int
 }
 
 type sidebarMotionMsg struct {
@@ -75,7 +90,9 @@ func newSidebar(declaration sidebarDeclaration, styles sidebarStyles) sidebarSta
 		viewport:    viewport,
 		pane:        pane,
 		focus:       focus,
+		collapsed:   make(map[string]bool),
 	}
+	sidebar.measure(nil)
 	sidebar.render()
 	return sidebar
 }
@@ -156,21 +173,21 @@ func (s *sidebarState) moveFocus(delta int) {
 	s.render()
 }
 
-func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) {
+func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) bool {
 	local := chrome.Point{
 		X: point.X - surface.Content.X,
 		Y: point.Y - surface.Content.Y,
 	}
 	if s.viewport.BeginScrollbarDrag(local) {
-		return
+		return false
 	}
 	body := s.pane.Plan().Body
 	if !body.Contains(local) {
-		return
+		return false
 	}
 	index := local.Y - body.Y + s.viewport.Plan().Offset.Y
 	if index < 0 || index >= len(s.declaration.Items) {
-		return
+		return false
 	}
 	s.show()
 	for range len(s.declaration.Items) {
@@ -181,6 +198,7 @@ func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) {
 		s.focus.Move(1)
 	}
 	s.render()
+	return s.declaration.Items[index].Kind != 0
 }
 
 func (s *sidebarState) motion(point chrome.Point, surface chrome.SurfacePlan) {
@@ -227,6 +245,28 @@ func (s *sidebarState) render() {
 		lines[i] = style.Render(item.Label)
 	}
 	s.viewport.SetContent(lines)
+}
+
+func (s *sidebarState) setContent(header string, items []sidebarItem, allLabels []string) {
+	s.declaration.Header = header
+	s.declaration.Items = items
+	s.measure(allLabels)
+	s.registerTargets()
+	s.render()
+}
+
+func (s *sidebarState) measure(allLabels []string) {
+	width := max(
+		ansi.StringWidth(s.declaration.Header)+s.styles.Header.GetHorizontalFrameSize(),
+		ansi.StringWidth(s.declaration.Footer)+s.styles.Footer.GetHorizontalFrameSize(),
+	)
+	for _, item := range s.declaration.Items {
+		width = max(width, ansi.StringWidth(item.Label)+s.styles.Item.GetHorizontalFrameSize())
+	}
+	for _, label := range allLabels {
+		width = max(width, ansi.StringWidth(label)+s.styles.Item.GetHorizontalFrameSize())
+	}
+	s.desired = max(sidebarMinimumWidth, width+s.styles.Container.GetHorizontalFrameSize())
 }
 
 func (s *sidebarState) registerTargets() {
@@ -303,8 +343,7 @@ func (m *Model) retargetSidebar() tea.Cmd {
 
 func (m *Model) sidebarPlacement() sidebarPlacement {
 	mainWidth := m.workspace.Geometry().Main.Width
-	if m.width < compactWidthThreshold ||
-		mainWidth < sidebarMinimumWidth+sidebarCanvasMinimum {
+	if mainWidth < m.sidebar.desired+sidebarCanvasMinimum {
 		return sidebarDrawer
 	}
 	return sidebarDocked
@@ -313,9 +352,9 @@ func (m *Model) sidebarPlacement() sidebarPlacement {
 func (m *Model) sidebarTargetWidth() int {
 	mainWidth := m.workspace.Geometry().Main.Width
 	if m.sidebar.placement == sidebarDrawer {
-		return min(sidebarPreferredWidth, mainWidth)
+		return min(m.sidebar.desired, mainWidth)
 	}
-	return min(sidebarPreferredWidth, max(mainWidth-sidebarCanvasMinimum, 0))
+	return min(m.sidebar.desired, max(mainWidth-sidebarCanvasMinimum, 0))
 }
 
 func (m *Model) updateSidebarMotion(message sidebarMotionMsg) tea.Cmd {
