@@ -3486,6 +3486,33 @@ func TestModelViewShowsSaveForm(t *testing.T) {
 	require.Nil(t, view.Cursor)
 }
 
+func TestModelSaveFormRightJustifiesCompactValues(t *testing.T) {
+	t.Parallel()
+
+	model, _, _ := newStoredTestModel(t, "node")
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	model.dialogs.save.SetValue("Research", "Canvas title")
+
+	width := model.dialogs.save.form.Plan().Bounds.Width
+	lines := strings.Split(ansi.Strip(model.dialogs.save.View()), "\n")
+	for label, value := range map[string]string{
+		"Canvas name":        "Canvas title",
+		"Section (optional)": "Research",
+	} {
+		found := false
+		for _, line := range lines {
+			if !strings.HasPrefix(line, label) {
+				continue
+			}
+			found = true
+			require.Equal(t, width, ansi.StringWidth(line))
+			require.Equal(t, width-saveTextWidth, strings.Index(line, value), line)
+		}
+		require.True(t, found, label)
+	}
+}
+
 func TestModelNamesDraftAndNamedControlSSavesImmediately(t *testing.T) {
 	t.Parallel()
 

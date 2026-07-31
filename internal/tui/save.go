@@ -15,6 +15,7 @@ const (
 	saveNameField     chrome.ID = "save-name"
 	saveConfirmAction chrome.ID = "save-confirm"
 	saveCancelAction  chrome.ID = "save-cancel"
+	saveTextWidth               = 24
 )
 
 type saveDocumentMsg struct {
@@ -49,11 +50,11 @@ func (b *saveDialogBody) newForm() *chrome.Form {
 		Fields: []chrome.FormField{
 			{
 				ID: saveNameField, Label: "Canvas name", Kind: chrome.TextField,
-				Text: b.name, Placeholder: "Canvas title",
+				Text: b.name, Placeholder: "Canvas title", TextWidth: saveTextWidth,
 			},
 			{
 				ID: saveSectionField, Label: "Section (optional)", Kind: chrome.TextField,
-				Text: b.section, Placeholder: "RFCs",
+				Text: b.section, Placeholder: "Section name", TextWidth: saveTextWidth,
 			},
 		},
 		Spacer: chrome.FormSpacer{ID: "save-spacer", Grow: 1},
