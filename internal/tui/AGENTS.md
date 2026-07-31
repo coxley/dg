@@ -177,6 +177,10 @@ focuses the active canvas when present there, expanding its section when
 necessary; otherwise, it focuses the first row. Pointer entry preserves the
 clicked target.
 
+Vertical focus treats the two tabs as one row: Down enters the first list item,
+Up enters the last, and crossing either list boundary returns to the selected
+tab. Left and Right switch tabs.
+
 Dragging a named canvas onto a section header or one of its canvases moves it
 to that section. Dropping it on the Canvases header or unused list space moves
 it to the preferred directory root. A click without pointer motion opens the

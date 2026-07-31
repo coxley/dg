@@ -236,8 +236,26 @@ func (s *sidebarState) blur() {
 }
 
 func (s *sidebarState) moveFocus(delta int) {
-	if !s.focused {
+	if !s.focused || delta == 0 {
 		return
+	}
+	_, focused := s.focus.Current()
+	if _, tabFocused := s.focusedTab(); tabFocused {
+		if delta > 0 {
+			s.focusFirstItem()
+		} else {
+			s.focusLastItem()
+		}
+		return
+	}
+	if len(s.declaration.Items) != 0 {
+		first := s.declaration.Items[0].ID
+		last := s.declaration.Items[len(s.declaration.Items)-1].ID
+		switch {
+		case delta < 0 && focused == first, delta > 0 && focused == last:
+			s.focusTab(s.drafts)
+			return
+		}
 	}
 	s.focus.Move(delta)
 	if _, ok := s.focusedItem(); ok {
@@ -513,29 +531,32 @@ func (s *sidebarState) focusActiveItem() bool {
 		if item.Kind != sidebarItemRecord || item.Entry.ID != s.active.ID {
 			continue
 		}
-		if !s.focusTarget(item.ID) {
-			return false
-		}
-		s.focus.Reveal(s.viewport)
-		s.render()
-		return true
+		return s.focusItem(item)
 	}
 	return false
 }
 
 func (s *sidebarState) focusFirstItem() bool {
-	for _, item := range s.declaration.Items {
-		if item.Kind == 0 {
-			continue
-		}
-		if !s.focusTarget(item.ID) {
-			return false
-		}
-		s.focus.Reveal(s.viewport)
-		s.render()
-		return true
+	if len(s.declaration.Items) == 0 {
+		return false
 	}
-	return false
+	return s.focusItem(s.declaration.Items[0])
+}
+
+func (s *sidebarState) focusLastItem() bool {
+	if len(s.declaration.Items) == 0 {
+		return false
+	}
+	return s.focusItem(s.declaration.Items[len(s.declaration.Items)-1])
+}
+
+func (s *sidebarState) focusItem(item sidebarItem) bool {
+	if !s.focusTarget(item.ID) {
+		return false
+	}
+	s.focus.Reveal(s.viewport)
+	s.render()
+	return true
 }
 
 func (s *sidebarState) tabAt(point chrome.Point) (sidebarTab, bool) {

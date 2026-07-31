@@ -247,6 +247,39 @@ func TestSidebarKeyboardFocusesActiveCanvas(t *testing.T) {
 	})
 }
 
+func TestSidebarVerticalFocusTreatsTabsAsOneRow(t *testing.T) {
+	t.Parallel()
+
+	sidebar := newSidebar(sidebarDeclaration{Items: []sidebarItem{
+		{ID: "first", Label: "First", Kind: sidebarItemRecord},
+		{ID: "last", Label: "Last", Kind: sidebarItemRecord},
+	}}, sidebarStyles{})
+	sidebar.setBounds(chrome.Rect{Width: 30, Height: 6})
+	sidebar.show()
+	sidebar.focusTab(false)
+
+	sidebar.moveFocus(1)
+	_, focused := sidebar.focus.Current()
+	require.Equal(t, chrome.FocusID("first"), focused)
+
+	sidebar.moveFocus(-1)
+	_, focused = sidebar.focus.Current()
+	require.Equal(t, sidebarCanvasesTab, focused)
+
+	sidebar.moveFocus(-1)
+	_, focused = sidebar.focus.Current()
+	require.Equal(t, chrome.FocusID("last"), focused)
+
+	sidebar.moveFocus(1)
+	_, focused = sidebar.focus.Current()
+	require.Equal(t, sidebarCanvasesTab, focused)
+
+	sidebar.focusTab(true)
+	sidebar.moveFocus(1)
+	_, focused = sidebar.focus.Current()
+	require.Equal(t, chrome.FocusID("first"), focused)
+}
+
 func TestSidebarTabsShareHeaderAndActivateOnClick(t *testing.T) {
 	t.Parallel()
 
