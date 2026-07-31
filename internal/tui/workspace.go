@@ -58,12 +58,12 @@ func (m *Model) syncWorkspace() {
 			Animated:       true,
 			DismissOutside: m.sidebar.placement == sidebarDrawer,
 			DismissBack:    m.sidebar.placement == sidebarDrawer,
-			FocusOnOpen:    true,
+			FocusOnOpen:    m.sidebar.focused,
 		},
 		chrome.Surface{
 			ID:        surfaceNavigation,
 			Role:      chrome.SurfaceFloating,
-			Anchor:    chrome.AnchorCanvas,
+			Anchor:    chrome.AnchorTerminal,
 			Requested: m.nav.Bounds(),
 			Priority:  surfacePriorityNavigation,
 			Visible:   m.nav.Bounds().Width != 0,
@@ -160,6 +160,7 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 		m.workspace.Capture(surfaceCanvas)
 	case surfaceSidebar:
 		surface, _ := m.surfacePlan(surfaceSidebar)
+		m.sidebar.show()
 		if m.sidebar.click(point, surface) {
 			return m.activateSidebar()
 		}

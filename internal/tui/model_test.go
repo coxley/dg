@@ -4279,9 +4279,12 @@ func mustLayoutWithLabel(t testing.TB, label string) *layout.Layout {
 }
 
 func testModelSettings() Option {
-	return WithSettings(settings.Snapshot{
-		ShortcutStyle: settings.ShortcutStandard,
-	}, nil)
+	return func(options *modelOptions) {
+		WithSettings(settings.Snapshot{
+			ShortcutStyle: settings.ShortcutStandard,
+		}, nil)(options)
+		options.sidebarInitiallyClosed = true
+	}
 }
 
 func findEffectiveBinding(

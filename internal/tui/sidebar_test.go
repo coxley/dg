@@ -85,6 +85,33 @@ func TestSidebarContentWidthControlsDockBoundary(t *testing.T) {
 	require.Equal(t, sidebarDrawer, model.sidebar.placement)
 }
 
+func TestSidebarStartsOpenAndClickFocusesIt(t *testing.T) {
+	t.Parallel()
+
+	geo := mustLayoutWithLabel(t, "node")
+	model, err := New(geo)
+	require.NoError(t, err)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+
+	require.True(t, model.sidebar.open)
+	require.False(t, model.sidebar.focused)
+	require.Equal(t, sidebarPreferredWidth, model.workspace.SurfacePosition(surfaceSidebar))
+	require.Equal(t, sidebarPreferredWidth, model.workspace.Geometry().Canvas.X)
+	scope, _ := model.sidebar.focus.Current()
+	require.Equal(t, scopeCanvas, scope)
+
+	surface, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      surface.Rect.X + 1,
+		Y:      surface.Rect.Y,
+		Button: tea.MouseLeft,
+	})
+	require.True(t, model.sidebar.focused)
+	scope, _ = model.sidebar.focus.Current()
+	require.Equal(t, scopeSidebar, scope)
+}
+
 func TestSidebarDeletesDraftsWithActivePreservationAndConfirmation(t *testing.T) {
 	t.Parallel()
 
@@ -327,8 +354,7 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 		require.Equal(t, geometry.Canvas.X+int(model.cursor.X-model.viewport.X), x)
 		navigation, ok := model.surfacePlan(surfaceNavigation)
 		require.True(t, ok)
-		require.Equal(t, navigationRect.Width, navigation.Rect.Width)
-		require.GreaterOrEqual(t, navigation.Rect.X, geometry.Canvas.X)
+		require.Equal(t, navigationRect, navigation.Rect)
 
 		lines := strings.Split(strings.TrimSuffix(ansi.Strip(model.View().Content), "\n"), "\n")
 		require.Len(t, lines, 20)
@@ -341,22 +367,21 @@ func TestDockedSidebarUsesOneBoundaryForRenderInputAndCursor(t *testing.T) {
 	require.Equal(t, sidebarPreferredWidth, boundaries[len(boundaries)-1])
 }
 
-func TestDockedSidebarKeepsNavigationCanvasAnchoredAtMinimumWidth(t *testing.T) {
+func TestDockedSidebarKeepsNavigationScreenAnchoredAtMinimumWidth(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: compactWidthThreshold, Height: 16})
 	navigation, ok := model.surfacePlan(surfaceNavigation)
 	require.True(t, ok)
-	wantWidth := navigation.Rect.Width
+	want := navigation.Rect
 	updateModelCommand(t, model, sidebarKey())
 
 	for model.workspace.SurfaceMoving(surfaceSidebar) {
 		updateModelCommand(t, model, sidebarMotionMessage(model))
 		navigation, ok := model.surfacePlan(surfaceNavigation)
 		require.True(t, ok)
-		require.Equal(t, wantWidth, navigation.Rect.Width)
-		require.GreaterOrEqual(t, navigation.Rect.X, model.workspace.Geometry().Canvas.X)
+		require.Equal(t, want, navigation.Rect)
 		lines := strings.Split(ansi.Strip(model.View().Content), "\n")
 		for _, line := range lines {
 			require.LessOrEqual(t, ansi.StringWidth(line), compactWidthThreshold)

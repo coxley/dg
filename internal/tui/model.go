@@ -140,12 +140,13 @@ type Model struct {
 type Option func(*modelOptions)
 
 type modelOptions struct {
-	settings      settings.Snapshot
-	settingsStore *settings.Store
-	history       *history.History
-	document      *document.Document
-	canvasStore   *canvasstore.Store
-	entry         *canvasstore.Entry
+	settings               settings.Snapshot
+	settingsStore          *settings.Store
+	history                *history.History
+	document               *document.Document
+	canvasStore            *canvasstore.Store
+	entry                  *canvasstore.Entry
+	sidebarInitiallyClosed bool
 }
 
 // WithDocument preserves value as the persisted identity of geo.
@@ -243,6 +244,9 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	}, m.theme.Sidebar)
 	m.rebuildSidebarCatalog()
 	m.syncSidebarShortcut()
+	if !configured.sidebarInitiallyClosed {
+		m.sidebar.openInitially()
+	}
 	m.clipboard = clipboardview.New(m.theme.ExportForm)
 	m.dialogs = newDialogController(m.theme, m.clipboard, m.preferenceValue())
 	m.nav = nav.New(m.theme.Navigation, []nav.Item{

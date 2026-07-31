@@ -57,6 +57,7 @@ type sidebarState struct {
 	placement   sidebarPlacement
 	open        bool
 	focused     bool
+	initialOpen bool
 	generation  uint64
 	drafts      bool
 	collapsed   map[string]bool
@@ -147,6 +148,12 @@ func (s *sidebarState) show() {
 		s.focus.Open(scopeSidebar)
 		s.focused = true
 	}
+	s.render()
+}
+
+func (s *sidebarState) openInitially() {
+	s.open = true
+	s.initialOpen = true
 	s.render()
 }
 
@@ -335,6 +342,13 @@ func (m *Model) retargetSidebar() tea.Cmd {
 		target = m.sidebarTargetWidth()
 	}
 	m.sidebar.generation++
+	if m.sidebar.initialOpen {
+		m.sidebar.initialOpen = false
+		m.workspace.SetMotionEnabled(false)
+		m.workspace.RetargetSurface(surfaceSidebar, target)
+		m.workspace.SetMotionEnabled(true)
+		return nil
+	}
 	if !m.workspace.RetargetSurface(surfaceSidebar, target) {
 		return nil
 	}

@@ -28,9 +28,13 @@ func (m *Model) View() tea.View {
 	canvasHost := workspace.Canvas
 	toolbarBounds := chrome.Rect{}
 	if surface, ok := m.surfacePlan(surfaceNavigation); ok {
-		toolbarBounds = surface.Rect
-		toolbarBounds.X -= canvasHost.X
-		toolbarBounds.Y -= canvasHost.Y
+		if rectWithin(surface.Rect, canvasHost) {
+			toolbarBounds = surface.Rect
+			toolbarBounds.X -= canvasHost.X
+			toolbarBounds.Y -= canvasHost.Y
+		} else {
+			toolbar = nil
+		}
 	}
 	m.viewBuffer = m.appendViewport(
 		m.viewBuffer[:0],
@@ -131,8 +135,11 @@ func (m *Model) activeFrame() canvasview.FrameID {
 func (m *Model) composeSurfaces(content string) string {
 	help, helpVisible := m.surfacePlan(surfaceHelp)
 	sidebar, sidebarVisible := m.surfacePlan(surfaceSidebar)
+	navigation, navigationVisible := m.surfacePlan(surfaceNavigation)
+	navigationVisible = navigationVisible &&
+		!rectWithin(navigation.Rect, m.workspace.Geometry().Canvas)
 	overlay := m.dialogs.Overlay()
-	if !helpVisible && !sidebarVisible && overlay.Content == "" {
+	if !helpVisible && !sidebarVisible && !navigationVisible && overlay.Content == "" {
 		return content
 	}
 	layers := []*lipgloss.Layer{lipgloss.NewLayer(content)}
@@ -142,6 +149,15 @@ func (m *Model) composeSurfaces(content string) string {
 			X(sidebar.Rect.X).
 			Y(sidebar.Rect.Y).
 			Z(sidebar.Surface.Priority))
+	}
+	if navigationVisible {
+		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(
+			m.nav.LinesFor(m.activeTool()),
+		)).
+			ID(string(surfaceNavigation)).
+			X(navigation.Rect.X).
+			Y(navigation.Rect.Y).
+			Z(surfacePriorityNavigation))
 	}
 	if helpVisible {
 		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(m.helpInspector.lines())).
@@ -162,6 +178,11 @@ func (m *Model) composeSurfaces(content string) string {
 			Z(surfacePriorityModal))
 	}
 	return lipgloss.NewCompositor(layers...).Render()
+}
+
+func rectWithin(rect, bounds chrome.Rect) bool {
+	return rect.X >= bounds.X && rect.Y >= bounds.Y &&
+		rect.Right() <= bounds.Right() && rect.Bottom() <= bounds.Bottom()
 }
 
 func composeWorkspaceBase(canvas, status string, plan chrome.WorkspacePlan) string {

@@ -44,7 +44,8 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 
 ## Interaction rules
 
-- the canvas covers the terminal and the centered toolbar floats above it
+- the canvas covers the terminal and the terminal-centered toolbar floats
+  above it; dock motion never shifts the toolbar
 - cursor display is limited to label editing
 - left drag moves objects or creates rectangles and lines
 - the line tool always waits for a fresh source drag; selecting a port or edge
@@ -153,6 +154,12 @@ becomes a drawer. One workspace transition owns the boundary and canvas origin.
 Back leaves a docked sidebar visible but returns keyboard focus to the canvas;
 Back or an outside click dismisses a drawer. Ctrl-B opens, focuses, refocuses,
 or closes it.
+
+New sessions open the sidebar without taking canvas focus. Any pointer click
+inside the sidebar focuses it, including its header, empty body space, and
+scrollbar. The floating navigation remains terminal-anchored while a dock
+opens or closes. It stays on the canvas fast path when fully contained and
+uses its compositor layer only where a dock overlaps it.
 
 Backspace or Delete on a named canvas moves it to Drafts without changing its
 document identity. The active canvas flushes before demotion and remains open
