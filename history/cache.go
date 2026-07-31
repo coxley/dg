@@ -3,25 +3,25 @@ package history
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/layout"
+	"github.com/google/uuid"
 )
 
 const (
-	cacheVersion      = 4
+	cacheVersion      = 5
 	defaultCacheDelay = 100 * time.Millisecond
 )
 
@@ -104,7 +104,8 @@ func removeCacheTemp(path string) error {
 
 type cacheFile struct {
 	Version     uint32          `json:"version"`
-	SavedDigest string          `json:"saved_digest"`
+	DocumentID  uuid.UUID       `json:"document_id"`
+	DocumentCRC uint32          `json:"document_crc"`
 	Saved       layout.Snapshot `json:"saved"`
 	Entries     []cacheEntry    `json:"entries"`
 	SavedCursor int             `json:"saved_cursor"`
@@ -127,8 +128,9 @@ type cacheState struct {
 	delay       time.Duration
 	customDir   bool
 	customStore bool
-	path        string
 	key         string
+	documentID  uuid.UUID
+	documentCRC uint32
 	saved       layout.Snapshot
 	savedCursor int
 	branchValid bool
@@ -137,6 +139,7 @@ type cacheState struct {
 	writeMu    sync.Mutex
 	timer      *time.Timer
 	generation uint64
+	flushed    uint64
 	pending    cacheWrite
 	err        error
 }
@@ -156,8 +159,8 @@ func (c *cacheState) validate() error {
 	}
 }
 
-// Save marks the current layout as saved at path and writes its history.
-func (h *History) Save(path string) error {
+// Save marks the current document as saved and writes its history.
+func (h *History) Save(doc document.Document) error {
 	if h == nil || h.layout == nil {
 		return errors.New("history is not attached")
 	}
@@ -165,7 +168,7 @@ func (h *History) Save(path string) error {
 	if err := h.layout.Build(); err != nil {
 		return fmt.Errorf("build history layout: %w", err)
 	}
-	normalized, key, err := cacheKey(path)
+	key, guard, err := cacheIdentity(doc)
 	if err != nil {
 		return err
 	}
@@ -173,8 +176,9 @@ func (h *History) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	h.cache.path = normalized
 	h.cache.key = key
+	h.cache.documentID = doc.ID
+	h.cache.documentCRC = guard
 	h.cache.savedCursor = h.cursor
 	h.cache.saved = h.layout.Snapshot()
 	h.cache.branchValid = true
@@ -185,16 +189,17 @@ func (h *History) Save(path string) error {
 	h.cache.clearPending()
 	generation := h.cache.currentGeneration()
 	err = h.writeCache(cacheWrite{generation: generation, store: store, key: key, data: data})
+	h.cache.markFlushed(generation, err)
 	h.setCacheError(err)
 	return err
 }
 
-// Restore attaches cached history for path without changing its saved render.
-func (h *History) Restore(path string) (bool, error) {
+// Restore attaches cached history for doc without changing its saved render.
+func (h *History) Restore(doc document.Document) (bool, error) {
 	if h == nil || h.layout == nil {
 		return false, errors.New("history is not attached")
 	}
-	normalized, key, err := cacheKey(path)
+	key, guard, err := cacheIdentity(doc)
 	if err != nil {
 		return false, err
 	}
@@ -203,7 +208,7 @@ func (h *History) Restore(path string) (bool, error) {
 		return false, err
 	}
 	h.cache.clearPending()
-	h.markCache(normalized, key)
+	h.markCache(doc.ID, key, guard)
 	data, err := store.Read(key)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -217,12 +222,7 @@ func (h *History) Restore(path string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	digest, err := h.layout.Snapshot().Digest()
-	if err != nil {
-		return false, fmt.Errorf("digest current history layout: %w", err)
-	}
-	savedDigest, savedErr := cache.Saved.Digest()
-	if savedErr != nil || cache.SavedDigest != digest || savedDigest != cache.SavedDigest ||
+	if cache.DocumentID != doc.ID || cache.DocumentCRC != guard ||
 		cache.SavedCursor < 0 || cache.SavedCursor > len(cache.Entries) {
 		return false, nil
 	}
@@ -241,21 +241,34 @@ func (h *History) Restore(path string) (bool, error) {
 	h.cursor = cache.SavedCursor
 	h.cache.savedCursor = cache.SavedCursor
 	h.cache.saved = cache.Saved
-	h.cache.path = normalized
 	h.cache.key = key
+	h.cache.documentID = doc.ID
+	h.cache.documentCRC = guard
 	h.cache.branchValid = true
 	h.closeActive()
 	h.setCacheError(nil)
 	return true, nil
 }
 
-func (h *History) markCache(path, key string) {
-	h.cache.path = path
+func (h *History) markCache(id uuid.UUID, key string, guard uint32) {
 	h.cache.key = key
+	h.cache.documentID = id
+	h.cache.documentCRC = guard
 	h.cache.savedCursor = h.cursor
 	h.cache.saved = h.layout.Snapshot()
 	h.cache.branchValid = true
+	h.cache.markCurrentFlushed()
 	h.setCacheError(nil)
+}
+
+// Dirty reports whether cache state changed after its last successful flush.
+func (h *History) Dirty() bool {
+	if h == nil {
+		return false
+	}
+	h.cache.mu.Lock()
+	defer h.cache.mu.Unlock()
+	return h.cache.key != "" && h.cache.generation != h.cache.flushed
 }
 
 // Flush synchronously writes the latest pending cache snapshot.
@@ -274,6 +287,7 @@ func (h *History) Flush() error {
 		return h.CacheError()
 	}
 	err := h.writeCache(pending)
+	h.cache.markFlushed(pending.generation, err)
 	h.setCacheError(err)
 	return err
 }
@@ -289,7 +303,7 @@ func (h *History) CacheError() error {
 }
 
 func (h *History) scheduleCache() {
-	if h.cache.path == "" || !h.cache.branchValid {
+	if h.cache.key == "" || !h.cache.branchValid {
 		return
 	}
 	data, err := h.marshalCache()
@@ -326,24 +340,44 @@ func (h *History) flushGeneration(generation uint64) {
 	h.cache.mu.Lock()
 	if h.cache.generation == generation {
 		h.cache.err = err
+		if err == nil {
+			h.cache.flushed = generation
+		}
 	}
 	h.cache.mu.Unlock()
 }
 
 func (h *History) marshalCache() ([]byte, error) {
-	digest, err := h.cache.saved.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("digest saved history layout: %w", err)
+	entries, savedCursor := h.cacheEntries()
+	cache := cacheFile{
+		Version:     cacheVersion,
+		DocumentID:  h.cache.documentID,
+		DocumentCRC: h.cache.documentCRC,
+		Saved:       h.cache.saved,
+		Entries:     make([]cacheEntry, len(entries)),
+		SavedCursor: savedCursor,
 	}
-	cache := cacheFile{Version: cacheVersion, SavedDigest: digest, Saved: h.cache.saved, Entries: make([]cacheEntry, len(h.entries)), SavedCursor: h.cache.savedCursor}
-	for i := range h.entries {
-		cache.Entries[i].Changes = h.entries[i].changes
+	for i := range entries {
+		cache.Entries[i].Changes = entries[i].changes
 	}
 	data, err := json.Marshal(cache)
 	if err != nil {
 		return nil, fmt.Errorf("encode history cache: %w", err)
 	}
 	return data, nil
+}
+
+func (h *History) cacheEntries() ([]entry, int) {
+	for i := range h.entries {
+		if !h.entries[i].reload {
+			continue
+		}
+		if h.cache.savedCursor <= i {
+			return h.entries[:i], h.cache.savedCursor
+		}
+		return h.entries[i+1:], h.cache.savedCursor - i - 1
+	}
+	return h.entries, h.cache.savedCursor
 }
 
 func compressCache(data []byte) ([]byte, error) {
@@ -380,7 +414,10 @@ func decodeCacheJSON(source io.Reader) (cacheFile, bool) {
 	decoder := json.NewDecoder(source)
 	decoder.DisallowUnknownFields()
 	var cache cacheFile
-	if err := decoder.Decode(&cache); err != nil || cache.Version != cacheVersion {
+	if err := decoder.Decode(&cache); err != nil ||
+		cache.Version != cacheVersion ||
+		cache.DocumentID == uuid.Nil ||
+		cache.DocumentID.Version() != 4 {
 		return cacheFile{}, false
 	}
 	var trailing json.RawMessage
@@ -451,26 +488,38 @@ func (c *cacheState) currentGeneration() uint64 {
 	return c.generation
 }
 
+func (c *cacheState) markFlushed(generation uint64, err error) {
+	if err != nil {
+		return
+	}
+	c.mu.Lock()
+	if c.generation == generation {
+		c.flushed = generation
+	}
+	c.mu.Unlock()
+}
+
+func (c *cacheState) markCurrentFlushed() {
+	c.mu.Lock()
+	c.flushed = c.generation
+	c.mu.Unlock()
+}
+
 func (h *History) setCacheError(err error) {
 	h.cache.mu.Lock()
 	h.cache.err = err
 	h.cache.mu.Unlock()
 }
 
-func cacheKey(path string) (normalized, key string, err error) {
-	if path == "" {
-		return "", "", errors.New("history path must not be empty")
+func cacheIdentity(doc document.Document) (string, uint32, error) {
+	if doc.ID == uuid.Nil || doc.ID.Version() != 4 {
+		return "", 0, errors.New("history document must have a UUIDv4 identity")
 	}
-	normalized, err = filepath.Abs(path)
+	data, err := json.Marshal(doc)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve history path: %w", err)
+		return "", 0, fmt.Errorf("encode history document guard: %w", err)
 	}
-	normalized = filepath.Clean(normalized)
-	if runtime.GOOS == "windows" {
-		normalized = strings.ToLower(normalized)
-	}
-	sum := sha256.Sum256([]byte(normalized))
-	return normalized, hex.EncodeToString(sum[:]), nil
+	return doc.ID.String(), crc32.ChecksumIEEE(data), nil
 }
 
 var _ Store = directoryStore{}

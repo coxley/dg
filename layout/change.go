@@ -57,11 +57,6 @@ func (l *Layout) Snapshot() Snapshot {
 	return Snapshot{state: l.historyState()}
 }
 
-// Digest returns a stable semantic digest of snapshot.
-func (s Snapshot) Digest() (string, error) {
-	return semanticHistoryDigest(s.state)
-}
-
 // Restore atomically replaces the layout with snapshot.
 func (l *Layout) Restore(snapshot Snapshot) error {
 	rollback := l.historyState()

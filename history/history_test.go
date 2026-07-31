@@ -12,6 +12,78 @@ import (
 	"pgregory.net/rapid"
 )
 
+func TestHistoryReloadParticipatesInUndoChain(t *testing.T) {
+	t.Parallel()
+
+	geo, history := newHistoryLayout(t)
+	nodeID, err := geo.NewNode("original")
+	require.NoError(t, err)
+	history.Clear()
+
+	require.NoError(t, history.Reload(func() error {
+		return geo.SetNodeLabel(nodeID, "modified")
+	}))
+	require.NoError(t, geo.SetNodeLabel(nodeID, "modified+edit"))
+
+	for _, want := range []string{"modified", "original"} {
+		changed, undoErr := history.Undo()
+		require.NoError(t, undoErr)
+		require.True(t, changed)
+		require.Equal(t, want, geo.Label(nodeID))
+	}
+	for _, want := range []string{"modified", "modified+edit"} {
+		changed, redoErr := history.Redo()
+		require.NoError(t, redoErr)
+		require.True(t, changed)
+		require.Equal(t, want, geo.Label(nodeID))
+	}
+}
+
+func TestHistoryReloadKeepsOnlyLatestBoundary(t *testing.T) {
+	t.Parallel()
+
+	geo, history := newHistoryLayout(t)
+	nodeID, err := geo.NewNode("original")
+	require.NoError(t, err)
+	history.Clear()
+	require.NoError(t, history.Reload(func() error {
+		return geo.SetNodeLabel(nodeID, "first reload")
+	}))
+	require.NoError(t, geo.SetNodeLabel(nodeID, "between"))
+	require.NoError(t, history.Reload(func() error {
+		return geo.SetNodeLabel(nodeID, "second reload")
+	}))
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "between", geo.Label(nodeID))
+	changed, err = history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "first reload", geo.Label(nodeID))
+	changed, err = history.Undo()
+	require.NoError(t, err)
+	require.False(t, changed)
+}
+
+func TestHistoryReloadRollsBackFailure(t *testing.T) {
+	t.Parallel()
+
+	geo, history := newHistoryLayout(t)
+	nodeID, err := geo.NewNode("original")
+	require.NoError(t, err)
+	history.Clear()
+	wantErr := errors.New("replace failed")
+	err = history.Reload(func() error {
+		require.NoError(t, geo.SetNodeLabel(nodeID, "partial"))
+		return wantErr
+	})
+	require.ErrorIs(t, err, wantErr)
+	require.Equal(t, "original", geo.Label(nodeID))
+	require.False(t, history.CanUndo())
+}
+
 func TestHistoryCommitsInteractionAsOneStep(t *testing.T) {
 	t.Parallel()
 

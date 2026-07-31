@@ -1,6 +1,7 @@
 package history
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -89,9 +90,9 @@ func TestAttachmentMutationHistoryProperties(t *testing.T) {
 		require.NoError(t, geo.Build())
 		history.Clear()
 		digest := func() string {
-			value, err := geo.Snapshot().Digest()
+			value, err := json.Marshal(geo.Snapshot())
 			require.NoError(t, err)
-			return value
+			return string(value)
 		}
 
 		states := []string{digest()}

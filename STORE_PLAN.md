@@ -372,6 +372,8 @@ Status: complete.
 
 ### Phase 3: UUID history cache
 
+Status: complete.
+
 - Introduce UUID keys, CRC32 guards, cache version bump, and `Dirty`.
 - Add the one external-reload boundary.
 - Verify history isolation, mismatch rejection, and the full undo/redo chain.

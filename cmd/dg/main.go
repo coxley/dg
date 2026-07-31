@@ -38,7 +38,7 @@ func run(args []string) error {
 		return fmt.Errorf("configure history: %w", err)
 	}
 	if path != "" {
-		if _, err := undo.Restore(path); err != nil {
+		if _, err := undo.Restore(doc); err != nil {
 			log.Printf("restore undo history: %v", err)
 		}
 	}

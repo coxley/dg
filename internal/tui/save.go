@@ -268,7 +268,7 @@ func (m *Model) save(path string) bool {
 	m.path = path
 	m.status = "saved " + path
 	if m.history != nil {
-		if err := m.history.Save(path); err != nil {
+		if err := m.history.Save(m.document); err != nil {
 			m.status += fmt.Sprintf(" (undo history: %v)", err)
 			m.statusError = m.status
 		}

@@ -17,9 +17,12 @@ Only one callback may attach to a Layout. `New` returns `ErrAttached` when the
 Layout already has one. `History.Layout` returns the attached pointer for
 ownership checks; it does not transfer History to another Layout.
 
-`Reset` wraps whole-layout replacement. It suppresses emitted changes, restores
-the prior snapshot on failure, and clears entries only after success. Callers
-must not replace an attached Layout and clear History as separate operations.
+`Reset` wraps ordinary whole-layout replacement. It suppresses emitted changes,
+restores the prior snapshot on failure, and clears entries only after success.
+`Reload` instead records one memory-only whole-document undo boundary. A second
+reload retains compatible ordinary changes on the rendered side and replaces
+the previous boundary. Callers must not replace an attached Layout and update
+History as separate operations.
 
 ## Transactions
 
@@ -36,18 +39,19 @@ Coalescing belongs to Layout because `layout.Change` remains opaque.
 
 Persistent history remains separate from the document. The current cache:
 
-- uses the SHA-256 digest of the normalized absolute document path as its key;
-- stores gzip-compressed version 4 JSON;
+- uses the document UUID as its key;
+- guards compatibility with CRC32 IEEE over canonical document JSON;
+- stores gzip-compressed version 5 JSON;
 - serializes Layout's runtime snapshot and change values without parallel
   cache-only representations;
-- validates the saved semantic Layout digest before restore;
 - writes after a 100 ms debounce and uses atomic replacement;
+- exposes generation-based dirtiness so clean lifecycle boundaries skip writes;
+- persists only ordinary entries on the current side of a reload boundary;
 - treats missing, malformed, or incompatible cache data as disposable;
 - never blocks document editing or saving after an asynchronous failure.
 
 `Store` abstracts cache bytes for tests. Use `testing/synctest` for debounce and
-stale-write behavior. UUID keys and CRC32 guards belong to the later Store
-migration; do not describe them here until implemented.
+stale-write behavior.
 
 ## Verification
 

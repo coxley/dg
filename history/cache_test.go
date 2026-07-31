@@ -15,6 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
@@ -97,6 +98,13 @@ func newHistoryLayout(t testing.TB, options ...Option) (*layout.Layout, *History
 	return geo, history
 }
 
+func saveHistory(t testing.TB, history *History, geo *layout.Layout) document.Document {
+	t.Helper()
+	doc := document.New(geo)
+	require.NoError(t, history.Save(doc))
+	return doc
+}
+
 func TestHistoryCacheDebouncesCommittedInteractions(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := newMapHistoryStore()
@@ -107,7 +115,7 @@ func TestHistoryCacheDebouncesCommittedInteractions(t *testing.T) {
 		)
 		nodeID, err := geo.NewNode("one")
 		require.NoError(t, err)
-		require.NoError(t, history.Save("diagram.json"))
+		saveHistory(t, history, geo)
 		require.Equal(t, 1, store.writeCount())
 
 		require.NoError(t, geo.SetNodeLabel(nodeID, "two"))
@@ -122,6 +130,67 @@ func TestHistoryCacheDebouncesCommittedInteractions(t *testing.T) {
 	})
 }
 
+func TestHistoryDirtyTracksSuccessfulFlush(t *testing.T) {
+	t.Parallel()
+
+	store := newMapHistoryStore()
+	geo, history := newHistoryLayout(t, WithStore(store))
+	nodeID, err := geo.NewNode("saved")
+	require.NoError(t, err)
+	doc := saveHistory(t, history, geo)
+	require.False(t, history.Dirty())
+
+	require.NoError(t, geo.SetNodeLabel(nodeID, "changed"))
+	require.True(t, history.Dirty())
+	require.NoError(t, history.Flush())
+	require.False(t, history.Dirty())
+	writes := store.writeCount()
+	require.NoError(t, history.Flush())
+	require.Equal(t, writes, store.writeCount())
+
+	doc.Update(geo)
+	require.NoError(t, history.Save(doc))
+	require.False(t, history.Dirty())
+}
+
+func TestHistoryCacheKeepsOnlyCurrentSideOfReload(t *testing.T) {
+	t.Parallel()
+
+	store := newMapHistoryStore()
+	geo, history := newHistoryLayout(t, WithStore(store))
+	nodeID, err := geo.NewNode("original")
+	require.NoError(t, err)
+	history.Clear()
+	require.NoError(t, history.Reload(func() error {
+		return geo.SetNodeLabel(nodeID, "modified")
+	}))
+	require.NoError(t, geo.SetNodeLabel(nodeID, "modified+edit"))
+	doc := saveHistory(t, history, geo)
+
+	key, _, err := cacheIdentity(doc)
+	require.NoError(t, err)
+	data, err := store.Read(key)
+	require.NoError(t, err)
+	cache, ok := decodeCache(data)
+	require.True(t, ok)
+	require.Len(t, cache.Entries, 1)
+	require.Equal(t, 1, cache.SavedCursor)
+
+	restored, restoredHistory := newHistoryLayout(t, WithStore(store))
+	restoredID, err := restored.NewNode("modified+edit")
+	require.NoError(t, err)
+	ok, err = restoredHistory.Restore(doc)
+	require.NoError(t, err)
+	require.True(t, ok)
+	changed, err := restoredHistory.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "modified", restored.Label(restoredID))
+	changed, err = restoredHistory.Undo()
+	require.NoError(t, err)
+	require.False(t, changed)
+}
+
 func TestHistoryCacheNewGenerationOverwritesBlockedWrite(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := newBlockingHistoryStore(2)
@@ -132,7 +201,7 @@ func TestHistoryCacheNewGenerationOverwritesBlockedWrite(t *testing.T) {
 		)
 		nodeID, err := geo.NewNode("one")
 		require.NoError(t, err)
-		require.NoError(t, history.Save("diagram.json"))
+		doc := saveHistory(t, history, geo)
 		require.NoError(t, geo.SetNodeLabel(nodeID, "two"))
 		time.Sleep(100 * time.Millisecond)
 		<-store.started
@@ -146,7 +215,7 @@ func TestHistoryCacheNewGenerationOverwritesBlockedWrite(t *testing.T) {
 		restored, restoredHistory := newHistoryLayout(t, WithStore(store))
 		restoredID, err := restored.NewNode("one")
 		require.NoError(t, err)
-		ok, err := restoredHistory.Restore("diagram.json")
+		ok, err := restoredHistory.Restore(doc)
 		require.NoError(t, err)
 		require.True(t, ok)
 		for range 2 {
@@ -168,7 +237,7 @@ func TestHistoryResetDetachesPreviousCache(t *testing.T) {
 		)
 		_, err := geo.NewNode("saved")
 		require.NoError(t, err)
-		require.NoError(t, history.Save("original.dg"))
+		saveHistory(t, history, geo)
 
 		replacement, err := layout.New()
 		require.NoError(t, err)
@@ -197,7 +266,8 @@ func TestHistoryRestoreMissingCacheStartsPersistence(t *testing.T) {
 		require.NoError(t, err)
 		history.Clear()
 
-		ok, err := history.Restore("diagram.json")
+		doc := document.New(geo)
+		ok, err := history.Restore(doc)
 		require.NoError(t, err)
 		require.False(t, ok)
 		require.NoError(t, geo.SetNodeLabel(nodeID, "unsaved"))
@@ -214,9 +284,9 @@ func TestHistoryCacheUsesGzip(t *testing.T) {
 	geo, history := newHistoryLayout(t, WithStore(store))
 	_, err := geo.NewNode("saved")
 	require.NoError(t, err)
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
-	_, key, err := cacheKey("diagram.json")
+	key, _, err := cacheIdentity(doc)
 	require.NoError(t, err)
 	compressed, err := store.Read(key)
 	require.NoError(t, err)
@@ -242,7 +312,7 @@ func TestHistoryRestoreKeepsSavedRenderAndRecoversRedoTail(t *testing.T) {
 	nodeID, err := geo.NewNodeAt("saved", layout.NewPoint(4, 5))
 	require.NoError(t, err)
 	require.NoError(t, geo.Build())
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
 	explicit := layout.Size{Width: 10, Height: 5}
 	require.NoError(t, geo.SetNodeSize(nodeID, explicit))
@@ -255,7 +325,7 @@ func TestHistoryRestoreKeepsSavedRenderAndRecoversRedoTail(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, restored.Build())
 
-	ok, err := restoredHistory.Restore("diagram.json")
+	ok, err := restoredHistory.Restore(doc)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "saved", restored.Label(restoredID))
@@ -284,7 +354,7 @@ func TestHistoryRestoreDiscardsCacheLargerThanConfiguredLimit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, geo.SetNodeLabel(nodeID, "one"))
 	require.NoError(t, geo.SetNodeLabel(nodeID, "two"))
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 	require.NoError(t, geo.SetNodeLabel(nodeID, "three"))
 	require.NoError(t, history.Flush())
 
@@ -296,7 +366,7 @@ func TestHistoryRestoreDiscardsCacheLargerThanConfiguredLimit(t *testing.T) {
 	restoredID, err := restored.NewNode("two")
 	require.NoError(t, err)
 
-	ok, err := restoredHistory.Restore("diagram.json")
+	ok, err := restoredHistory.Restore(doc)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "two", restored.Label(restoredID))
@@ -311,14 +381,14 @@ func TestHistoryRestoreRecoversAttachmentRedoTail(t *testing.T) {
 	geo, history := newHistoryLayout(t, WithStore(store))
 	geo, node := historyAttachmentLayout(t, geo, history)
 	saved := mustAttachment(t, geo, node)
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
 	require.NoError(t, geo.DetachNode(node))
 	require.NoError(t, history.Flush())
 
 	restored, restoredHistory := newHistoryLayout(t, WithStore(store))
 	restored, restoredNode := historyAttachmentLayout(t, restored, restoredHistory)
-	ok, err := restoredHistory.Restore("diagram.json")
+	ok, err := restoredHistory.Restore(doc)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, saved, mustAttachment(t, restored, restoredNode))
@@ -378,7 +448,7 @@ func TestHistoryRestoreRecoversLayerRedoTail(t *testing.T) {
 	backHit := layout.Hit{ID: back, Kind: layout.HitNode}
 	require.NoError(t, geo.SendToBack(edgeHit))
 	savedOrder := slices.Collect(geo.DrawOrder())
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
 	require.NoError(t, geo.BringToFront(backHit))
 	unsavedOrder := slices.Collect(geo.DrawOrder())
@@ -400,7 +470,7 @@ func TestHistoryRestoreRecoversLayerRedoTail(t *testing.T) {
 		Kind: layout.HitEdge,
 	}))
 
-	ok, err := restoredHistory.Restore("diagram.json")
+	ok, err := restoredHistory.Restore(doc)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, savedOrder, slices.Collect(restored.DrawOrder()))
@@ -420,7 +490,7 @@ func TestHistoryRestoreRecoversStyleAndBendRedoTail(t *testing.T) {
 	right, err := geo.NewNodeAt("right", layout.NewPoint(20, 2))
 	require.NoError(t, err)
 	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
 	nodeStyle := layout.NodeStyle{Border: layout.BorderRounded}
 	edgeStyle := layout.EdgeStyle{
@@ -449,7 +519,7 @@ func TestHistoryRestoreRecoversStyleAndBendRedoTail(t *testing.T) {
 		restoredRight,
 	)
 
-	ok, err := restoredHistory.Restore("diagram.json")
+	ok, err := restoredHistory.Restore(doc)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, layout.NodeStyle{}, mustNodeStyle(t, restored, restoredLeft))
@@ -483,7 +553,7 @@ func TestHistoryRestoreRecoversExactDeletedSlots(t *testing.T) {
 	last, err := geo.NewNodeAt("last", layout.NewPoint(20, 1))
 	require.NoError(t, err)
 	require.NoError(t, geo.DeleteNode(deleted))
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
 	restored, restoredHistory := newHistoryLayout(t, WithStore(store))
 	_, err = restored.NewNodeAt("first", layout.NewPoint(1, 1))
@@ -492,7 +562,7 @@ func TestHistoryRestoreRecoversExactDeletedSlots(t *testing.T) {
 	require.NoError(t, err)
 	restoredHistory.Clear()
 
-	ok, err := restoredHistory.Restore("diagram.json")
+	ok, err := restoredHistory.Restore(doc)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.True(t, restored.NodeExists(first))
@@ -528,12 +598,14 @@ func TestHistoryCacheRejectsDifferentSavedDocument(t *testing.T) {
 	geo, history := newHistoryLayout(t, WithStore(store))
 	_, err := geo.NewNode("saved")
 	require.NoError(t, err)
-	require.NoError(t, history.Save("diagram.json"))
+	doc := saveHistory(t, history, geo)
 
 	other, otherHistory := newHistoryLayout(t, WithStore(store))
 	_, err = other.NewNode("different")
 	require.NoError(t, err)
-	ok, err := otherHistory.Restore("diagram.json")
+	otherDoc := document.New(other)
+	otherDoc.ID = doc.ID
+	ok, err := otherHistory.Restore(otherDoc)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Equal(t, "different", other.Label(0))
@@ -549,7 +621,7 @@ func TestHistoryCacheFailureDoesNotBlockEditing(t *testing.T) {
 	nodeID, err := geo.NewNode("before")
 	require.NoError(t, err)
 
-	require.ErrorIs(t, history.Save("diagram.json"), cacheErr)
+	require.ErrorIs(t, history.Save(document.New(geo)), cacheErr)
 	require.NoError(t, geo.SetNodeLabel(nodeID, "after"))
 	require.Equal(t, "after", geo.Label(nodeID))
 	require.ErrorIs(t, history.CacheError(), cacheErr)
@@ -562,10 +634,8 @@ func TestHistoryCacheDirectoryStore(t *testing.T) {
 	geo, history := newHistoryLayout(t, WithCacheDir(dir))
 	_, err := geo.NewNode("node")
 	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), "diagram.json")
-	require.NoError(t, history.Save(path))
-
-	_, key, err := cacheKey(path)
+	doc := saveHistory(t, history, geo)
+	key, _, err := cacheIdentity(doc)
 	require.NoError(t, err)
 	info, err := os.Stat(filepath.Join(dir, key))
 	require.NoError(t, err)
@@ -595,7 +665,7 @@ func TestHistoryOptionsValidateCacheConfiguration(t *testing.T) {
 		WithStore(newMapHistoryStore()),
 	)
 	require.Error(t, err)
-	_, _, err = cacheKey("")
+	_, _, err = cacheIdentity(document.Document{})
 	require.Error(t, err)
 }
 
@@ -614,9 +684,13 @@ func TestHistoryCacheRejectsInvalidLayerOrder(t *testing.T) {
 		"ID":   float64(1),
 		"Kind": float64(layout.HitNode),
 	}}
+	doc := document.New(geo)
+	_, guard, err := cacheIdentity(doc)
+	require.NoError(t, err)
 	invalid := map[string]any{
 		"version":      cacheVersion,
-		"saved_digest": "invalid",
+		"document_id":  doc.ID,
+		"document_crc": guard,
 		"saved":        saved,
 		"entries":      []any{},
 		"saved_cursor": 0,
