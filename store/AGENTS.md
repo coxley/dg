@@ -52,6 +52,8 @@ directories, and drafts with fsnotify. Events only invalidate state; a
 debounced full scan remains authoritative. `Reconcile` provides the same scan
 for focus recovery. Catalog events distinguish Store-authored revisions from
 external changes and report watcher, scan, and closure states explicitly.
+Store-authored revision markers remain valid across repeated reconciliations
+and clear only after the path presents a different revision.
 
 ## Verification
 

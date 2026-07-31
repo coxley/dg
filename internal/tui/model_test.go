@@ -2,6 +2,7 @@ package tui
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"image/color"
 	"math/bits"
@@ -3496,6 +3497,33 @@ func TestModelNamesDraftAndNamedControlSSavesImmediately(t *testing.T) {
 	require.Equal(t, "autosaved", model.status)
 }
 
+func TestModelNamingDraftDoesNotTreatWatchedRenameAsExternal(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "draft")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events, err := store.Watch(ctx)
+	require.NoError(t, err)
+	receiveModelCatalogEvent(t, events, func(event canvasstore.CatalogEvent) bool {
+		return !event.Closed
+	})
+
+	model.saveFromDialog(saveDocumentMsg{Name: "Canvas"})
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
+	event := receiveModelCatalogEvent(t, events, func(event canvasstore.CatalogEvent) bool {
+		for _, change := range event.Changes {
+			if change.Kind == canvasstore.ChangeAdded && change.Entry.Name == "Canvas" {
+				return true
+			}
+		}
+		return false
+	})
+	model.updateCatalog(event)
+	require.Nil(t, model.external)
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
+}
+
 func TestModelNameCollisionKeepsDraftDialogOpen(t *testing.T) {
 	t.Parallel()
 
@@ -4202,6 +4230,27 @@ func newStoredTestModel(t testing.TB, label string) (*Model, uint32, *canvasstor
 	)
 	require.NoError(t, err)
 	return model, 0, store
+}
+
+func receiveModelCatalogEvent(
+	t testing.TB,
+	events <-chan canvasstore.CatalogEvent,
+	match func(canvasstore.CatalogEvent) bool,
+) canvasstore.CatalogEvent {
+	t.Helper()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event, ok := <-events:
+			require.True(t, ok, "catalog watcher closed before matching event")
+			if match(event) {
+				return event
+			}
+		case <-timer.C:
+			t.Fatal("timed out waiting for catalog event")
+		}
+	}
 }
 
 func mustLayoutWithLabel(t testing.TB, label string) *layout.Layout {

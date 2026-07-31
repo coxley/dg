@@ -277,9 +277,9 @@ func (s *Store) consumeSelf(entry Entry, revision Revision) bool {
 	s.warm.removePrefix(path + ":")
 	want, ok := s.self[path]
 	if ok && want == revision {
-		delete(s.self, path)
 		return false
 	}
+	delete(s.self, path)
 	return true
 }
 

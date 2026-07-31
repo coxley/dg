@@ -54,6 +54,30 @@ func TestStoreWatchReconcilesOwnAndExternalChanges(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestStoreSelfWriteRemainsInternalAcrossManualAndWatchedReconciliation(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events, err := store.Watch(ctx)
+	require.NoError(t, err)
+	initial := receiveCatalogEvent(t, events, func(event CatalogEvent) bool {
+		return !event.Closed
+	})
+
+	_, err = store.Create("", "Canvas", testDocument(t, "node"))
+	require.NoError(t, err)
+	manual := store.Reconcile(initial.Entries)
+	require.Len(t, manual.Changes, 1)
+	require.False(t, manual.Changes[0].External)
+	watched := receiveCatalogEvent(t, events, func(event CatalogEvent) bool {
+		return hasCatalogChange(event, ChangeAdded, "Canvas")
+	})
+	require.Len(t, watched.Changes, 1)
+	require.False(t, watched.Changes[0].External)
+}
+
 func TestStoreWatchAddsNewSectionAndCoalescesBurst(t *testing.T) {
 	t.Parallel()
 
