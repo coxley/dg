@@ -177,7 +177,14 @@ func TestExportUsesSemanticFormTraversalAndAccessibleAction(t *testing.T) {
 
 	model := newTestModel()
 	model.UseNative(func(string, []byte) error { return nil })
-	model.openExport("diagram", "// ")
+	var copiedText string
+	var copiedPayload []byte
+	model.UseNative(func(text string, payload []byte) error {
+		copiedText = text
+		copiedPayload = append([]byte(nil), payload...)
+		return nil
+	})
+	model.openExport("diagram", "// ", []byte("fragment"))
 	require.Contains(t, model.AccessibleLines(), "action: Copy")
 
 	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
@@ -189,6 +196,20 @@ func TestExportUsesSemanticFormTraversalAndAccessibleAction(t *testing.T) {
 	_, command = model.Update(message)
 	require.NotNil(t, command)
 	require.Nil(t, model.form)
+	for _, child := range command().(tea.BatchMsg) {
+		result := child()
+		if result == nil {
+			continue
+		}
+		if update, ok := result.(UpdateMsg); ok {
+			_, followup := model.Update(update)
+			if followup != nil {
+				_ = followup()
+			}
+		}
+	}
+	require.Equal(t, "# diagram", copiedText)
+	require.Equal(t, []byte("fragment"), copiedPayload)
 }
 
 func newTestModel() *Model {

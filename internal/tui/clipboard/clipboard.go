@@ -129,6 +129,7 @@ type Model struct {
 	generation  uint64
 	form        *chrome.Form
 	exportText  string
+	exportData  []byte
 	style       Style
 	styles      chrome.FormStyles
 }
@@ -253,6 +254,7 @@ func (m *Model) CancelPending() {
 func (m *Model) CancelExport() {
 	m.form = nil
 	m.exportText = ""
+	m.exportData = nil
 }
 
 // UseNative configures the native writer for tests.
@@ -279,7 +281,7 @@ func (m *Model) Style() Style {
 func (m *Model) request(message requestCopyMsg) tea.Cmd {
 	if m.armed {
 		m.CancelPending()
-		m.openExport(message.text, message.preferredPrefix)
+		m.openExport(message.text, message.preferredPrefix, message.payload)
 		return func() tea.Msg { return OpenExportMsg{} }
 	}
 	m.armed = true
@@ -368,8 +370,9 @@ func (m *Model) probeTerminal(copy requestCopyMsg, err error) tea.Cmd {
 	)
 }
 
-func (m *Model) openExport(text, preferredPrefix string) {
+func (m *Model) openExport(text, preferredPrefix string, payload []byte) {
 	m.exportText = text
+	m.exportData = append(m.exportData[:0], payload...)
 	m.style = styleForPrefix(preferredPrefix)
 	m.form = chrome.NewForm(chrome.FormDeclaration{
 		Fields: []chrome.FormField{{
@@ -423,11 +426,13 @@ func exportOptions(preferred Style) []chrome.FormOption {
 
 func (m *Model) completeExport() tea.Cmd {
 	text := Format(m.exportText, m.style)
+	payload := m.exportData
 	m.exportText = ""
+	m.exportData = nil
 	m.form = nil
 	return tea.Batch(
 		func() tea.Msg { return CloseExportMsg{} },
-		m.write(requestCopyMsg{text: text}),
+		m.write(requestCopyMsg{text: text, payload: payload}),
 	)
 }
 

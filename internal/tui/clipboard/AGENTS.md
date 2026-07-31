@@ -14,6 +14,8 @@ atomic multi-format writes.
   portable fragment with `RequestCopy`.
 - Native writes atomically replace the clipboard with plain text and the
   fragment MIME type. OSC52 fallback writes plain text only.
+- Export formats the plain-text value and carries the original fragment into
+  the same atomic write.
 - `ReadPaste` returns structural data only when its CRC32 envelope matches the
   terminal's pasted text.
 - `OpenExportMsg`, `CloseExportMsg`, `CopiedMsg`, and `ErrorMsg` report

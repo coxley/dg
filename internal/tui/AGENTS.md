@@ -156,6 +156,7 @@ the fragment. Same-canvas paste offsets the fragment like duplication, while
 cross-canvas paste roots it at the cursor. Edge-only selections remain
 text-only because portable fragments require at least one node. Repeated paste
 of the same fragment advances by the fragment width and the duplication gap.
+Export changes the plain-text wrapper without discarding the fragment.
 
 Copy uses Super-C or Ctrl-C. The first copy waits 175 ms. A second copy in that
 window cancels the provisional write and opens Export. Passive all-motion
