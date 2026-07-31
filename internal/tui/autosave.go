@@ -55,7 +55,7 @@ func (m *Model) persistActive() error {
 	if err != nil {
 		return fmt.Errorf("autosave canvas: %w", err)
 	}
-	*m.entry = entry
+	m.setActiveEntry(entry)
 	for i := range m.catalog {
 		if sameCanvas(m.catalog[i], entry) {
 			m.catalog[i] = entry
@@ -107,8 +107,7 @@ func (m *Model) switchCanvas(entry canvasstore.Entry) error {
 		return err
 	}
 	_, cacheErr := m.history.Restore(m.document)
-	active := entry
-	m.entry = &active
+	m.setActiveEntry(entry)
 	m.dirty++
 	m.saved = m.dirty
 	m.viewport = layout.NewPoint(0, 0)
@@ -134,4 +133,22 @@ func canvasTitle(entry canvasstore.Entry) string {
 		return entry.Name
 	}
 	return entry.Section + "/" + entry.Name
+}
+
+func (m *Model) setActiveEntry(entry canvasstore.Entry) {
+	active := entry
+	m.entry = &active
+	m.syncWindowTitle()
+}
+
+func (m *Model) syncWindowTitle() {
+	m.windowTitle = "dg"
+	if m.entry == nil {
+		return
+	}
+	if m.entry.Draft {
+		m.windowTitle += " - Draft"
+		return
+	}
+	m.windowTitle += " - " + canvasTitle(*m.entry)
 }

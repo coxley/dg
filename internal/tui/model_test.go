@@ -3457,6 +3457,22 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 	require.NotSame(t, view.Cursor, model.View().Cursor)
 }
 
+func TestModelWindowTitleTracksActiveCanvas(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "draft")
+	require.Equal(t, "dg - Draft", model.View().WindowTitle)
+
+	model.saveFromDialog(saveDocumentMsg{Section: "Design", Name: "Proposal"})
+	require.Equal(t, "dg - Design/Proposal", model.View().WindowTitle)
+
+	nextDoc := document.New(mustLayoutWithLabel(t, "next"))
+	next, err := store.Create("", "Architecture", nextDoc)
+	require.NoError(t, err)
+	require.NoError(t, model.switchCanvas(next))
+	require.Equal(t, "dg - Architecture", model.View().WindowTitle)
+}
+
 func TestModelViewShowsSaveForm(t *testing.T) {
 	t.Parallel()
 

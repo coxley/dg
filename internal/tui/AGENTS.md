@@ -174,6 +174,7 @@ enhancement message.
 - `u` or Ctrl-Z: undo
 - Ctrl-R or Ctrl-Y: redo
 - Ctrl-S: name a draft or report/save named-canvas autosave
+- Ctrl-N: create and switch to a durable blank draft
 - `?`: help and preferences
 - Ctrl-B: open or close sidebar
 - `q`: quit

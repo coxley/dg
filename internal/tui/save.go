@@ -173,7 +173,7 @@ func (m *Model) saveFromDialog(message saveDocumentMsg) {
 		m.setError(fmt.Sprintf("name canvas: %v", err))
 		return
 	}
-	m.entry = &entry
+	m.setActiveEntry(entry)
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
 	m.status = "named " + canvasTitle(entry)
 	m.statusError = ""

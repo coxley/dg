@@ -41,6 +41,7 @@ const (
 	commandMoveLeft        chrome.CommandID = "move-left"
 	commandMoveRight       chrome.CommandID = "move-right"
 	commandMoveUp          chrome.CommandID = "move-up"
+	commandNewCanvas       chrome.CommandID = "new-canvas"
 	commandNewNode         chrome.CommandID = "new-node"
 	commandPreferences     chrome.CommandID = "preferences"
 	commandQuit            chrome.CommandID = "quit"
@@ -67,6 +68,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeSidebar, Chords: chrome.Keys("right", "l"), Command: commandSidebarTabNext, Label: "next tab"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("left", "h"), Command: commandSidebarTabPrev, Label: "previous tab"},
 	{Scope: scopeSidebar, Chords: chrome.Keys("backspace", "delete"), Command: commandSidebarDelete, Label: "delete draft"},
+	{Scope: scopeSidebar, Chords: chrome.Keys("ctrl+n"), Command: commandNewCanvas, Label: "new canvas"},
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
 	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
@@ -80,6 +82,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeCanvas, Chords: chrome.Keys("enter"), Command: commandActivate, Label: "complete connection"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("e"), Command: commandEditLabel, Label: "edit label"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("n"), Command: commandNewNode, Label: "new node"},
+	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+n"), Command: commandNewCanvas, Label: "new canvas"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("r"), Command: commandRectangle, Label: string(commandRectangle)},
 	{Scope: scopeCanvas, Chords: chrome.Keys("l"), Command: commandLine, Label: "line"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("b"), Command: commandBorder, Label: "border"},
@@ -160,6 +163,7 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 		return m.updateEditCommand(message.Command)
 	case commandBack,
 		commandHelp,
+		commandNewCanvas,
 		commandPreferences,
 		commandQuit,
 		commandSave,
@@ -261,7 +265,7 @@ func (m *Model) canvasCommandAvailable(command chrome.CommandID) bool {
 		commandRedo,
 		commandUndo:
 		return m.canvasEditCommandAvailable(command)
-	case commandSave:
+	case commandNewCanvas, commandSave:
 		return m.canvasStore != nil
 	default:
 		return true
@@ -509,6 +513,8 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		}
 	case commandHelp:
 		m.openHelp()
+	case commandNewCanvas:
+		m.newCanvas()
 	case commandPreferences:
 		if m.dialogs.ActiveID() == surfacePreferences {
 			return m.dismissDialog()

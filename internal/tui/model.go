@@ -78,6 +78,7 @@ type Model struct {
 	cancelWatch context.CancelFunc
 	externalDoc document.Document
 	external    *externalConflict
+	windowTitle string
 	theme       Theme
 
 	cursor      layout.Point
@@ -219,6 +220,7 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	} else {
 		m.document = *configured.document
 	}
+	m.syncWindowTitle()
 	m.helpInspector = newHelpInspector(m.theme.Help)
 	resolver, err := chrome.NewResolver(applicationBindings)
 	if err != nil {

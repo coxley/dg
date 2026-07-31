@@ -136,8 +136,7 @@ func (m *Model) keepLocalCanvas(entry canvasstore.Entry) error {
 	if err != nil {
 		return fmt.Errorf("keep local canvas: %w", err)
 	}
-	active := restored
-	m.entry = &active
+	m.setActiveEntry(restored)
 	if err := m.history.Save(m.document); err != nil {
 		m.setError(fmt.Sprintf("save local history: %v", err))
 	} else {
@@ -155,8 +154,7 @@ func (m *Model) restoreDeletedCanvas(entry canvasstore.Entry) error {
 	if err != nil {
 		return fmt.Errorf("restore deleted canvas: %w", err)
 	}
-	active := restored
-	m.entry = &active
+	m.setActiveEntry(restored)
 	if err := m.history.Save(m.document); err != nil {
 		m.setError(fmt.Sprintf("save restored history: %v", err))
 	} else {
@@ -174,8 +172,7 @@ func (m *Model) preserveDeletedCanvas() error {
 	if err != nil {
 		return fmt.Errorf("preserve deleted canvas: %w", err)
 	}
-	active := draft
-	m.entry = &active
+	m.setActiveEntry(draft)
 	if err := m.history.Save(m.document); err != nil {
 		m.setError(fmt.Sprintf("save draft history: %v", err))
 	} else {
@@ -226,8 +223,7 @@ func (m *Model) replaceActiveDocument(entry canvasstore.Entry, reload bool) erro
 		return err
 	}
 	m.externalDoc = previous
-	active := entry
-	m.entry = &active
+	m.setActiveEntry(entry)
 	m.dirty++
 	m.saved = m.dirty
 	m.viewport = layout.NewPoint(0, 0)

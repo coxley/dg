@@ -82,7 +82,7 @@ func (m *Model) View() tea.View {
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.MouseMode = tea.MouseModeAllMotion
-	view.WindowTitle = "dg"
+	view.WindowTitle = m.windowTitle
 	view.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
 	view.KeyboardEnhancements.ReportAlternateKeys = true
 	switch {

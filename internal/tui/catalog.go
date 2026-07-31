@@ -63,8 +63,7 @@ func (m *Model) updateCatalog(event canvasstore.CatalogEvent) {
 		}
 		switch change.Kind {
 		case canvasstore.ChangeAdded, canvasstore.ChangeModified:
-			entry := change.Entry
-			m.entry = &entry
+			m.setActiveEntry(change.Entry)
 		case canvasstore.ChangeDeleted:
 		}
 	}
