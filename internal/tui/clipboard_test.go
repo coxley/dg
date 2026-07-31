@@ -39,8 +39,10 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 	model, nodeID := newTestModel(t)
 	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
 	var copied string
-	model.clipboard.UseFallback(func(text string) error {
+	var payload []byte
+	model.clipboard.UseNative(func(text string, data []byte) error {
 		copied = text
+		payload = append([]byte(nil), data...)
 		return nil
 	})
 
@@ -61,6 +63,7 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 		"│ node │",
 		"└──────┘",
 	}, "\n"), copied)
+	require.NotEmpty(t, payload)
 	require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
 	require.Equal(t, "Copied to clipboard", model.dialogs.notice.text)
 }
@@ -86,7 +89,7 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 						ID:   nodeID,
 						Kind: layout.HitNode,
 					})
-					model.clipboard.UseFallback(func(string) error {
+					model.clipboard.UseNative(func(string, []byte) error {
 						require.Fail(t, "second copy must not write")
 						return nil
 					})
@@ -143,24 +146,34 @@ func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
 func TestCopySelectionReportsClipboardFailure(t *testing.T) {
 	t.Parallel()
 
-	model, nodeID := newTestModel(t)
-	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.clipboard.UseFallback(func(string) error {
-		return errors.New("unavailable")
-	})
-
-	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
-		Code: 'c',
-		Mod:  tea.ModCtrl,
-	}))
-	for range 2 {
-		require.NotNil(t, command)
-		command = updateModelCommand(t, model, command())
-	}
-	require.NotNil(t, command)
-	require.Nil(t, updateModelCommand(t, model, command()))
+	model, _ := newTestModel(t)
+	updateModel(t, model, clipboardview.ErrorMsg{Err: errors.New("unavailable")})
 
 	require.Equal(t, "copy selection: unavailable", model.status)
+}
+
+func TestClipboardFragmentPastesIntoSameAndOtherCanvas(t *testing.T) {
+	t.Parallel()
+
+	source, nodeID := newTestModel(t)
+	source.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	payload, err := source.copySelectionPayload()
+	require.NoError(t, err)
+	original := source.geo.Nodes[nodeID].Rect
+
+	updateModel(t, source, clipboardview.PasteMsg{Data: payload})
+	duplicate, ok := source.geo.Selection().FirstNode()
+	require.True(t, ok)
+	require.Equal(t, original.Max().X+2, source.geo.Nodes[duplicate].Rect.Min.X)
+	require.Equal(t, original.Min.Y, source.geo.Nodes[duplicate].Rect.Min.Y)
+
+	destination, _ := newTestModel(t)
+	destination.cursor = layout.NewPoint(30, 12)
+	updateModel(t, destination, clipboardview.PasteMsg{Data: payload})
+	pasted, ok := destination.geo.Selection().FirstNode()
+	require.True(t, ok)
+	require.Equal(t, layout.NewPoint(30, 12), destination.geo.Nodes[pasted].Rect.Min)
+	require.Equal(t, "node", destination.geo.Label(pasted))
 }
 
 func TestStaleExportCloseDoesNotDismissCopiedNotice(t *testing.T) {

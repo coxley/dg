@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math"
 	"strings"
 	"unicode"
@@ -10,8 +14,17 @@ import (
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	"github.com/coxley/dg/layout"
+	"github.com/google/uuid"
 	"github.com/rivo/uniseg"
 )
+
+const clipboardFragmentVersion = 1
+
+type clipboardFragment struct {
+	Version    uint8           `json:"version"`
+	DocumentID uuid.UUID       `json:"document_id"`
+	Fragment   layout.Fragment `json:"fragment"`
+}
 
 func (m *Model) copySelection() tea.Cmd {
 	if !m.hasSelection() {
@@ -25,11 +38,59 @@ func (m *Model) copySelection() tea.Cmd {
 		m.clipboard.CancelPending()
 		return nil
 	}
+	payload, err := m.copySelectionPayload()
+	if err != nil {
+		m.setError(err.Error())
+		m.clipboard.CancelPending()
+		return nil
+	}
 	m.status = ""
 	return m.updateClipboard(clipboardview.RequestCopy(
 		text,
 		m.preferenceValue().CommentPrefix,
+		payload,
 	))
+}
+
+func (m *Model) copySelectionPayload() ([]byte, error) {
+	if !m.hasSelectedNodes() {
+		return nil, nil
+	}
+	fragment, err := m.geo.CopySelection()
+	if err != nil {
+		return nil, fmt.Errorf("copy selection: %w", err)
+	}
+	payload, err := json.Marshal(clipboardFragment{
+		Version:    clipboardFragmentVersion,
+		DocumentID: m.document.ID,
+		Fragment:   fragment,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode selection: %w", err)
+	}
+	return payload, nil
+}
+
+func decodeClipboardFragment(data []byte) (clipboardFragment, error) {
+	var payload clipboardFragment
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return clipboardFragment{}, err
+	}
+	if err := decoder.Decode(&json.RawMessage{}); err != io.EOF {
+		return clipboardFragment{}, errors.New("unexpected trailing JSON value")
+	}
+	if payload.Version != clipboardFragmentVersion {
+		return clipboardFragment{}, fmt.Errorf(
+			"unsupported clipboard version: %d",
+			payload.Version,
+		)
+	}
+	if payload.DocumentID == uuid.Nil || payload.DocumentID.Version() != 4 {
+		return clipboardFragment{}, errors.New("invalid clipboard document ID")
+	}
+	return payload, nil
 }
 
 func (m *Model) updateClipboard(message tea.Msg) tea.Cmd {

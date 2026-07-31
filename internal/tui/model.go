@@ -397,6 +397,8 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 			return m, m.updateDialog(message)
 		}
 		return m, m.updateClipboard(message)
+	case clipboardview.PasteMsg:
+		return m, m.pasteClipboard(message.Data)
 	case noticeExpiredMsg:
 		if m.dialogs.ActiveID() == surfaceNotice &&
 			m.dialogs.notice.Generation() == message.id {
@@ -477,7 +479,55 @@ func (m *Model) updatePaste(message tea.PasteMsg) tea.Cmd {
 	}
 	if m.interaction.session.kind == sessionLabelEdit {
 		m.insertLabelText(message.Content)
+		return nil
 	}
+	return m.clipboard.ReadPaste(message.Content)
+}
+
+func (m *Model) pasteClipboard(data []byte) tea.Cmd {
+	if len(data) == 0 {
+		return nil
+	}
+	if !m.interaction.idle() {
+		m.setError(finishOperation)
+		return nil
+	}
+	payload, err := decodeClipboardFragment(data)
+	if err != nil {
+		m.setError("paste selection: " + err.Error())
+		return nil
+	}
+	origin := m.cursor
+	if payload.DocumentID == m.document.ID {
+		bounds := payload.Fragment.Bounds()
+		x := uint64(bounds.Min.X) + uint64(bounds.Size.Width) + 2
+		if x > math.MaxUint32 {
+			m.setError("paste selection: placement outside coordinate space")
+			return nil
+		}
+		origin = layout.NewPoint(uint32(x), bounds.Min.Y)
+	}
+	m.beginTransaction(transactionDuplicate)
+	if err := m.geo.Paste(payload.Fragment, origin); err != nil {
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
+		return nil
+	}
+	if err := m.rebuild(); err != nil {
+		m.setError(errors.Join(err, m.cancelTransaction(), m.render()).Error())
+		return nil
+	}
+	if err := m.commitTransaction(); err != nil {
+		m.setError(err.Error())
+		return nil
+	}
+	if hit, ok := m.firstSelectedNode(); ok {
+		m.target = hit
+		m.cursor = m.geo.Nodes[hit.ID].LabelPoint
+	}
+	m.refreshHits()
+	m.selectTarget()
+	m.ensureCursorVisible()
+	m.status = ""
 	return nil
 }
 

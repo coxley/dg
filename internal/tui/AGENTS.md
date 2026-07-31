@@ -20,8 +20,8 @@ Composable presentation models live in sub-packages:
 - `canvas` owns canvas styles, encoders, retained frames, and row indexes.
 - `chrome` owns declarative layout, forms, text input, focus, surfaces, panes,
   viewports, and cell-aware transitions.
-- `clipboard` owns copy debounce, export formatting and chrome form state, terminal
-  capability probing, and fallback writes.
+- `clipboard` owns copy debounce, export formatting and chrome form state,
+  native multi-format writes, and terminal fallback probing.
 - `directorypicker` owns bounded directory-only filesystem navigation.
 - `nav` owns floating tool navigation styles, geometry, hover, and activation.
 - `modal` owns modal and tab styles, sizing, full-screen fallback, movement,
@@ -149,16 +149,24 @@ Back leaves a docked sidebar visible but returns keyboard focus to the canvas;
 Back or an outside click dismisses a drawer. Ctrl-B opens, focuses, refocuses,
 or closes it.
 
-Root renders the selected cells, then sends that text to the clipboard model.
-Copy uses Super-C or Ctrl-C. The first copy waits 300 ms. A second copy in that
+Root renders the selected cells and pairs that text with a portable layout
+fragment. Native clipboard writes publish both formats atomically. External
+applications consume the rendered text; paste into dg validates and inserts
+the fragment. Same-canvas paste offsets the fragment like duplication, while
+cross-canvas paste roots it at the cursor. Edge-only selections remain
+text-only because portable fragments require at least one node.
+
+Copy uses Super-C or Ctrl-C. The first copy waits 175 ms. A second copy in that
 window cancels the provisional write and opens Export. Passive all-motion
 mouse events and standalone modifier-key events do not cancel this window.
 Stale timers must never write after another interaction.
 
-The first actual clipboard write probes terminal OSC52 support for 100 ms.
-A response selects `tea.SetClipboard`; timeout selects
-`golang.design/x/clipboard`. Advertise Super-C only after a keyboard
-enhancement message.
+The first actual clipboard write prefers the internal native backend. It
+publishes plain text and `application/vnd.dg.fragment+json` in one clipboard
+replacement. If native initialization or writing fails, a 100 ms terminal
+probe selects the OSC52 text-only fallback. Structural paste stays unavailable
+when only OSC52 works. Advertise Super-C only after a keyboard enhancement
+message.
 
 ## Keymap
 

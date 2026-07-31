@@ -17,12 +17,12 @@ func TestSecondCopyOpensExportWithoutWriting(t *testing.T) {
 
 	model := newTestModel()
 	copies := 0
-	model.UseFallback(func(string) error {
+	model.UseNative(func(string, []byte) error {
 		copies++
 		return nil
 	})
-	_, first := model.Update(RequestCopy("diagram", "// "))
-	_, second := model.Update(RequestCopy("diagram", "// "))
+	_, first := model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
+	_, second := model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
 
 	require.NotNil(t, first)
 	require.IsType(t, OpenExportMsg{}, second())
@@ -31,44 +31,30 @@ func TestSecondCopyOpensExportWithoutWriting(t *testing.T) {
 	require.Contains(t, model.View().Content, "Line comments")
 }
 
-func TestFallbackReportsSuccessOrFailure(t *testing.T) {
+func TestNativeWriteReportsSuccess(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct {
-		name string
-		err  error
-		want tea.Msg
-	}{
-		{"success", nil, CopiedMsg{}},
-		{"failure", errors.New("unavailable"), ErrorMsg{
-			Err: errors.New("unavailable"),
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			model := newTestModel()
-			model.UseFallback(func(string) error { return test.err })
-			_, _ = model.Update(RequestCopy("diagram", "// "))
-			_, command := model.Update(UpdateMsg{
-				message: debounceExpiredMsg{generation: model.generation},
-			})
-			result := command().(UpdateMsg)
-			_, command = model.Update(result)
-			require.Equal(t, test.want, command())
-		})
-	}
+	model := newTestModel()
+	model.UseNative(func(string, []byte) error { return nil })
+	_, _ = model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
+	_, command := model.Update(UpdateMsg{
+		message: debounceExpiredMsg{generation: model.generation},
+	})
+	result := command().(UpdateMsg)
+	_, command = model.Update(result)
+	require.IsType(t, CopiedMsg{}, command())
 }
 
 func TestCopyDebounceWaitsForInactivity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		model := newTestModel()
 		var copied string
-		model.UseFallback(func(text string) error {
+		model.UseNative(func(text string, payload []byte) error {
 			copied = text
+			require.Equal(t, []byte("fragment"), payload)
 			return nil
 		})
-		_, command := model.Update(RequestCopy("diagram", "// "))
+		_, command := model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
 		messages := make(chan tea.Msg, 1)
 		go func() {
 			messages <- command()
@@ -92,11 +78,11 @@ func TestCopyDebounceIgnoresStaleGeneration(t *testing.T) {
 	t.Parallel()
 
 	model := newTestModel()
-	model.UseFallback(func(string) error {
+	model.UseNative(func(string, []byte) error {
 		require.Fail(t, "stale copy must not write")
 		return nil
 	})
-	_, _ = model.Update(RequestCopy("diagram", "// "))
+	_, _ = model.Update(RequestCopy("diagram", "// ", nil))
 	generation := model.generation
 	model.CancelPending()
 
@@ -106,14 +92,15 @@ func TestCopyDebounceIgnoresStaleGeneration(t *testing.T) {
 	require.Nil(t, command)
 }
 
-func TestClipboardProbeSelectsTerminalOrFallback(t *testing.T) {
+func TestNativeFailureSelectsTerminalOrReportsFailure(t *testing.T) {
 	t.Parallel()
 
 	t.Run("terminal response", func(t *testing.T) {
 		t.Parallel()
 
 		model := newTestModel()
-		model.pending = "diagram"
+		model.mode = probingTerminal
+		model.pending = requestCopyMsg{text: "diagram"}
 		_, command := model.Update(tea.ClipboardMsg{})
 
 		require.Equal(t, terminal, model.mode)
@@ -125,12 +112,9 @@ func TestClipboardProbeSelectsTerminalOrFallback(t *testing.T) {
 		t.Parallel()
 
 		model := newTestModel()
-		var copied string
-		model.fallback = func(text string) error {
-			copied = text
-			return nil
-		}
-		model.pending = "diagram"
+		model.mode = probingTerminal
+		model.pending = requestCopyMsg{text: "diagram"}
+		model.nativeErr = errors.New("unavailable")
 		model.probe = 2
 
 		_, command := model.Update(UpdateMsg{
@@ -140,13 +124,23 @@ func TestClipboardProbeSelectsTerminalOrFallback(t *testing.T) {
 		_, command = model.Update(UpdateMsg{
 			message: probeExpiredMsg{generation: 2},
 		})
-		require.Equal(t, fallback, model.mode)
+		require.Equal(t, unknown, model.mode)
 		require.NotNil(t, command)
-		result := command().(UpdateMsg)
-		_, command = model.Update(result)
-		require.IsType(t, CopiedMsg{}, command())
-		require.Equal(t, "diagram", copied)
+		require.Equal(t, ErrorMsg{Err: errors.New("unavailable")}, command())
 	})
+}
+
+func TestStructuredPasteRequiresMatchingText(t *testing.T) {
+	t.Parallel()
+
+	encoded := encodePayload("diagram", []byte("fragment"))
+	model := newTestModel()
+	model.UseNativeReader(func() []byte { return encoded })
+
+	message := model.ReadPaste("diagram")().(PasteMsg)
+	require.Equal(t, []byte("fragment"), message.Data)
+	message = model.ReadPaste("other")().(PasteMsg)
+	require.Nil(t, message.Data)
 }
 
 func TestFormat(t *testing.T) {
@@ -182,7 +176,7 @@ func TestExportUsesSemanticFormTraversalAndAccessibleAction(t *testing.T) {
 	t.Parallel()
 
 	model := newTestModel()
-	model.UseFallback(func(string) error { return nil })
+	model.UseNative(func(string, []byte) error { return nil })
 	model.openExport("diagram", "// ")
 	require.Contains(t, model.AccessibleLines(), "action: Copy")
 

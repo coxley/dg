@@ -2,28 +2,36 @@
 package clipboard
 
 import (
+	"encoding/binary"
+	"hash/crc32"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/coxley/dg/internal/tui/chrome"
-	systemclipboard "golang.design/x/clipboard"
+	native "github.com/coxley/dg/internal/tui/clipboard/native"
 )
 
 const (
 	probeTimeout = 100 * time.Millisecond
+	payloadMIME  = "application/vnd.dg.fragment+json"
 	// DebounceDuration is the interval for distinguishing copy from export.
 	DebounceDuration = 175 * time.Millisecond
+)
+
+var (
+	payloadFormat = native.Register(payloadMIME)
+	payloadMagic  = [4]byte{'D', 'G', 'F', 1}
 )
 
 type mode uint8
 
 const (
 	unknown mode = iota
+	nativeClipboard
+	probingTerminal
 	terminal
-	fallback
 )
 
 // Style identifies an export wrapper.
@@ -46,6 +54,7 @@ const (
 type requestCopyMsg struct {
 	text            string
 	preferredPrefix string
+	payload         []byte
 }
 
 type probeExpiredMsg struct {
@@ -56,8 +65,9 @@ type debounceExpiredMsg struct {
 	generation uint64
 }
 
-type fallbackMsg struct {
-	err error
+type nativeWriteMsg struct {
+	copy requestCopyMsg
+	err  error
 }
 
 // UpdateMsg routes a child command back to Model.Update.
@@ -74,53 +84,78 @@ type CloseExportMsg struct{}
 // CopiedMsg reports a successful clipboard write.
 type CopiedMsg struct{}
 
+// PasteMsg contains structural clipboard data matching the pasted text.
+type PasteMsg struct {
+	Data []byte
+}
+
 // ErrorMsg reports a clipboard failure.
 type ErrorMsg struct {
 	Err error
 }
 
-var (
-	initOnce sync.Once
-	errInit  error
-)
-
-func writeFallback(text string) error {
-	initOnce.Do(func() {
-		errInit = systemclipboard.Init()
-	})
-	if errInit != nil {
-		return errInit
+func writeNative(text string, payload []byte) error {
+	if err := native.Init(); err != nil {
+		return err
 	}
-	systemclipboard.Write(systemclipboard.FmtText, []byte(text))
-	return nil
+	values := []native.Data{{Format: native.FmtText, Bytes: []byte(text)}}
+	if len(payload) != 0 {
+		values = append(values, native.Data{
+			Format: payloadFormat,
+			Bytes:  encodePayload(text, payload),
+		})
+	}
+	_, err := native.WriteMany(values...)
+	return err
+}
+
+func readNative() []byte {
+	if native.Init() != nil {
+		return nil
+	}
+	return native.Read(payloadFormat)
 }
 
 // Model owns clipboard capability, debounce, and export-form state.
 type Model struct {
-	mode       mode
-	fallback   func(string) error
-	pending    string
-	probe      uint64
-	armed      bool
-	copy       string
-	generation uint64
-	form       *chrome.Form
-	exportText string
-	style      Style
-	styles     chrome.FormStyles
+	mode        mode
+	nativeWrite func(string, []byte) error
+	nativeRead  func() []byte
+	pending     requestCopyMsg
+	nativeErr   error
+	probe       uint64
+	armed       bool
+	copy        requestCopyMsg
+	generation  uint64
+	form        *chrome.Form
+	exportText  string
+	style       Style
+	styles      chrome.FormStyles
 }
 
 // New returns a clipboard model.
 func New(styles chrome.FormStyles) *Model {
 	return &Model{
-		fallback: writeFallback,
-		styles:   styles,
+		nativeWrite: writeNative,
+		nativeRead:  readNative,
+		styles:      styles,
 	}
 }
 
 // RequestCopy returns a message that begins or advances a copy interaction.
-func RequestCopy(text, preferredPrefix string) tea.Msg {
-	return requestCopyMsg{text: text, preferredPrefix: preferredPrefix}
+func RequestCopy(text, preferredPrefix string, payload []byte) tea.Msg {
+	return requestCopyMsg{
+		text:            text,
+		preferredPrefix: preferredPrefix,
+		payload:         append([]byte(nil), payload...),
+	}
+}
+
+// ReadPaste reads structural data when it matches the terminal's pasted text.
+func (m *Model) ReadPaste(text string) tea.Cmd {
+	return func() tea.Msg {
+		return PasteMsg{Data: decodePayload(text, m.nativeRead())}
+	}
 }
 
 // Init implements tea.Model.
@@ -142,11 +177,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleTerminalResponse()
 	case probeExpiredMsg:
 		return m, m.handleProbeTimeout(message)
-	case fallbackMsg:
+	case nativeWriteMsg:
 		if message.err != nil {
-			m.CancelPending()
-			return m, func() tea.Msg { return ErrorMsg{Err: message.err} }
+			return m, m.probeTerminal(message.copy, message.err)
 		}
+		m.mode = nativeClipboard
 		return m, func() tea.Msg { return CopiedMsg{} }
 	case chrome.FormSubmitMsg:
 		if m.form != nil && message.ID == exportCopy {
@@ -206,11 +241,11 @@ func (m *Model) AccessibleLines() []string {
 
 // CancelPending invalidates a provisional first copy.
 func (m *Model) CancelPending() {
-	if !m.armed && m.copy == "" {
+	if !m.armed && m.copy.text == "" {
 		return
 	}
 	m.armed = false
-	m.copy = ""
+	m.copy = requestCopyMsg{}
 	m.generation++
 }
 
@@ -220,10 +255,15 @@ func (m *Model) CancelExport() {
 	m.exportText = ""
 }
 
-// UseFallback configures a fallback writer and skips terminal probing.
-func (m *Model) UseFallback(write func(string) error) {
-	m.mode = fallback
-	m.fallback = write
+// UseNative configures the native writer for tests.
+func (m *Model) UseNative(write func(string, []byte) error) {
+	m.mode = nativeClipboard
+	m.nativeWrite = write
+}
+
+// UseNativeReader configures the native reader for tests.
+func (m *Model) UseNativeReader(read func() []byte) {
+	m.nativeRead = read
 }
 
 // CopyGeneration returns the active debounce generation.
@@ -243,7 +283,7 @@ func (m *Model) request(message requestCopyMsg) tea.Cmd {
 		return func() tea.Msg { return OpenExportMsg{} }
 	}
 	m.armed = true
-	m.copy = message.text
+	m.copy = message
 	m.generation++
 	generation := m.generation
 	return tea.Tick(DebounceDuration, func(time.Time) tea.Msg {
@@ -254,66 +294,78 @@ func (m *Model) request(message requestCopyMsg) tea.Cmd {
 }
 
 func (m *Model) handleDebounce(message debounceExpiredMsg) tea.Cmd {
-	if !m.armed || m.copy == "" || message.generation != m.generation {
+	if !m.armed || m.copy.text == "" || message.generation != m.generation {
 		return nil
 	}
-	text := m.copy
+	copy := m.copy
 	m.armed = false
-	m.copy = ""
-	return m.write(text)
+	m.copy = requestCopyMsg{}
+	return m.write(copy)
 }
 
-func (m *Model) write(text string) tea.Cmd {
+func (m *Model) write(copy requestCopyMsg) tea.Cmd {
 	switch m.mode {
 	case terminal:
 		return tea.Batch(
-			tea.SetClipboard(text),
+			tea.SetClipboard(copy.text),
 			func() tea.Msg { return CopiedMsg{} },
 		)
-	case fallback:
+	case unknown, nativeClipboard:
 		return wrap(func() tea.Msg {
-			return fallbackMsg{err: m.fallback(text)}
+			return nativeWriteMsg{
+				copy: copy,
+				err:  m.nativeWrite(copy.text, copy.payload),
+			}
 		})
-	case unknown:
-		m.pending = text
-		m.probe++
-		generation := m.probe
-		return tea.Batch(
-			func() tea.Msg { return tea.ReadClipboard() },
-			tea.Tick(probeTimeout, func(time.Time) tea.Msg {
-				return UpdateMsg{
-					message: probeExpiredMsg{generation: generation},
-				}
-			}),
-		)
 	default:
 		return nil
 	}
 }
 
 func (m *Model) handleTerminalResponse() tea.Cmd {
-	if m.mode != unknown || m.pending == "" {
+	if m.mode != probingTerminal || m.pending.text == "" {
 		return nil
 	}
-	text := m.pending
-	m.pending = ""
+	copy := m.pending
+	m.pending = requestCopyMsg{}
+	m.nativeErr = nil
 	m.mode = terminal
 	return tea.Batch(
-		tea.SetClipboard(text),
+		tea.SetClipboard(copy.text),
 		func() tea.Msg { return CopiedMsg{} },
 	)
 }
 
 func (m *Model) handleProbeTimeout(message probeExpiredMsg) tea.Cmd {
-	if m.mode != unknown ||
-		m.pending == "" ||
+	if m.mode != probingTerminal ||
+		m.pending.text == "" ||
 		message.generation != m.probe {
 		return nil
 	}
-	text := m.pending
-	m.pending = ""
-	m.mode = fallback
-	return m.write(text)
+	err := m.nativeErr
+	m.pending = requestCopyMsg{}
+	m.nativeErr = nil
+	m.mode = unknown
+	return func() tea.Msg { return ErrorMsg{Err: err} }
+}
+
+func (m *Model) probeTerminal(copy requestCopyMsg, err error) tea.Cmd {
+	m.nativeErr = err
+	m.pending = copy
+	if m.pending.text == "" {
+		return func() tea.Msg { return ErrorMsg{Err: err} }
+	}
+	m.mode = probingTerminal
+	m.probe++
+	generation := m.probe
+	return tea.Batch(
+		func() tea.Msg { return tea.ReadClipboard() },
+		tea.Tick(probeTimeout, func(time.Time) tea.Msg {
+			return UpdateMsg{
+				message: probeExpiredMsg{generation: generation},
+			}
+		}),
+	)
 }
 
 func (m *Model) openExport(text, preferredPrefix string) {
@@ -375,8 +427,27 @@ func (m *Model) completeExport() tea.Cmd {
 	m.form = nil
 	return tea.Batch(
 		func() tea.Msg { return CloseExportMsg{} },
-		m.write(text),
+		m.write(requestCopyMsg{text: text}),
 	)
+}
+
+func encodePayload(text string, payload []byte) []byte {
+	encoded := make([]byte, len(payloadMagic)+4+len(payload))
+	copy(encoded, payloadMagic[:])
+	binary.LittleEndian.PutUint32(encoded[len(payloadMagic):], crc32.ChecksumIEEE([]byte(text)))
+	copy(encoded[len(payloadMagic)+4:], payload)
+	return encoded
+}
+
+func decodePayload(text string, encoded []byte) []byte {
+	const headerSize = len(payloadMagic) + 4
+	if len(encoded) < headerSize ||
+		string(encoded[:len(payloadMagic)]) != string(payloadMagic[:]) ||
+		binary.LittleEndian.Uint32(encoded[len(payloadMagic):headerSize]) !=
+			crc32.ChecksumIEEE([]byte(text)) {
+		return nil
+	}
+	return append([]byte(nil), encoded[headerSize:]...)
 }
 
 func styleValue(style Style) string {
