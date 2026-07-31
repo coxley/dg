@@ -54,7 +54,11 @@ func (m *Model) updateCatalog(event canvasstore.CatalogEvent) {
 		return
 	}
 	for _, change := range event.Changes {
-		if change.External || !sameCanvas(changeEntry(change), *m.entry) {
+		if !sameCanvas(changeEntry(change), *m.entry) {
+			continue
+		}
+		if change.External {
+			m.handleExternalChange(change)
 			continue
 		}
 		switch change.Kind {

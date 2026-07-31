@@ -19,7 +19,8 @@ type clearDraftsMsg struct{}
 type confirmationDialogBody struct {
 	confirmation *modalview.Confirmation
 	styles       modalview.ConfirmationStyles
-	message      tea.Msg
+	accept       tea.Msg
+	cancel       tea.Msg
 	bounds       chrome.Rect
 }
 
@@ -28,14 +29,24 @@ func newConfirmationDialogBody(styles modalview.ConfirmationStyles) *confirmatio
 }
 
 func (b *confirmationDialogBody) Reset(title, message, confirm string, result tea.Msg) {
-	b.message = result
+	b.ResetChoice(title, message, confirm, result, "Cancel", dialogCancelMsg{})
+}
+
+func (b *confirmationDialogBody) ResetChoice(
+	title, message, confirm string,
+	accept tea.Msg,
+	cancelLabel string,
+	cancel tea.Msg,
+) {
+	b.accept = accept
+	b.cancel = cancel
 	b.confirmation = modalview.NewConfirmation(
 		modalview.ConfirmationDeclaration{
 			ID:      "confirmation",
 			Title:   title,
 			Message: message,
 			Confirm: chrome.Button{ID: confirmationAccept, Label: confirm},
-			Cancel:  chrome.Button{ID: confirmationCancel, Label: "Cancel"},
+			Cancel:  chrome.Button{ID: confirmationCancel, Label: cancelLabel},
 		},
 		b.styles,
 	)
@@ -67,14 +78,14 @@ func (b *confirmationDialogBody) Update(message tea.Msg) dialogBodyResult {
 	case dialogClickMsg:
 		return dialogBodyResult{command: b.confirmation.Click(message.Point), handled: true}
 	case dialogBackMsg:
-		return dialogBodyResult{message: dialogCancelMsg{}, handled: true}
+		return dialogBodyResult{message: b.cancel, handled: true}
 	case dialogCloseMsg:
 		return dialogBodyResult{handled: true}
 	case chrome.FormSubmitMsg:
 		if message.ID == confirmationAccept {
-			return dialogBodyResult{message: b.message, handled: true}
+			return dialogBodyResult{message: b.accept, handled: true}
 		}
-		return dialogBodyResult{message: dialogCancelMsg{}, handled: true}
+		return dialogBodyResult{message: b.cancel, handled: true}
 	}
 	updated, command := b.confirmation.Update(message)
 	b.confirmation = updated.(*modalview.Confirmation)

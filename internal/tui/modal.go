@@ -127,6 +127,16 @@ func (d *dialogController) OpenConfirmation(title, message, confirm string, resu
 	d.open(surfaceConfirmation)
 }
 
+func (d *dialogController) OpenChoice(
+	title, message, confirm string,
+	accept tea.Msg,
+	cancelLabel string,
+	cancel tea.Msg,
+) {
+	d.confirmation.ResetChoice(title, message, confirm, accept, cancelLabel, cancel)
+	d.open(surfaceConfirmation)
+}
+
 func (d *dialogController) open(id chrome.SurfaceID) {
 	d.active = id
 	d.shell.Hide()
@@ -532,6 +542,8 @@ func (m *Model) handleDialogResult(result dialogBodyResult) tea.Cmd {
 		m.dialogs.Restore(message.ReturnTo)
 	case clearDraftsMsg:
 		m.clearDrafts()
+	case externalChoiceMsg:
+		m.resolveExternal(bool(message))
 	default:
 		panic("unhandled dialog message")
 	}

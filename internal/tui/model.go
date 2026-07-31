@@ -74,6 +74,8 @@ type Model struct {
 	catalog     []canvasstore.Entry
 	catalogFeed <-chan canvasstore.CatalogEvent
 	cancelWatch context.CancelFunc
+	externalDoc document.Document
+	external    *externalConflict
 	theme       Theme
 
 	cursor      layout.Point

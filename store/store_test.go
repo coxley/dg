@@ -128,8 +128,8 @@ func TestStoreRejectsStaleRevision(t *testing.T) {
 	entry, err := store.Create("", "Canvas", doc)
 	require.NoError(t, err)
 	path := store.namedPath("", "Canvas")
-	external := doc
-	external.Nodes[0].Label = externalLabel
+	external := testDocument(t, externalLabel)
+	external.ID = doc.ID
 	data, err := encodeDocument(external)
 	require.NoError(t, err)
 	require.NoError(t, replaceFile(path, data))
@@ -139,6 +139,128 @@ func TestStoreRejectsStaleRevision(t *testing.T) {
 	_, err = store.Save(entry, doc)
 	require.ErrorIs(t, err, ErrRevision)
 	require.ErrorIs(t, store.Delete(entry), ErrRevision)
+}
+
+func TestStoreLoadsCurrentExternalRevision(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "original")
+	entry, err := store.Create("", "Canvas", doc)
+	require.NoError(t, err)
+	external := doc
+	external.Nodes[0].Label = externalLabel
+	data, err := encodeDocument(external)
+	require.NoError(t, err)
+	require.NoError(t, replaceFile(store.namedPath("", "Canvas"), data))
+
+	var loaded document.Document
+	current, err := store.LoadCurrentInto(entry, &loaded)
+	require.NoError(t, err)
+	require.NotEqual(t, entry.Revision, current.Revision)
+	require.Equal(t, externalLabel, loaded.Nodes[0].Label)
+}
+
+func TestStoreBacksUpRawExternalRevisionAndRestoresLocalDocument(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	local := testDocument(t, "local")
+	entry, err := store.Create("", "Canvas", local)
+	require.NoError(t, err)
+	_, err = store.Create("", "Canvas.bak", testDocument(t, "occupied"))
+	require.NoError(t, err)
+	external := testDocument(t, externalLabel)
+	external.ID = local.ID
+	raw, err := encodeDocument(external)
+	require.NoError(t, err)
+	require.NoError(t, replaceFile(store.namedPath("", "Canvas"), raw))
+
+	backup, restored, err := store.BackupAndRestore(entry, local)
+	require.NoError(t, err)
+	require.Equal(t, "Canvas.bak1", backup.Name)
+	require.Equal(t, local.ID, restored.ID)
+	got, err := os.ReadFile(store.namedPath("", "Canvas.bak1"))
+	require.NoError(t, err)
+	require.Equal(t, raw, got)
+	loaded, err := store.Load(restored)
+	require.NoError(t, err)
+	require.Equal(t, "local", loaded.Nodes[0].Label)
+}
+
+func TestStoreBacksUpMalformedExternalBytes(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	local := testDocument(t, "local")
+	entry, err := store.Create("", "Canvas", local)
+	require.NoError(t, err)
+	path, err := store.Path(entry)
+	require.NoError(t, err)
+	raw := []byte("not a document")
+	require.NoError(t, replaceFile(path, raw))
+
+	backup, restored, err := store.BackupAndRestore(entry, local)
+	require.NoError(t, err)
+	require.Equal(t, uuid.Nil, backup.ID)
+	got, err := os.ReadFile(store.namedPath("", "Canvas.bak"))
+	require.NoError(t, err)
+	require.Equal(t, raw, got)
+	loaded, err := store.Load(restored)
+	require.NoError(t, err)
+	require.Equal(t, "local", loaded.Nodes[0].Label)
+}
+
+func TestStorePreservesBackupWhenRestoreFails(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	local := testDocument(t, "local")
+	entry, err := store.Create("", "Canvas", local)
+	require.NoError(t, err)
+	path, err := store.Path(entry)
+	require.NoError(t, err)
+	raw := []byte("external bytes")
+	require.NoError(t, replaceFile(path, raw))
+	wantErr := errors.New("restore failed")
+
+	backup, _, err := store.backupAndRestore(entry, local, func(string, []byte) error {
+		return wantErr
+	})
+	require.ErrorIs(t, err, wantErr)
+	require.Equal(t, "Canvas.bak", backup.Name)
+	_, statErr := os.Stat(path)
+	require.ErrorIs(t, statErr, fs.ErrNotExist)
+	got, readErr := os.ReadFile(store.namedPath("", "Canvas.bak"))
+	require.NoError(t, readErr)
+	require.Equal(t, raw, got)
+}
+
+func TestStoreRestoresDeletedCanvasAndPreservesDraft(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	doc := testDocument(t, "local")
+	entry, err := store.Create("", "Canvas", doc)
+	require.NoError(t, err)
+	path, err := store.Path(entry)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
+
+	restored, err := store.RestoreDeleted(entry, doc)
+	require.NoError(t, err)
+	loaded, err := store.Load(restored)
+	require.NoError(t, err)
+	require.Equal(t, "local", loaded.Nodes[0].Label)
+	draft, err := store.PreserveDraft(doc)
+	require.NoError(t, err)
+	require.True(t, draft.Draft)
+	doc.Nodes[0].Label = "newer"
+	draft, err = store.PreserveDraft(doc)
+	require.NoError(t, err)
+	loaded, err = store.Load(draft)
+	require.NoError(t, err)
+	require.Equal(t, "newer", loaded.Nodes[0].Label)
 }
 
 func TestStoreCreateAndNameDoNotReplaceExistingCanvas(t *testing.T) {
@@ -381,6 +503,48 @@ func TestStoreCreateCollisionIsRaceFree(t *testing.T) {
 	errs := []error{<-results, <-results}
 	require.Equal(t, 1, countErrors(errs, nil))
 	require.Equal(t, 1, countErrors(errs, ErrEntryExists))
+}
+
+func TestStoreBackupAllocationIsRaceFree(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	local := testDocument(t, "local")
+	entry, err := store.Create("", "Canvas", local)
+	require.NoError(t, err)
+	external := testDocument(t, externalLabel)
+	external.ID = local.ID
+	raw, err := encodeDocument(external)
+	require.NoError(t, err)
+	require.NoError(t, replaceFile(store.namedPath("", "Canvas"), raw))
+
+	backupResult := make(chan error, 1)
+	createResult := make(chan error, 1)
+	start := make(chan struct{})
+	userBackup := testDocument(t, "user backup")
+	go func() {
+		<-start
+		_, _, err := store.BackupAndRestore(entry, local)
+		backupResult <- err
+	}()
+	go func() {
+		<-start
+		_, err := store.Create("", "Canvas.bak", userBackup)
+		createResult <- err
+	}()
+	close(start)
+	require.NoError(t, <-backupResult)
+	createErr := <-createResult
+	require.True(t, createErr == nil || errors.Is(createErr, ErrEntryExists))
+
+	matched := false
+	for _, name := range []string{"Canvas.bak", "Canvas.bak1"} {
+		data, readErr := os.ReadFile(store.namedPath("", name))
+		if readErr == nil && bytes.Equal(data, raw) {
+			matched = true
+		}
+	}
+	require.True(t, matched)
 }
 
 func countErrors(errs []error, target error) int {

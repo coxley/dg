@@ -85,6 +85,14 @@ persists a dirty document and flushes dirty history before reusing the same
 Document and Layout storage for the destination. Each canvas restores its own
 UUID-keyed history. Clean switches skip document and history writes.
 
+External modifications to the active canvas prompt before replacement. Loading
+one records a whole-document undo boundary; keeping local content asks Store to
+preserve the external bytes as a backup. External deletion can recreate the
+named record or keep the rendered document as the active draft. A replacement
+with another UUID preserves the old canvas as a draft and opens the replacement
+without an undo boundary between identities. Repeated invalidations update the
+pending conflict to the latest filesystem state.
+
 Each component defines its own `Styles`; root `Theme` configures them. Derive
 component dimensions from border and padding geometry. Cache Lip
 Gloss-rendered navigation and highlight spans. Rendering every cell through

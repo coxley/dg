@@ -425,6 +425,8 @@ Status: complete.
 
 ### Phase 8: external-conflict workflow
 
+Status: complete.
+
 - Add modification/deletion prompts, raw backup generation, reload undo, and
   draft preservation.
 - Test malformed replacements, repeated events, different-UUID replacement as

@@ -20,6 +20,13 @@ Decode rejects additional members and JSON larger than `64 << 20` bytes.
 Writes create a same-directory temporary file before link or rename. Creation
 never replaces an existing name.
 
+Conflict resolution reads the current path without trusting a stale revision.
+Keeping local content hard-links the current raw bytes to the first available
+`.bak`, `.bak1`, and later name, removes the original, then atomically recreates
+it from the local document. A failed recreation leaves the backup intact.
+Deleted named records can only be restored without replacing a path that has
+reappeared. Draft preservation replaces the UUID-keyed durable draft.
+
 Draft naming writes the named record before deleting the draft. A promotion
 journal removes a duplicate draft after restart when the named write completed.
 If the named write did not complete, recovery preserves the draft.
