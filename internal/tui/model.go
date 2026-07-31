@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -27,6 +28,7 @@ import (
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/layout"
 	canvasstore "github.com/coxley/dg/store"
+	"github.com/google/uuid"
 )
 
 type mode uint8
@@ -119,6 +121,7 @@ type Model struct {
 	panicValue  any
 
 	clipboard *clipboardview.Model
+	paste     clipboardPasteState
 
 	preferences    preferenceState
 	settingsStore  *settings.Store
@@ -497,15 +500,10 @@ func (m *Model) pasteClipboard(data []byte) tea.Cmd {
 		m.setError("paste selection: " + err.Error())
 		return nil
 	}
-	origin := m.cursor
-	if payload.DocumentID == m.document.ID {
-		bounds := payload.Fragment.Bounds()
-		x := uint64(bounds.Min.X) + uint64(bounds.Size.Width) + 2
-		if x > math.MaxUint32 {
-			m.setError("paste selection: placement outside coordinate space")
-			return nil
-		}
-		origin = layout.NewPoint(uint32(x), bounds.Min.Y)
+	origin, digest, err := m.clipboardPasteOrigin(payload, data)
+	if err != nil {
+		m.setError("paste selection: " + err.Error())
+		return nil
 	}
 	m.beginTransaction(transactionDuplicate)
 	if err := m.geo.Paste(payload.Fragment, origin); err != nil {
@@ -527,8 +525,43 @@ func (m *Model) pasteClipboard(data []byte) tea.Cmd {
 	m.refreshHits()
 	m.selectTarget()
 	m.ensureCursorVisible()
+	m.paste = clipboardPasteState{
+		digest:      digest,
+		destination: m.document.ID,
+		origin:      origin,
+	}
 	m.status = ""
 	return nil
+}
+
+type clipboardPasteState struct {
+	digest      uint32
+	destination uuid.UUID
+	origin      layout.Point
+}
+
+func (m *Model) clipboardPasteOrigin(
+	payload clipboardFragment,
+	data []byte,
+) (layout.Point, uint32, error) {
+	digest := crc32.ChecksumIEEE(data)
+	bounds := payload.Fragment.Bounds()
+	step := uint64(bounds.Size.Width) + 2
+	if m.paste.digest == digest && m.paste.destination == m.document.ID {
+		x := uint64(m.paste.origin.X) + step
+		if x > math.MaxUint32 {
+			return layout.Point{}, 0, errors.New("placement outside coordinate space")
+		}
+		return layout.NewPoint(uint32(x), m.paste.origin.Y), digest, nil
+	}
+	if payload.DocumentID != m.document.ID {
+		return m.cursor, digest, nil
+	}
+	x := uint64(bounds.Min.X) + step
+	if x > math.MaxUint32 {
+		return layout.Point{}, 0, errors.New("placement outside coordinate space")
+	}
+	return layout.NewPoint(uint32(x), bounds.Min.Y), digest, nil
 }
 
 func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {

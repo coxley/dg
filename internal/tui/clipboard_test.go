@@ -166,6 +166,12 @@ func TestClipboardFragmentPastesIntoSameAndOtherCanvas(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, original.Max().X+2, source.geo.Nodes[duplicate].Rect.Min.X)
 	require.Equal(t, original.Min.Y, source.geo.Nodes[duplicate].Rect.Min.Y)
+	firstDuplicate := source.geo.Nodes[duplicate].Rect
+	updateModel(t, source, clipboardview.PasteMsg{Data: payload})
+	duplicate, ok = source.geo.Selection().FirstNode()
+	require.True(t, ok)
+	require.Equal(t, firstDuplicate.Max().X+2, source.geo.Nodes[duplicate].Rect.Min.X)
+	require.Equal(t, firstDuplicate.Min.Y, source.geo.Nodes[duplicate].Rect.Min.Y)
 
 	destination, _ := newTestModel(t)
 	destination.cursor = layout.NewPoint(30, 12)
@@ -174,6 +180,12 @@ func TestClipboardFragmentPastesIntoSameAndOtherCanvas(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, layout.NewPoint(30, 12), destination.geo.Nodes[pasted].Rect.Min)
 	require.Equal(t, "node", destination.geo.Label(pasted))
+	firstPaste := destination.geo.Nodes[pasted].Rect
+	updateModel(t, destination, clipboardview.PasteMsg{Data: payload})
+	pasted, ok = destination.geo.Selection().FirstNode()
+	require.True(t, ok)
+	require.Equal(t, firstPaste.Max().X+2, destination.geo.Nodes[pasted].Rect.Min.X)
+	require.Equal(t, firstPaste.Min.Y, destination.geo.Nodes[pasted].Rect.Min.Y)
 }
 
 func TestStaleExportCloseDoesNotDismissCopiedNotice(t *testing.T) {
