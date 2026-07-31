@@ -34,10 +34,9 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		m.interaction.click.valid = false
 		m.cursor = point
 		m.refreshHits()
-		if m.beginBendDrag(point) {
+		if m.beginResize(point) || m.beginBendDrag(point) {
 			return
 		}
-		m.beginResize(point)
 		return
 	}
 	if mouse.Button != tea.MouseLeft {
@@ -149,9 +148,9 @@ func (m *Model) resetDoubleClickedObject() bool {
 	return m.autoSizeDoubleClickedNode() || m.resetDoubleClickedEdge()
 }
 
-func (m *Model) beginResize(point layout.Point) {
+func (m *Model) beginResize(point layout.Point) bool {
 	if !m.interaction.idle() {
-		return
+		return false
 	}
 	for _, hit := range m.hits {
 		if hit.Kind != layout.HitNode {
@@ -185,8 +184,9 @@ func (m *Model) beginResize(point layout.Point) {
 			corner: corner,
 		}
 		m.status = ""
-		return
+		return true
 	}
+	return false
 }
 
 func (m *Model) autoSizeDoubleClickedNode() bool {

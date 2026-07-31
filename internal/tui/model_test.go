@@ -4137,6 +4137,38 @@ func TestModelMouseResizesNodeAsOneInteraction(t *testing.T) {
 	require.False(t, explicit)
 }
 
+func TestModelNodeBodyResizeWinsNearbyEdgeBend(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 30})
+	require.NoError(t, model.geo.PlaceNode(right, layout.NewPoint(28, 14)))
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	portA, _, err := model.geo.EdgePorts(edgeID)
+	require.NoError(t, err)
+	bend := layout.PinnedBend{
+		Point:    model.geo.Ports[portA].Exit,
+		Incoming: layout.East,
+		Outgoing: layout.South,
+	}
+	require.NoError(t, model.geo.SetPinnedBends(edgeID, []layout.PinnedBend{bend}))
+	require.NoError(t, model.rebuild())
+	model.history.Clear()
+
+	point := model.geo.Ports[portA].Anchor
+	require.True(t, model.geo.Nodes[left].Rect.Contains(point))
+	require.LessOrEqual(t, pointDistance(point, bend.Point), uint64(bendDragRadius))
+	nearestEdge, _, _, ok := model.nearestEdgeBend(point)
+	require.True(t, ok)
+	require.Equal(t, edgeID, nearestEdge)
+
+	model.updateMouseClick(modelMouseAt(model, point, tea.MouseRight))
+
+	require.Equal(t, gestureResize, model.interaction.gesture.kind)
+	require.Equal(t, layout.Hit{ID: left, Kind: layout.HitNode}, model.interaction.gesture.target)
+	require.Equal(t, transactionResize, model.interaction.transaction.owner)
+}
+
 func TestModelRightDragPinsMultipleEdgeBendsAndDoubleClickResets(t *testing.T) {
 	t.Parallel()
 

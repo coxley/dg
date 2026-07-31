@@ -56,9 +56,9 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - a line press and release snap to the closest usable port within two Manhattan
   cells
 - right drag resizes from the nearest corner
-- right drag within three Manhattan cells of a visible edge corner pins and
-  moves that bend along one dominant axis; selected edges win ambiguous bend
-  hits
+- right drag on a node body resizes from the nearest corner; otherwise, right
+  drag within three Manhattan cells of a visible edge corner pins and moves
+  that bend along one dominant axis; selected edges win ambiguous bend hits
 - double-click restores automatic node sizing
 - double-clicking an edge clears all of its pinned bends
 - Alt-drag duplicates selected nodes and their internal edges
