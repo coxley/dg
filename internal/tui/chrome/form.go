@@ -46,6 +46,7 @@ type FormField struct {
 	Directory   string
 	Text        string
 	Placeholder string
+	TextWidth   int
 }
 
 // FormSpacer declares flexible space before the button list.
@@ -655,7 +656,7 @@ func (f *Form) renderField(field FormField, focused bool, width int) string {
 	label := labelStyle.Render(field.Label)
 	if field.Kind == TextField {
 		input := f.inputs[field.ID]
-		input.SetWidth(max(width-ansi.StringWidth(label)-1, 0))
+		input.SetWidth(textFieldWidth(field, label, width))
 		input.SetHovered(hovered)
 		if focused {
 			input.Focus()
@@ -773,10 +774,18 @@ func (f *Form) clickTextInput(index, x int) {
 	}
 	rect := f.plan.Fields[index].Rect
 	label := f.styles.FocusedLabel.Render(field.Label)
-	inputWidth := max(rect.Width-ansi.StringWidth(label)-1, 0)
+	inputWidth := textFieldWidth(field, label, rect.Width)
 	input.SetWidth(inputWidth)
 	input.Focus()
 	input.Click(x - (rect.Right() - inputWidth))
+}
+
+func textFieldWidth(field FormField, label string, width int) int {
+	width = max(width-ansi.StringWidth(label)-1, 0)
+	if field.TextWidth > 0 {
+		width = min(width, field.TextWidth)
+	}
+	return width
 }
 
 func cloneFormDeclaration(declaration FormDeclaration) FormDeclaration {

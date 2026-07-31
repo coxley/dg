@@ -294,6 +294,23 @@ func TestFormTextFieldTypesPastesClicksAndStaysAccessible(t *testing.T) {
 	require.Equal(t, 30, ansi.StringWidth(strings.Split(form.View().Content, "\n")[0]))
 }
 
+func TestFormTextFieldCanUseACompactRightJustifiedValue(t *testing.T) {
+	t.Parallel()
+
+	form := NewForm(FormDeclaration{
+		Fields: []FormField{{
+			ID: "title", Label: "Canvas name", Kind: TextField,
+			Text: "diagram", TextWidth: 12,
+		}},
+	}, testFormStyles())
+	form.SetBounds(Rect{Width: 30, Height: 1})
+
+	line := ansi.Strip(form.View().Content)
+	require.Equal(t, 30, ansi.StringWidth(line))
+	require.True(t, strings.HasPrefix(line, "Canvas name"), line)
+	require.True(t, strings.HasSuffix(line, "diagram     "), line)
+}
+
 func TestFormTextFieldTypesNavigationAliasesAndUsesArrowsForCaret(t *testing.T) {
 	t.Parallel()
 
