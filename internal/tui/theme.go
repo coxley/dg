@@ -114,6 +114,9 @@ func convertTint(theme *tint.Tint) Theme {
 	modalBody := lipgloss.NewStyle().
 		PaddingTop(1)
 
+	hoverNav := lipgloss.NewStyle().Foreground(text)
+	activeNav := hoverNav.Background(focus)
+
 	button := commonBox.MarginRight(1)
 	focusedButton := button.Border(lipgloss.DoubleBorder(), true)
 	sidebar := lipgloss.NewStyle().
@@ -189,10 +192,8 @@ func convertTint(theme *tint.Tint) Theme {
 		Navigation: nav.Styles{
 			Container: toolbar,
 			Item:      plain,
-			Active: lipgloss.NewStyle().
-				Background(focus).
-				Foreground(text),
-			Hover: lipgloss.NewStyle().Foreground(text),
+			Active:    activeNav,
+			Hover:     hoverNav,
 		},
 		Modal: modalview.Styles{
 			Container:       modal,
@@ -221,18 +222,20 @@ func convertTint(theme *tint.Tint) Theme {
 		Sidebar: sidebarStyles{
 			Container:        sidebar,
 			FocusedContainer: sidebar,
-			Header:           plain.Padding(0, 1),
-			Tab:              tab,
-			FocusedTab:       activeControl.Padding(0, 1),
-			HoveredTab:       lipgloss.NewStyle().Foreground(text),
-			ActiveTab:        tabActive,
-			Item:             tab.Padding(0, 1),
+			Header: plain.
+				MarginBottom(1).
+				BorderForeground(lipgloss.BrightBlack).
+				Border(lipgloss.NormalBorder(), false, false, true, false),
+			Tab:        plain,
+			ActiveTab:  activeNav,
+			HoveredTab: hoverNav,
+			Item:       tab.Padding(0, 1),
 			FocusedItem: activeControl.
 				Padding(0, 1),
-			ActiveItem: tabActive,
-			Section: tab.Padding(0, 1),
+			ActiveItem: activeControl.Padding(0, 1),
+			Section:    tab.Padding(1, 0, 0, 0),
 			FocusedSection: activeControl.
-				Padding(0, 1),
+				Padding(1, 0, 0, 0),
 			ClearDrafts: tab.MarginTop(1),
 			Footer:      tab.Foreground(muted),
 			Scrollbar:   scrollbar,
