@@ -212,6 +212,74 @@ func TestSidebarDeleteRemovesOnlyInactiveDraft(t *testing.T) {
 	require.Equal(t, []canvasstore.Entry{active}, entries)
 }
 
+func TestSidebarDragMovesCanvasBetweenSectionsAndRoot(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID, store := newStoredTestModel(t, "original")
+	active, err := store.Name(*model.entry, "", "Architecture")
+	require.NoError(t, err)
+	model.setActiveEntry(active)
+	for _, location := range [][2]string{
+		{"Candidates", "Applicant"},
+		{"Specifications", "Draft spec"},
+	} {
+		_, err := store.Create(
+			location[0],
+			location[1],
+			document.New(mustLayoutWithLabel(t, location[1])),
+		)
+		require.NoError(t, err)
+	}
+	model.updateCatalog(store.Reconcile(model.catalog))
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, "changed"))
+	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
+	model.setMotionEnabled(false)
+	updateModelCommand(t, model, sidebarKey())
+
+	dragSidebarItem(t, model, "canvas:/Architecture", "canvas:Candidates/Applicant")
+	require.Equal(t, "Candidates", model.entry.Section)
+	require.Equal(t, "dg - Candidates/Architecture", model.windowTitle)
+	require.Equal(t, "moved Architecture to Candidates", model.status)
+	loaded, err := store.Load(*model.entry)
+	require.NoError(t, err)
+	require.Equal(t, "changed", loaded.Nodes[0].Label)
+
+	dragSidebarItem(t, model, "canvas:Candidates/Architecture", "section:Specifications")
+	require.Equal(t, "Specifications", model.entry.Section)
+	require.Equal(t, "moved Architecture to Specifications", model.status)
+
+	dragSidebarItemToHeader(t, model, "canvas:Specifications/Architecture")
+	require.Empty(t, model.entry.Section)
+	require.Equal(t, "dg - Architecture", model.windowTitle)
+	require.Equal(t, "moved Architecture to Canvases", model.status)
+}
+
+func TestSidebarStationaryClickOpensCanvasOnRelease(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "active")
+	named, err := store.Create("", "Architecture", document.New(mustLayoutWithLabel(t, "named")))
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
+	model.setMotionEnabled(false)
+	updateModelCommand(t, model, sidebarKey())
+	point := sidebarItemPoint(t, model, "canvas:/Architecture")
+
+	updateModel(t, model, tea.MouseClickMsg{
+		X: point.X, Y: point.Y, Button: tea.MouseLeft,
+	})
+	require.NotEqual(t, named.ID, model.entry.ID)
+	require.Equal(t, surfaceSidebar, model.workspace.CaptureID())
+	updateModelCommand(t, model, tea.MouseReleaseMsg{
+		X: point.X, Y: point.Y, Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, named.ID, model.entry.ID)
+	require.Empty(t, model.workspace.CaptureID())
+}
+
 func BenchmarkSidebarCatalog1000(b *testing.B) {
 	model, _, _ := newStoredTestModel(b, "active")
 	model.catalog = make([]canvasstore.Entry, 1000)
@@ -628,6 +696,60 @@ func sidebarLabels(model *Model) []string {
 		labels[i] = item.Label
 	}
 	return labels
+}
+
+func dragSidebarItem(t *testing.T, model *Model, source, target chrome.FocusID) {
+	t.Helper()
+
+	start := sidebarItemPoint(t, model, source)
+	end := sidebarItemPoint(t, model, target)
+	updateModel(t, model, tea.MouseClickMsg{
+		X: start.X, Y: start.Y, Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X: end.X, Y: end.Y, Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X: end.X, Y: end.Y, Button: tea.MouseLeft,
+	})
+}
+
+func dragSidebarItemToHeader(t *testing.T, model *Model, source chrome.FocusID) {
+	t.Helper()
+
+	start := sidebarItemPoint(t, model, source)
+	surface, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	header := model.sidebar.pane.Plan().Header
+	end := chrome.Point{
+		X: surface.Content.X + header.X + 1,
+		Y: surface.Content.Y + header.Y,
+	}
+	updateModel(t, model, tea.MouseClickMsg{
+		X: start.X, Y: start.Y, Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X: end.X, Y: end.Y, Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X: end.X, Y: end.Y, Button: tea.MouseLeft,
+	})
+}
+
+func sidebarItemPoint(t *testing.T, model *Model, id chrome.FocusID) chrome.Point {
+	t.Helper()
+
+	surface, ok := model.surfacePlan(surfaceSidebar)
+	require.True(t, ok)
+	index := slices.IndexFunc(model.sidebar.declaration.Items, func(item sidebarItem) bool {
+		return item.ID == id
+	})
+	require.NotEqual(t, -1, index, id)
+	body := model.sidebar.pane.Plan().Body
+	return chrome.Point{
+		X: surface.Content.X + body.X + 1,
+		Y: surface.Content.Y + body.Y + index - model.sidebar.viewport.Plan().Offset.Y,
+	}
 }
 
 func focusSidebarItem(t testing.TB, model *Model, id chrome.FocusID) {

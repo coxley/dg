@@ -17,6 +17,7 @@ const (
 	compactWidthThreshold = sidebarMinimumWidth + sidebarCanvasMinimum
 	sidebarMotionFPS      = 60
 	sidebarMotionInterval = time.Second / sidebarMotionFPS
+	sidebarRootDropTarget = -2
 )
 
 type sidebarPlacement uint8
@@ -48,6 +49,23 @@ type sidebarDeclaration struct {
 	Footer string
 }
 
+type sidebarDrag struct {
+	source        sidebarItem
+	start         chrome.Point
+	targetSection string
+	targetIndex   int
+	active        bool
+	moved         bool
+	valid         bool
+}
+
+type sidebarRelease struct {
+	source        sidebarItem
+	targetSection string
+	dragged       bool
+	valid         bool
+}
+
 type sidebarState struct {
 	declaration sidebarDeclaration
 	styles      sidebarStyles
@@ -62,6 +80,7 @@ type sidebarState struct {
 	drafts      bool
 	collapsed   map[string]bool
 	desired     int
+	drag        sidebarDrag
 }
 
 type sidebarMotionMsg struct {
@@ -197,15 +216,20 @@ func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) boo
 		return false
 	}
 	s.show()
-	for range len(s.declaration.Items) {
-		_, focused := s.focus.Current()
-		if focused == s.declaration.Items[index].ID {
-			break
-		}
-		s.focus.Move(1)
-	}
+	s.focusItem(s.declaration.Items[index].ID)
 	s.render()
 	return s.declaration.Items[index].Kind != 0
+}
+
+func (s *sidebarState) beginCanvasDrag(point chrome.Point) bool {
+	item, ok := s.focusedItem()
+	if !ok || item.Kind != sidebarItemRecord || item.Entry.Draft {
+		return false
+	}
+	s.drag = sidebarDrag{
+		source: item, start: point, targetIndex: -1, active: true,
+	}
+	return true
 }
 
 func (s *sidebarState) motion(point chrome.Point, surface chrome.SurfacePlan) {
@@ -215,10 +239,36 @@ func (s *sidebarState) motion(point chrome.Point, surface chrome.SurfacePlan) {
 	}
 	s.viewport.HoverScrollbar(local)
 	s.viewport.DragScrollbar(local)
+	if !s.drag.active || s.viewport.ScrollbarDragging() {
+		return
+	}
+	moved := point != s.drag.start
+	section, index, valid := s.dropTarget(local)
+	if s.drag.moved == moved && s.drag.targetSection == section &&
+		s.drag.targetIndex == index && s.drag.valid == valid {
+		return
+	}
+	s.drag.moved = moved
+	s.drag.targetSection = section
+	s.drag.targetIndex = index
+	s.drag.valid = valid
+	s.render()
 }
 
-func (s *sidebarState) release() {
+func (s *sidebarState) release() sidebarRelease {
 	s.viewport.EndScrollbarDrag()
+	if !s.drag.active {
+		return sidebarRelease{}
+	}
+	release := sidebarRelease{
+		source:        s.drag.source,
+		targetSection: s.drag.targetSection,
+		dragged:       s.drag.moved,
+		valid:         s.drag.valid,
+	}
+	s.drag = sidebarDrag{}
+	s.render()
+	return release
 }
 
 func (s *sidebarState) clearHover() {
@@ -226,7 +276,7 @@ func (s *sidebarState) clearHover() {
 }
 
 func (s *sidebarState) capturesPointer() bool {
-	return s.viewport.ScrollbarDragging()
+	return s.viewport.ScrollbarDragging() || s.drag.active
 }
 
 func (s *sidebarState) scroll(delta int) {
@@ -240,7 +290,11 @@ func (s *sidebarState) render() {
 	}
 	s.pane.SetStyle(container)
 	s.viewport.SetFocused(s.focused)
-	s.pane.SetHeader([]string{s.styles.Header.Render(s.declaration.Header)})
+	headerStyle := s.styles.Header
+	if s.drag.moved && s.drag.valid && s.drag.targetIndex == sidebarRootDropTarget {
+		headerStyle = s.styles.FocusedItem
+	}
+	s.pane.SetHeader([]string{headerStyle.Render(s.declaration.Header)})
 	s.pane.SetFooter([]string{s.styles.Footer.Render(s.declaration.Footer)})
 	_, focused := s.focus.Current()
 	lines := make([]string, len(s.declaration.Items))
@@ -249,9 +303,48 @@ func (s *sidebarState) render() {
 		if s.focused && item.ID == focused {
 			style = s.styles.FocusedItem
 		}
+		if s.drag.moved && s.drag.valid && s.drag.targetIndex == i {
+			style = s.styles.FocusedItem
+		}
 		lines[i] = style.Render(item.Label)
 	}
 	s.viewport.SetContent(lines)
+}
+
+func (s *sidebarState) dropTarget(local chrome.Point) (string, int, bool) {
+	plan := s.pane.Plan()
+	if plan.Header.Contains(local) {
+		return "", sidebarRootDropTarget, true
+	}
+	if !plan.Body.Contains(local) {
+		return "", -1, false
+	}
+	index := local.Y - plan.Body.Y + s.viewport.Plan().Offset.Y
+	if index < 0 || index >= len(s.declaration.Items) {
+		return "", sidebarRootDropTarget, true
+	}
+	item := s.declaration.Items[index]
+	switch item.Kind {
+	case sidebarItemSection:
+		return item.Section, index, true
+	case sidebarItemRecord:
+		if !item.Entry.Draft {
+			return item.Entry.Section, index, true
+		}
+	case sidebarItemClearDrafts:
+	}
+	return "", -1, false
+}
+
+func (s *sidebarState) focusItem(id chrome.FocusID) bool {
+	for range len(s.declaration.Items) {
+		_, focused := s.focus.Current()
+		if focused == id {
+			return true
+		}
+		s.focus.Move(1)
+	}
+	return false
 }
 
 func (s *sidebarState) setContent(header string, items []sidebarItem, allLabels []string) {

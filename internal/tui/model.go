@@ -383,7 +383,7 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 		return m, m.updateSurfaceMouseClick(message)
 	case tea.MouseReleaseMsg:
 		m.clipboard.CancelPending()
-		m.updateSurfaceMouseRelease(message)
+		return m, m.updateSurfaceMouseRelease(message)
 	case tea.MouseMotionMsg:
 		return m, m.updateSurfaceMouseMotion(message)
 	case tea.MouseWheelMsg:

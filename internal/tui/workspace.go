@@ -162,6 +162,10 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 		surface, _ := m.surfacePlan(surfaceSidebar)
 		m.sidebar.show()
 		if m.sidebar.click(point, surface) {
+			if message.Button == tea.MouseLeft && m.sidebar.beginCanvasDrag(point) {
+				m.workspace.Capture(surfaceSidebar)
+				return nil
+			}
 			return m.activateSidebar()
 		}
 		if m.sidebar.capturesPointer() {
@@ -220,8 +224,9 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
+func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) tea.Cmd {
 	id := m.workspace.CaptureID()
+	var command tea.Cmd
 	switch id {
 	case surfaceCanvas:
 		m.updateMouseRelease(message.Mouse())
@@ -229,7 +234,13 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
 		plan, _ := m.surfacePlan(surfaceHelp)
 		m.helpInspector.update(message, plan.Rect)
 	case surfaceSidebar:
-		m.sidebar.release()
+		release := m.sidebar.release()
+		switch {
+		case !release.source.Entry.Draft && release.dragged && release.valid:
+			command = m.moveCanvasToSection(release.source.Entry, release.targetSection)
+		case release.source.Kind != 0 && !release.dragged:
+			command = m.activateSidebar()
+		}
 	default:
 		if id != m.dialogs.ActiveID() {
 			m.updateMouseRelease(message.Mouse())
@@ -238,6 +249,7 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) {
 		m.dialogs.Release(message)
 	}
 	m.workspace.Release()
+	return command
 }
 
 func (m *Model) updateSurfaceMouseWheel(message tea.MouseWheelMsg) tea.Cmd {

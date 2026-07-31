@@ -143,7 +143,8 @@ spacers anchor actions to the body bottom.
 Enter submits the primary action from ordinary form fields: Save in
 Preferences, Copy in Export, and Name Canvas in the naming form. Fields with
 their own Enter action take precedence, including the preferences directory
-picker. Enter on an explicitly focused button submits that button.
+picker. Enter on an explicitly focused button submits that button. The naming
+form right-justifies compact text values opposite their field labels.
 
 The sidebar uses an application-declared Pane with separate Canvases and Drafts
 tabs. Canvases groups root records and collapsible one-level sections; Drafts
@@ -160,6 +161,11 @@ inside the sidebar focuses it, including its header, empty body space, and
 scrollbar. The floating navigation remains terminal-anchored while a dock
 opens or closes. It stays on the canvas fast path when fully contained and
 uses its compositor layer only where a dock overlaps it.
+
+Dragging a named canvas onto a section header or one of its canvases moves it
+to that section. Dropping it on the Canvases header or unused list space moves
+it to the preferred directory root. A click without pointer motion opens the
+canvas on release. Drafts do not participate in section dragging.
 
 Backspace or Delete on a named canvas moves it to Drafts without changing its
 document identity. The active canvas flushes before demotion and remains open

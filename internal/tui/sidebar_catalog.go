@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -210,6 +211,45 @@ func (m *Model) demoteCanvas(entry canvasstore.Entry, active bool) {
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
 	m.status = fmt.Sprintf("moved %s to Drafts", title)
 	m.statusError = ""
+}
+
+func (m *Model) moveCanvasToSection(entry canvasstore.Entry, section string) tea.Cmd {
+	if entry.Section == section {
+		return nil
+	}
+	active := m.entry != nil && sameCanvas(*m.entry, entry)
+	if active {
+		if err := m.flushActive(); err != nil {
+			m.setError(fmt.Sprintf("save canvas before moving: %v", err))
+			return nil
+		}
+		entry = *m.entry
+	}
+	moved, err := m.canvasStore.Move(entry, section, entry.Name)
+	if err != nil {
+		if errors.Is(err, canvasstore.ErrEntryExists) {
+			m.setError("a canvas with that name already exists in the destination")
+			return nil
+		}
+		m.setError(fmt.Sprintf("move canvas: %v", err))
+		return nil
+	}
+	if active {
+		m.setActiveEntry(moved)
+	}
+	m.sidebar.collapsed[section] = false
+	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+	m.sidebar.focusItem(canvasSidebarItem(moved, section != "").ID)
+	m.sidebar.focus.Reveal(m.sidebar.viewport)
+	m.sidebar.render()
+	m.status = "moved " + moved.Name
+	if section == "" {
+		m.status += " to Canvases"
+	} else {
+		m.status += " to " + section
+	}
+	m.statusError = ""
+	return m.retargetSidebar()
 }
 
 func (s *sidebarState) focusedItem() (sidebarItem, bool) {
