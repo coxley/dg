@@ -516,7 +516,7 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		m.openPreferences()
 	case commandQuit:
 		m.interruptInteraction()
-		return tea.Quit
+		return m.handleFlushRequest(flushRequestMsg{quit: true})
 	case commandSave:
 		switch m.dialogs.ActiveID() {
 		case surfaceSave:

@@ -28,11 +28,12 @@ the result.
 The engine supports multiline labels, automatic and explicit node sizes,
 custom ports, orthogonal routing, route sharing, arrows, border and stroke
 styles, layers, occlusion, hit testing, selection, routed previews, persistent
-undo history, and versioned JSON documents.
+undo history, and versioned compressed documents.
 
 The Bubble Tea frontend supports mouse editing, rectangle and line tools,
 resizing, duplication, label editing, layering, style changes, undo and redo,
-saving, clipboard export, preferences, and live previews.
+named and draft canvases, autosave, external-change reconciliation, clipboard
+export, preferences, and live previews.
 
 ## Packages
 
@@ -44,6 +45,8 @@ saving, clipboard export, preferences, and live previews.
 - `layout`: composes `ir.Graph` with geometry, routing, raster ownership,
   selection, layers, and reversible change replay
 - `render`: encodes layout raster data as Unicode terminal frames
+- `store`: persists compressed named canvases, durable drafts, raw backups, and
+  disposable history blobs; scans and watches the canvas catalog
 - `internal/tui`: implements the Bubble Tea interactive editor
 - `internal/tui/canvas`: retains canvas frames, encoders, and drawing styles
 - `internal/tui/clipboard`: owns copy debounce, export, and clipboard backends

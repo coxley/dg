@@ -39,6 +39,8 @@ func (m *Model) updatePersistence(message tea.Msg) (tea.Cmd, bool) {
 			return nil, true
 		}
 		return waitCatalog(m.catalogFeed), true
+	case flushRequestMsg:
+		return m.handleFlushRequest(message), true
 	default:
 		return nil, false
 	}

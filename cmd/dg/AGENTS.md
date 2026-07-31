@@ -9,15 +9,20 @@ executable. Keep engine and interaction logic in their owning packages.
 
 ```sh
 go run ./cmd/dg
-go run ./cmd/dg path/to/diagram.json
+go run ./cmd/dg path/to/diagram.dg
 ```
 
-No argument opens the example diagram. One argument loads a document, restores
-its cached history, and opens the editor. More arguments return usage.
+No argument opens the most recently modified canvas, or creates a durable draft
+from the example diagram when the catalog is empty. One argument imports a
+compressed document into Drafts without changing the source. More arguments
+return usage.
 
-The command flushes history on exit. History cache failures are logged and
-must not block document editing or saving. New diagrams use persisted router
-preferences when the user enabled them.
+The TUI serializes document and history writes on its owner event loop. Normal
+quit, SIGINT, and SIGTERM flush before exiting; a second signal exits
+immediately. Panic cleanup gets two seconds, reports cleanup failures, and then
+re-panics the original value. History cache failures never block document
+editing or saving. New diagrams use persisted router preferences when the user
+enabled them.
 
 ## Constraints
 

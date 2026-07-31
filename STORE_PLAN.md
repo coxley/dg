@@ -435,6 +435,8 @@ Status: complete.
 
 ### Phase 9: lifecycle and final integration
 
+Status: complete.
+
 - Expose a TUI flush request that marshals onto the owner event loop and
   acknowledges completion after the serialized write coordinator drains.
 - Wire normal quit, switch, SIGINT, and SIGTERM through that request. A second

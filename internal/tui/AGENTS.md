@@ -93,6 +93,13 @@ with another UUID preserves the old canvas as a draft and opens the replacement
 without an undo boundary between identities. Repeated invalidations update the
 pending conflict to the latest filesystem state.
 
+The owner event loop serializes autosave, switching, conflict resolution, and
+flush requests. `RequestFlush` acknowledges after both the active document and
+dirty history finish writing. Normal quit and the first SIGINT or SIGTERM use
+that boundary; a second signal exits immediately. Bubble Tea restores terminal
+state after a panic, then bounded cleanup flushes for at most two seconds and
+re-panics the retained value.
+
 Each component defines its own `Styles`; root `Theme` configures them. Derive
 component dimensions from border and padding geometry. Cache Lip
 Gloss-rendered navigation and highlight spans. Rendering every cell through

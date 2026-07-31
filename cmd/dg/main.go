@@ -50,13 +50,6 @@ func run(args []string) error {
 	if _, err := undo.Restore(doc); err != nil {
 		log.Printf("restore undo history: %v", err)
 	}
-	defer func() {
-		if undo.Dirty() {
-			if err := undo.Flush(); err != nil {
-				log.Printf("flush undo history: %v", err)
-			}
-		}
-	}()
 	if err := tui.Run(
 		geo,
 		tui.WithDocument(doc),

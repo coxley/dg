@@ -19,6 +19,7 @@ import (
 )
 
 func (m *Model) View() tea.View {
+	defer m.retainPanic()
 	tool := m.activeTool()
 	frameID := m.activeFrame()
 	frame, rows := m.canvas.Frame(frameID), m.canvas.Rows(frameID)

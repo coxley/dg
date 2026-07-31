@@ -8,7 +8,9 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/signal"
 	"slices"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -112,6 +114,8 @@ type Model struct {
 	statusError string
 	dirty       uint64
 	saved       uint64
+	exitErr     error
+	panicValue  any
 
 	clipboard *clipboardview.Model
 
@@ -280,13 +284,28 @@ func Run(geo *layout.Layout, options ...Option) error {
 	if err != nil {
 		return err
 	}
-	_, runErr := tea.NewProgram(model).Run()
+	program := tea.NewProgram(model, tea.WithoutSignalHandler())
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	stopped := make(chan struct{})
+	go forwardSignals(signals, stopped, program, os.Exit)
+	_, runErr := program.Run()
+	close(stopped)
+	signal.Stop(signals)
 	if model.cancelWatch != nil {
 		model.cancelWatch()
 	}
-	model.interruptInteraction()
 	cleanupErr := resetLiveTint(os.Stdout)
-	return errors.Join(runErr, cleanupErr)
+	if model.panicValue != nil {
+		cleanupErr = errors.Join(flushAfterPanic(model, panicFlushTimeout), cleanupErr)
+		reportPanicCleanup(os.Stderr, cleanupErr)
+		panic(model.panicValue)
+	}
+	var flushErr error
+	if model.exitErr == nil {
+		flushErr = model.flushActive()
+	}
+	return errors.Join(runErr, model.exitErr, flushErr, cleanupErr)
 }
 
 func resetLiveTint(writer io.Writer) error {
@@ -295,6 +314,7 @@ func resetLiveTint(writer io.Writer) error {
 }
 
 func (m *Model) Init() tea.Cmd {
+	defer m.retainPanic()
 	raw := tea.Raw(ansi.SetModeLightDark + ansi.RequestBackgroundColor)
 	watch := m.startCatalogWatch()
 	if watch == nil {
@@ -304,6 +324,7 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
+	defer m.retainPanic()
 	dirty := m.dirty
 	syncWorkspace := m.workspaceNeedsSync()
 	defer func() {
