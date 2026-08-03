@@ -53,13 +53,14 @@ func TestStoreAtomicallyReplacesSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.json")
 	store := NewStore(path)
 	first := Snapshot{
-		Router:        layout.DefaultRouter(),
-		ApplyToFuture: true,
-		SaveDirectory: "/first",
-		CommentPrefix: "# ",
-		ShortcutStyle: ShortcutMac,
-		DarkTint:      "dark",
-		LightTint:     "light",
+		Router:           layout.DefaultRouter(),
+		ApplyToFuture:    true,
+		SaveDirectory:    "/first",
+		CommentPrefix:    "# ",
+		ShortcutStyle:    ShortcutMac,
+		DarkTint:         "dark",
+		LightTint:        "light",
+		OpaqueBackground: true,
 	}
 	require.NoError(t, store.Save(first))
 

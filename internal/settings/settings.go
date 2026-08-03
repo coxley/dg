@@ -30,13 +30,14 @@ const (
 
 // Snapshot contains one complete settings load.
 type Snapshot struct {
-	Router        layout.Router `json:"router"`
-	ApplyToFuture bool          `json:"apply_to_future"`
-	SaveDirectory string        `json:"save_directory,omitempty"`
-	CommentPrefix string        `json:"comment_prefix,omitempty"`
-	ShortcutStyle ShortcutStyle `json:"shortcut_style,omitempty"`
-	DarkTint      string        `json:"dark_tint,omitempty"`
-	LightTint     string        `json:"light_tint,omitempty"`
+	Router           layout.Router `json:"router"`
+	ApplyToFuture    bool          `json:"apply_to_future"`
+	SaveDirectory    string        `json:"save_directory,omitempty"`
+	CommentPrefix    string        `json:"comment_prefix,omitempty"`
+	ShortcutStyle    ShortcutStyle `json:"shortcut_style,omitempty"`
+	DarkTint         string        `json:"dark_tint,omitempty"`
+	LightTint        string        `json:"light_tint,omitempty"`
+	OpaqueBackground bool          `json:"opaque_background,omitempty"`
 }
 
 // Store loads and atomically saves one configuration file.
