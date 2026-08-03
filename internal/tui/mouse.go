@@ -52,9 +52,9 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	}
 
 	if m.interaction.session.kind == sessionLabelEdit {
-		m.moveCaretToPoint(point)
-		if m.geo.Nodes[m.target.ID].Rect.Contains(point) {
-			rect := m.geo.Nodes[m.target.ID].Rect
+		rect := m.geo.Nodes[m.target.ID].Rect
+		if rect.Contains(point) {
+			m.moveCaretToPoint(point)
 			m.interaction.gesture = pointerGesture{
 				kind:   gestureLabelPress,
 				target: m.target,
@@ -62,8 +62,9 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 				point:  point,
 				offset: layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y),
 			}
+			return
 		}
-		return
+		m.commitLabelEdit()
 	}
 	if m.interaction.tool == toolConnect {
 		m.updateConnectionClick(point)
@@ -517,7 +518,8 @@ func (m *Model) finishRectangle() {
 	}
 	m.refreshHits()
 	m.selectTarget()
-	m.status = "drag to create a rectangle"
+	m.interaction.tool = toolNavigate
+	m.status = ""
 }
 
 func (m *Model) resizeNode(point layout.Point) {

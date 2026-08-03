@@ -271,7 +271,7 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 		Button: tea.MouseLeft,
 	})
 
-	require.Equal(t, modeRectangle, model.interaction.mode())
+	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.True(t, model.geo.NodeExists(nodeID))
 	require.Equal(t, "", model.geo.Label(nodeID))
 	size, explicit := model.geo.ExplicitNodeSize(nodeID)
@@ -283,8 +283,6 @@ func TestModelCreatesExplicitRectangleAsOneInteraction(t *testing.T) {
 		Kind: layout.HitNode,
 	}))
 
-	updateModel(t, model, keyPress('q', "q"))
-	require.Equal(t, modeNavigate, model.interaction.mode())
 	updateModel(t, model, keyPress('u', "u"))
 	require.False(t, model.geo.NodeExists(nodeID))
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'r', Mod: tea.ModCtrl}))
@@ -324,29 +322,24 @@ func TestModelQReturnsDrawingToolToCursorBeforeQuitting(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestModelRectangleToolCreatesRepeatedRectangles(t *testing.T) {
+func TestModelRectangleToolReturnsToCursor(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	updateModel(t, model, keyPress('r', "r"))
-	for _, rect := range []struct{ x1, y1, x2, y2 int }{
-		{x1: 15, y1: 8, x2: 22, y2: 12},
-		{x1: 30, y1: 8, x2: 37, y2: 12},
-	} {
-		updateModel(t, model, tea.MouseClickMsg{
-			X: rect.x1, Y: rect.y1, Button: tea.MouseLeft,
-		})
-		updateModel(t, model, tea.MouseMotionMsg{
-			X: rect.x2, Y: rect.y2, Button: tea.MouseLeft,
-		})
-		updateModel(t, model, tea.MouseReleaseMsg{
-			X: rect.x2, Y: rect.y2, Button: tea.MouseLeft,
-		})
-		require.Equal(t, modeRectangle, model.interaction.mode())
-	}
+	updateModel(t, model, tea.MouseClickMsg{
+		X: 15, Y: 8, Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseMotionMsg{
+		X: 22, Y: 12, Button: tea.MouseLeft,
+	})
+	updateModel(t, model, tea.MouseReleaseMsg{
+		X: 22, Y: 12, Button: tea.MouseLeft,
+	})
 
-	require.Len(t, model.geo.Nodes, 3)
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Len(t, model.geo.Nodes, 2)
 }
 
 func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
@@ -424,7 +417,6 @@ func TestModelInheritsNodeAndEdgeStyles(t *testing.T) {
 	style, ok := model.geo.NodeStyle(created)
 	require.True(t, ok)
 	require.Equal(t, model.nodeStyle, style)
-	updateModel(t, model, keyPress('q', "q"))
 
 	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 	require.NoError(t, model.rebuild())
@@ -2775,6 +2767,30 @@ func TestModelEditMovesByGraphemeWidth(t *testing.T) {
 	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint.Add(1, 0), model.cursor)
 	updateModel(t, model, keyPress(tea.KeyDelete, ""))
 	require.Equal(t, "A", model.geo.Label(nodeID))
+}
+
+func TestModelClickOutsideNodeCommitsLabelEdit(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	selectHit(t, model, layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	updateModel(t, model, keyPress('e', "e"))
+	updateModel(t, model, keyPress('x', "x"))
+	require.Equal(t, modeEditLabel, model.interaction.mode())
+
+	outside := model.geo.Nodes[nodeID].Rect.Max().Add(1, 1)
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      int(outside.X),
+		Y:      int(outside.Y),
+		Button: tea.MouseLeft,
+	})
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.False(t, model.interaction.transaction.open())
+	require.Equal(t, "nodex", model.geo.Label(nodeID))
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, "node", model.geo.Label(nodeID))
 }
 
 func TestRectangleLabelCursorUsesTextAlignment(t *testing.T) {
