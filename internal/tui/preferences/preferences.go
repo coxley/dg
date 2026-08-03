@@ -20,6 +20,7 @@ const (
 	fieldComment       chrome.ID = "comment"
 	fieldDirectory     chrome.ID = "directory"
 	fieldKeyProfile    chrome.ID = "key-profile"
+	fieldBackground    chrome.ID = "background"
 	fieldDarkTint      chrome.ID = "dark-tint"
 	fieldLightTint     chrome.ID = "light-tint"
 	preferenceSpacer   chrome.ID = "preference-spacer"
@@ -30,6 +31,8 @@ const (
 	commentSlash                 = "// "
 	commentHash                  = "# "
 	commentBlock                 = "/* */"
+	backgroundTerminal           = "terminal"
+	backgroundOpaque             = "opaque"
 )
 
 var numericFieldIDs = [...]chrome.ID{
@@ -43,12 +46,13 @@ var numericFieldIDs = [...]chrome.ID{
 
 // Value contains editable user preferences.
 type Value struct {
-	Router        layout.Router
-	SaveDirectory string
-	CommentPrefix string
-	KeyProfile    chrome.KeyProfile
-	DarkTint      string
-	LightTint     string
+	Router           layout.Router
+	SaveDirectory    string
+	CommentPrefix    string
+	KeyProfile       chrome.KeyProfile
+	OpaqueBackground bool
+	DarkTint         string
+	LightTint        string
 }
 
 // TintOption declares one application-provided semantic tint choice.
@@ -308,6 +312,7 @@ func (m *Model) sync() {
 	m.value.Router = router
 	m.value.CommentPrefix = NormalizeCommentPrefix(m.mustSelected(fieldComment))
 	m.value.KeyProfile = profileFromValue(m.mustSelected(fieldKeyProfile))
+	m.value.OpaqueBackground = m.mustSelected(fieldBackground) == backgroundOpaque
 	m.value.DarkTint = m.mustSelected(fieldDarkTint)
 	m.value.LightTint = m.mustSelected(fieldLightTint)
 	m.value.SaveDirectory, _ = m.form.Directory(fieldDirectory)
@@ -345,6 +350,10 @@ func preferenceDeclarationWithTints(
 	value Value,
 	darkTints, lightTints []TintOption,
 ) chrome.FormDeclaration {
+	background := 0
+	if value.OpaqueBackground {
+		background = 1
+	}
 	return chrome.FormDeclaration{
 		DefaultAction: actionSave,
 		Fields: []chrome.FormField{
@@ -378,6 +387,14 @@ func preferenceDeclarationWithTints(
 					{Label: "Standard", Value: "standard"},
 				},
 				Selected: int(NormalizeKeyProfile(value.KeyProfile)),
+			},
+			{
+				ID: fieldBackground, Label: "Background", Kind: chrome.SelectField,
+				Options: []chrome.FormOption{
+					{Label: "Terminal", Value: backgroundTerminal},
+					{Label: "Opaque", Value: backgroundOpaque},
+				},
+				Selected: background,
 			},
 			tintField(fieldDarkTint, "Dark tint", value.DarkTint, darkTints),
 			tintField(fieldLightTint, "Light tint", value.LightTint, lightTints),

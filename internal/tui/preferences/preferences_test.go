@@ -44,6 +44,8 @@ func TestKeyboardTraversalVisitsEveryActionAndWraps(t *testing.T) {
 	require.True(t, model.Focus(fieldKeyProfile))
 
 	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, fieldBackground, model.FocusID())
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
 	require.Equal(t, fieldDarkTint, model.FocusID())
 	_, _ = model.Update(keyPress(tea.KeyTab, ""))
 	require.Equal(t, fieldLightTint, model.FocusID())
@@ -109,6 +111,7 @@ func TestFieldsJustifyLabelsAndValuesAcrossWidth(t *testing.T) {
 	requireRow("Default save directory", "[ browse ]")
 	requireRow("Preferred comments", "//  ")
 	requireRow("Shortcut style", "Auto  ")
+	requireRow("Background", "Terminal  ")
 }
 
 func TestFieldsFollowFormWidthChanges(t *testing.T) {
@@ -250,6 +253,18 @@ func TestTintSelectorsUseIndependentChoices(t *testing.T) {
 	_, _ = model.Update(keyPress(tea.KeyRight, ""))
 	require.Equal(t, "dark-b", model.Value().DarkTint)
 	require.Equal(t, "light-b", model.Value().LightTint)
+}
+
+func TestBackgroundSelectorTogglesOpaqueRendering(t *testing.T) {
+	t.Parallel()
+
+	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+	require.True(t, model.Focus(fieldBackground))
+
+	_, _ = model.Update(keyPress(tea.KeyRight, ""))
+	require.True(t, model.Value().OpaqueBackground)
+	_, _ = model.Update(keyPress(tea.KeyRight, ""))
+	require.False(t, model.Value().OpaqueBackground)
 }
 
 func TestInvalidKeyProfileDefaultsToAuto(t *testing.T) {
