@@ -25,7 +25,7 @@ func TestHistoryReplaysAttachmentRouteChange(t *testing.T) {
 	require.NoError(t, geo.Build())
 	require.NoError(t, transaction.Commit())
 
-	require.NotEqual(t, beforeNode, geo.Nodes[node].Rect.Min)
+	require.Equal(t, beforeNode, geo.Nodes[node].Rect.Min)
 	anchor := geo.Nodes[node].Rect.Min.Add(attachment.Anchor.X, attachment.Anchor.Y)
 	require.True(t, geo.Edges[edge].Contains(anchor))
 	require.Equal(t, source, uint32(0))
@@ -41,7 +41,65 @@ func TestHistoryReplaysAttachmentRouteChange(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, layout.NewPoint(30, 18), geo.Nodes[destination].Rect.Min)
+	require.Equal(t, beforeNode, geo.Nodes[node].Rect.Min)
 	require.Equal(t, attachment, mustAttachment(t, geo, node))
+}
+
+func TestHistoryGroupsAttachmentFallbackWithRouteMutation(t *testing.T) {
+	t.Parallel()
+
+	geo, history := newHistoryLayout(t)
+	source, err := geo.NewNodeAt("source", layout.NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", layout.NewPoint(30, 4))
+	require.NoError(t, err)
+	node, err := geo.NewNodeAt("label", layout.NewPoint(2, 20))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	portA, _, err := geo.EdgePorts(edge)
+	require.NoError(t, err)
+	y := geo.Ports[portA].Exit.Y
+	bends := []layout.PinnedBend{
+		{Point: layout.NewPoint(16, y), Incoming: layout.East, Outgoing: layout.South},
+		{Point: layout.NewPoint(16, y+8), Incoming: layout.South, Outgoing: layout.East},
+	}
+	require.NoError(t, geo.SetPinnedBends(edge, bends))
+	require.NoError(t, geo.Build())
+	point := bends[1].Point.Add(2, 0)
+	anchor := layout.NewPoint(1, 1)
+	require.NoError(t, geo.PlaceNode(node, layout.NewPoint(point.X-anchor.X, point.Y-anchor.Y)))
+	require.NoError(t, geo.AttachNode(node, edge, point))
+	history.Clear()
+	beforeAttachment := mustAttachment(t, geo, node)
+	beforeOrigin := geo.Nodes[node].Rect.Min
+
+	transaction := history.Begin()
+	require.NoError(t, geo.SetPinnedBends(edge, nil))
+	require.NoError(t, geo.Build())
+	require.NoError(t, transaction.Commit())
+	afterAttachment := mustAttachment(t, geo, node)
+	afterOrigin := geo.Nodes[node].Rect.Min
+	require.NotEqual(t, beforeAttachment.Reference, afterAttachment.Reference)
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.False(t, history.CanUndo())
+	require.Equal(t, beforeAttachment, mustAttachment(t, geo, node))
+	require.Equal(t, beforeOrigin, geo.Nodes[node].Rect.Min)
+	restoredBends, err := geo.PinnedBends(edge)
+	require.NoError(t, err)
+	require.Equal(t, bends, restoredBends)
+
+	changed, err = history.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, afterAttachment, mustAttachment(t, geo, node))
+	require.Equal(t, afterOrigin, geo.Nodes[node].Rect.Min)
+	restoredBends, err = geo.PinnedBends(edge)
+	require.NoError(t, err)
+	require.Empty(t, restoredBends)
 }
 
 func TestHistoryRestoresAttachmentAfterEdgeDeletion(t *testing.T) {
@@ -109,8 +167,11 @@ func TestAttachmentMutationHistoryProperties(t *testing.T) {
 				err = geo.SetAttachment(layout.Attachment{
 					NodeID: nodeID,
 					EdgeID: edgeID,
-					Position: rapid.Uint16Range(2000, ^uint16(0)-2000).
-						Draw(t, fmt.Sprintf("position %d", step)),
+					Reference: layout.AttachmentReference{
+						End: layout.AttachmentPortA,
+					},
+					Offset: rapid.Int64Range(2, 20).
+						Draw(t, fmt.Sprintf("offset %d", step)),
 					Anchor: layout.NewPoint(1, 1),
 				})
 			case 1:
