@@ -77,6 +77,54 @@ func TestSetPinnedBendsRejectsInvalidTurn(t *testing.T) {
 	require.EqualError(t, err, "invalid pinned bend 0")
 }
 
+func TestPinnedBendsExtendExplicitSharedBranch(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(2, 12))
+	require.NoError(t, err)
+	top, err := geo.NewNodeAt("top", NewPoint(30, 2))
+	require.NoError(t, err)
+	bottom, err := geo.NewNodeAt("bottom", NewPoint(30, 22))
+	require.NoError(t, err)
+	upper := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, top)
+	lower := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, bottom)
+	require.NoError(t, geo.Build())
+
+	commonPort, upperPort, err := geo.EdgePorts(upper)
+	require.NoError(t, err)
+	lowerCommonPort, lowerPort, err := geo.EdgePorts(lower)
+	require.NoError(t, err)
+	require.Equal(t, commonPort, lowerCommonPort)
+	common := geo.Ports[commonPort].Exit
+	upperExit := geo.Ports[upperPort].Exit
+	lowerExit := geo.Ports[lowerPort].Exit
+	x := min(upperExit.X, lowerExit.X) - 2
+	upperBends := []PinnedBend{
+		{Point: NewPoint(x, common.Y), Incoming: East, Outgoing: North},
+		{Point: NewPoint(x, upperExit.Y), Incoming: North, Outgoing: East},
+	}
+	lowerBends := []PinnedBend{
+		{Point: NewPoint(x, common.Y), Incoming: East, Outgoing: South},
+		{Point: NewPoint(x, lowerExit.Y), Incoming: South, Outgoing: East},
+	}
+	require.NoError(t, geo.SetPinnedBends(upper, upperBends))
+	require.NoError(t, geo.SetPinnedBends(lower, lowerBends))
+	require.True(t, geo.Selection().SelectOnly(Hit{ID: upper, Kind: HitEdge}))
+	require.True(t, geo.Selection().Toggle(Hit{ID: lower, Kind: HitEdge}))
+	require.NoError(t, geo.BuildSelection())
+
+	for edgeID, bends := range map[uint32][]PinnedBend{
+		upper: upperBends,
+		lower: lowerBends,
+	} {
+		for _, bend := range bends {
+			requirePointIndex(t, geo.Edges[edgeID].Points, bend.Point)
+		}
+	}
+}
+
 func TestPinnedBendsFollowCloneDuplicateAndTranslation(t *testing.T) {
 	t.Parallel()
 

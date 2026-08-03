@@ -186,7 +186,8 @@ directions must be perpendicular. `PreviewPinnedBends` checks a draft without
 mutating the edge. Pins translate with the complete layout and with duplicated
 or rigidly moved components. Moving only one endpoint keeps pins fixed; reject
 the operation when no route can satisfy them. Clearing all pins restores fully
-automatic routing.
+automatic routing. Matching pins nearest a common endpoint explicitly extend
+the sibling edges' legal shared trunk through that point.
 
 ### Performance controls and fallbacks
 

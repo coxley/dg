@@ -1548,7 +1548,7 @@ func (r Router) stepCostFor(
 			!route.ports.SharesPort(g.Edges[owner]) {
 			return 0, 0, false
 		}
-		if !l.edgesShareAt(route.ports, g.Edges[owner], b) {
+		if !l.edgesShareAt(route, owner, b) {
 			return 0, 0, false
 		}
 		shared = true
@@ -1573,7 +1573,7 @@ func (r Router) stepCostFor(
 		}
 		if route.hasPorts &&
 			route.ports.SharesPort(g.Edges[use.edge]) {
-			if l.edgesShareAt(route.ports, g.Edges[use.edge], b) {
+			if l.edgesShareAt(route, use.edge, b) {
 				continue
 			}
 			return 0, 0, false
@@ -1596,7 +1596,11 @@ func (r Router) stepCostFor(
 	return cost, crossings, true
 }
 
-func (l *Layout) edgesShareAt(edgeA, edgeB ir.Edge, point Point) bool {
+func (l *Layout) edgesShareAt(route routeEdge, edgeBID uint32, point Point) bool {
+	if uint64(edgeBID) >= uint64(len(l.graph.Edges)) {
+		return false
+	}
+	edgeA, edgeB := route.ports, l.graph.Edges[edgeBID]
 	common, otherA, ok := sharedPorts(edgeA, edgeB)
 	if !ok {
 		return false
@@ -1611,8 +1615,39 @@ func (l *Layout) edgesShareAt(edgeA, edgeB ir.Edge, point Point) bool {
 		return false
 	}
 	commonDistance := manhattan(point, l.Ports[common].Anchor)
-	return commonDistance <= manhattan(point, l.Ports[otherA].Anchor) &&
-		commonDistance <= manhattan(point, l.Ports[otherB].Anchor)
+	if commonDistance <= manhattan(point, l.Ports[otherA].Anchor) &&
+		commonDistance <= manhattan(point, l.Ports[otherB].Anchor) {
+		return true
+	}
+	pinA, armA, okA := l.branchPinTowardCommon(route.id, common)
+	pinB, armB, okB := l.branchPinTowardCommon(edgeBID, common)
+	return okA && okB && pinA == pinB && armA == armB &&
+		commonDistance <= manhattan(pinA, l.Ports[common].Anchor)
+}
+
+func (l *Layout) branchPinTowardCommon(
+	edgeID, commonPort uint32,
+) (Point, Connections, bool) {
+	if uint64(edgeID) >= uint64(len(l.graph.Edges)) ||
+		uint64(edgeID) >= uint64(len(l.edgeBends)) ||
+		len(l.edgeBends[edgeID]) == 0 {
+		return Point{}, 0, false
+	}
+	edge := l.graph.Edges[edgeID]
+	if edge.PortA == commonPort {
+		bend := l.edgeBends[edgeID][0]
+		dir, ok := connectionDirection(bend.Incoming)
+		if !ok {
+			return Point{}, 0, false
+		}
+		arm, _ := directionConnections(oppositeDirection(dir))
+		return bend.Point, arm, true
+	}
+	if edge.PortB == commonPort {
+		bend := l.edgeBends[edgeID][len(l.edgeBends[edgeID])-1]
+		return bend.Point, bend.Outgoing, true
+	}
+	return Point{}, 0, false
 }
 
 func sharedPorts(a, b ir.Edge) (common, otherA uint32, ok bool) {
