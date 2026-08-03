@@ -1129,6 +1129,10 @@ func (l *Layout) Clone() (*Layout, error) {
 
 // Build routes edges using the current node and port geometry.
 func (l *Layout) Build() error {
+	return l.build(true)
+}
+
+func (l *Layout) build(recordAttachmentChanges bool) error {
 	if !l.hasAttachments() {
 		if err := l.router.route(l); err != nil {
 			return fmt.Errorf("route edges: %w", err)
@@ -1139,6 +1143,9 @@ func (l *Layout) Build() error {
 	if err := l.buildAttachments(false); err != nil {
 		l.restoreAttachmentBuildState(&l.attachmentBuildRollback)
 		return fmt.Errorf("route edges: %w", err)
+	}
+	if recordAttachmentChanges {
+		l.recordAttachmentChanges(&l.attachmentBuildRollback)
 	}
 	return nil
 }
@@ -1153,6 +1160,7 @@ func (l *Layout) BuildSelection() error {
 			l.restoreAttachmentBuildState(&l.attachmentBuildRollback)
 			return fmt.Errorf("route selected edges: %w", err)
 		}
+		l.recordAttachmentChanges(&l.attachmentBuildRollback)
 		return nil
 	}
 	if err := l.router.routeSelection(l); err != nil {

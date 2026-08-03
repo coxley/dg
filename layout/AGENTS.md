@@ -51,20 +51,29 @@ node is detached. Do not add a parallel presence slice or presence bit.
 `Attachment` contains:
 
 - `NodeID` and `EdgeID`, which reference live layout objects
-- `Position`, a `uint16` normalized distance along the host's complete
-  Manhattan route
+- `Reference`, which identifies an endpoint or bend by route end, ordinal, and
+  turn shape
+- `Offset`, a signed cell distance from that landmark along the route
 - `Anchor`, the attached edge cell's offset from the node origin
 
-Valid positions lie strictly between zero and `math.MaxUint16`. Endpoint
-positions would overlap a connecting node; rejecting them also makes the zero
-value unambiguously detached, including for node and edge ID zero. `Anchor`
-preserves the exact drag alignment. Node dimensions alone could only derive a
-canonical alignment such as centering and would make off-center drops jump.
+Endpoint references require an offset toward the route interior. Bend offsets
+may cross later route segments in either direction. The zero value remains
+unambiguously detached, including for node and edge ID zero. `Anchor` preserves
+the exact drag alignment. Node dimensions alone could only derive a canonical
+alignment such as centering and would make off-center drops jump.
 
-`AttachNode` derives `Position` and `Anchor` from a routed cell inside the node.
-`SetAttachment` updates one relationship, while `SetAttachments` restores a
-batch before the first route. Both build atomically. `DetachNode` removes the
-relationship and keeps the current absolute origin.
+`AttachNode` derives `Reference`, `Offset`, and `Anchor` from a routed cell
+inside the node. `SetAttachment` updates one relationship, while
+`SetAttachments` restores a batch before the first route. Both build
+atomically. `DetachNode` removes the relationship and keeps the current
+absolute origin.
+
+Route resolution first preserves the exact landmark. When that bend
+disappears, it re-anchors to the spatially nearest surviving bend while keeping
+the cell offset. If no bend can host the offset, it projects the previous
+attachment cell onto the nearest route segment and stores the resulting
+reference. Build records this semantic rewrite so undo restores it with the
+route mutation.
 
 Attachment builds alternate routing and attached-node placement until geometry
 stabilizes. The host edge ignores its attached nodes as obstacles; every other

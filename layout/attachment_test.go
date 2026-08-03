@@ -81,11 +81,148 @@ func TestAttachmentCloneIsIndependent(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, cloned.PlaceNode(destination, NewPoint(45, 18)))
 	require.NoError(t, cloned.Build())
-	require.NotEqual(t, beforeNode, cloned.Nodes[node].Rect.Min)
+	require.Equal(t, beforeNode, cloned.Nodes[node].Rect.Min)
 
 	require.Equal(t, beforeNode, geo.Nodes[node].Rect.Min)
 	require.Equal(t, beforeRoute, geo.Edges[edge].Points)
 	require.Equal(t, beforeAttachment, mustAttachment(t, geo, node))
+}
+
+func TestAttachmentFollowsMovedBend(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", NewPoint(30, 14))
+	require.NoError(t, err)
+	node, err := geo.NewNodeAt("label", NewPoint(2, 25))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	portA, portB, err := geo.EdgePorts(edge)
+	require.NoError(t, err)
+	a, b := geo.Ports[portA], geo.Ports[portB]
+	bends := []PinnedBend{
+		{Point: NewPoint(18, a.Exit.Y), Incoming: East, Outgoing: South},
+		{Point: NewPoint(18, b.Exit.Y), Incoming: South, Outgoing: East},
+	}
+	require.NoError(t, geo.SetPinnedBends(edge, bends))
+	require.NoError(t, geo.Build())
+	point := bends[1].Point.Add(2, 0)
+	anchor := NewPoint(1, 1)
+	reference, _, ok := attachmentLocation(geo.Edges[edge].Points, point)
+	require.True(t, ok, "route=%v point=%v", geo.Edges[edge].Points, point)
+	require.True(t, reference.Valid(), "route=%v reference=%+v", geo.Edges[edge].Points, reference)
+	require.NoError(t, geo.PlaceNode(node, NewPoint(point.X-anchor.X, point.Y-anchor.Y)))
+	require.NoError(t, geo.AttachNode(node, edge, point))
+	before := mustAttachment(t, geo, node)
+	require.NotZero(t, before.Reference.Bend)
+
+	for index := range bends {
+		bends[index].Point.X += 4
+	}
+	require.NoError(t, geo.SetPinnedBends(edge, bends))
+	require.NoError(t, geo.Build())
+
+	wantPoint := bends[1].Point.Add(2, 0)
+	require.Equal(t, NewPoint(wantPoint.X-anchor.X, wantPoint.Y-anchor.Y), geo.Nodes[node].Rect.Min)
+	require.Equal(t, before, mustAttachment(t, geo, node))
+}
+
+func TestAttachmentReanchorsOrProjectsAfterBendDisappears(t *testing.T) {
+	t.Parallel()
+
+	oldRoute := []Point{
+		NewPoint(0, 0),
+		NewPoint(5, 0),
+		NewPoint(5, 5),
+		NewPoint(12, 5),
+	}
+	reference, offset, ok := attachmentLocation(oldRoute, NewPoint(7, 5))
+	require.True(t, ok)
+	attachment := Attachment{Reference: reference, Offset: offset}
+
+	withBends := []Point{
+		NewPoint(0, 0),
+		NewPoint(6, 0),
+		NewPoint(6, 8),
+		NewPoint(2, 8),
+	}
+	reanchored, point, err := resolveAttachment(
+		oldRoute,
+		withBends,
+		attachment,
+		NewPoint(7, 5),
+	)
+	require.NoError(t, err)
+	require.Equal(t, NewPoint(4, 8), point)
+	require.Equal(t, AttachmentPortB, reanchored.Reference.End)
+	require.Equal(t, uint32(1), reanchored.Reference.Bend)
+	require.Equal(t, South, reanchored.Reference.Incoming)
+	require.Equal(t, West, reanchored.Reference.Outgoing)
+
+	straight := []Point{NewPoint(0, 0), NewPoint(12, 0)}
+	projected, point, err := resolveAttachment(
+		oldRoute,
+		straight,
+		attachment,
+		NewPoint(7, 5),
+	)
+	require.NoError(t, err)
+	require.Equal(t, NewPoint(7, 0), point)
+	require.Equal(t, AttachmentReference{End: AttachmentPortB}, projected.Reference)
+	require.Equal(t, int64(-5), projected.Offset)
+}
+
+func TestAttachmentFallbackReplaysWithRouteMutation(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", NewPoint(30, 4))
+	require.NoError(t, err)
+	node, err := geo.NewNodeAt("label", NewPoint(2, 20))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	portA, _, err := geo.EdgePorts(edge)
+	require.NoError(t, err)
+	y := geo.Ports[portA].Exit.Y
+	bends := []PinnedBend{
+		{Point: NewPoint(16, y), Incoming: East, Outgoing: South},
+		{Point: NewPoint(16, y+8), Incoming: South, Outgoing: East},
+	}
+	require.NoError(t, geo.SetPinnedBends(edge, bends))
+	require.NoError(t, geo.Build())
+	point := bends[1].Point.Add(2, 0)
+	anchor := NewPoint(1, 1)
+	require.NoError(t, geo.PlaceNode(node, NewPoint(point.X-anchor.X, point.Y-anchor.Y)))
+	require.NoError(t, geo.AttachNode(node, edge, point))
+	beforeAttachment := mustAttachment(t, geo, node)
+	beforeOrigin := geo.Nodes[node].Rect.Min
+
+	var changes []Change
+	require.NoError(t, geo.SetChangeCallback(func(change Change) {
+		changes = append(changes, change)
+	}))
+	require.NoError(t, geo.SetPinnedBends(edge, nil))
+	require.NoError(t, geo.Build())
+	require.Len(t, changes, 2)
+	afterAttachment := mustAttachment(t, geo, node)
+	afterOrigin := geo.Nodes[node].Rect.Min
+	require.NotEqual(t, beforeAttachment.Reference, afterAttachment.Reference)
+	require.NotEqual(t, beforeOrigin, afterOrigin)
+
+	require.NoError(t, geo.Replay(changes, ReplayBackward))
+	require.Equal(t, beforeAttachment, mustAttachment(t, geo, node))
+	require.Equal(t, beforeOrigin, geo.Nodes[node].Rect.Min)
+	require.NoError(t, geo.Replay(changes, ReplayForward))
+	require.Equal(t, afterAttachment, mustAttachment(t, geo, node))
+	require.Equal(t, afterOrigin, geo.Nodes[node].Rect.Min)
 }
 
 func TestAttachmentZeroValueIsDetached(t *testing.T) {
@@ -120,8 +257,9 @@ func newAttachmentLayout(
 	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
 	require.NoError(t, geo.Build())
 
-	point, err := attachmentPoint(geo.Edges[edge].Points, attachmentPositionMax/2)
-	require.NoError(t, err)
+	points := geo.Edges[edge].Points
+	point, ok := routePointAtDistance(points, pathLength(points)/2)
+	require.True(t, ok)
 	anchor := NewPoint(2, 1)
 	require.Greater(t, point.X, anchor.X)
 	require.Greater(t, point.Y, anchor.Y)

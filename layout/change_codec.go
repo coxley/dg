@@ -101,8 +101,7 @@ func validateLayoutHistoryState(state *layoutHistoryState) error {
 			continue
 		}
 		if attachment.NodeID != uint32(nodeID) ||
-			attachment.Position == 0 ||
-			attachment.Position == attachmentPositionMax ||
+			!validAttachmentLocation(attachment) ||
 			!state.Graph.NodeExists(attachment.NodeID) ||
 			!state.Graph.EdgeExists(attachment.EdgeID) {
 			return errors.New("invalid attachment")
@@ -154,8 +153,7 @@ func validateHistoryAttachmentChange(change historyChange) error {
 			continue
 		}
 		if state.Attachment.NodeID != change.ID ||
-			state.Attachment.Position == 0 ||
-			state.Attachment.Position == attachmentPositionMax {
+			!validAttachmentLocation(state.Attachment) {
 			return errors.New("invalid attachment change")
 		}
 	}

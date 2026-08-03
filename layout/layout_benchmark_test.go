@@ -58,8 +58,9 @@ func BenchmarkLayoutBuildAttachment(b *testing.B) {
 	require.NoError(b, err)
 	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
 	require.NoError(b, geo.Build())
-	point, err := attachmentPoint(geo.Edges[edge].Points, attachmentPositionMax/2)
-	require.NoError(b, err)
+	points := geo.Edges[edge].Points
+	point, ok := routePointAtDistance(points, pathLength(points)/2)
+	require.True(b, ok)
 	require.NoError(b, geo.PlaceNode(node, NewPoint(point.X-1, point.Y-1)))
 	require.NoError(b, geo.AttachNode(node, edge, point))
 
@@ -355,11 +356,9 @@ func BenchmarkLayoutStress(b *testing.B) {
 	b.Run("attach_new_node", func(b *testing.B) {
 		geo := newStressBenchmarkLayout(b)
 		const edgeID = uint32(0)
-		point, err := attachmentPoint(
-			geo.Edges[edgeID].Points,
-			attachmentPositionMax/4,
-		)
-		require.NoError(b, err)
+		points := geo.Edges[edgeID].Points
+		point, ok := routePointAtDistance(points, pathLength(points)/4)
+		require.True(b, ok)
 		origin := NewPoint(point.X-1, point.Y-1)
 
 		attach := func() uint32 {
