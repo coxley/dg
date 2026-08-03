@@ -4305,82 +4305,152 @@ func TestModelRightDragPinsMultipleEdgeBendsAndDoubleClickResets(t *testing.T) {
 func TestModelRightDragMovesSelectedSharedBendsTogether(t *testing.T) {
 	t.Parallel()
 
-	geo, err := layout.New()
-	require.NoError(t, err)
-	source, err := geo.NewNodeAt("source", layout.NewPoint(2, 12))
-	require.NoError(t, err)
-	top, err := geo.NewNodeAt("top", layout.NewPoint(30, 2))
-	require.NoError(t, err)
-	bottom, err := geo.NewNodeAt("bottom", layout.NewPoint(30, 22))
-	require.NoError(t, err)
-	upper := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, top)
-	lower := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, bottom)
-	require.NoError(t, geo.Build())
-	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
-	require.NoError(t, err)
-	model, err := New(geo, WithHistory(history), testModelSettings())
-	require.NoError(t, err)
-	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 30})
+	tests := []struct {
+		name                   string
+		source, first, second  layout.Point
+		sourceSide, targetSide ir.Side
+		axis                   bendDragAxis
+		dx, dy                 int
+	}{
+		{
+			name:       "left",
+			source:     layout.NewPoint(2, 12),
+			first:      layout.NewPoint(30, 2),
+			second:     layout.NewPoint(30, 22),
+			sourceSide: ir.RightSide,
+			targetSide: ir.LeftSide,
+			axis:       bendAxisHorizontal,
+			dx:         -2,
+		},
+		{
+			name:       "right",
+			source:     layout.NewPoint(2, 12),
+			first:      layout.NewPoint(30, 2),
+			second:     layout.NewPoint(30, 22),
+			sourceSide: ir.RightSide,
+			targetSide: ir.LeftSide,
+			axis:       bendAxisHorizontal,
+			dx:         2,
+		},
+		{
+			name:       "up",
+			source:     layout.NewPoint(15, 2),
+			first:      layout.NewPoint(2, 22),
+			second:     layout.NewPoint(30, 22),
+			sourceSide: ir.Bottom,
+			targetSide: ir.Top,
+			axis:       bendAxisVertical,
+			dy:         -2,
+		},
+		{
+			name:       "down",
+			source:     layout.NewPoint(15, 2),
+			first:      layout.NewPoint(2, 22),
+			second:     layout.NewPoint(30, 22),
+			sourceSide: ir.Bottom,
+			targetSide: ir.Top,
+			axis:       bendAxisVertical,
+			dy:         2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			geo, err := layout.New()
+			require.NoError(t, err)
+			source, err := geo.NewNodeAt("source", test.source)
+			require.NoError(t, err)
+			firstNode, err := geo.NewNodeAt("first", test.first)
+			require.NoError(t, err)
+			secondNode, err := geo.NewNodeAt("second", test.second)
+			require.NoError(t, err)
+			first := geo.ConnectNodes(source, test.sourceSide, test.targetSide, firstNode)
+			second := geo.ConnectNodes(source, test.sourceSide, test.targetSide, secondNode)
+			require.NoError(t, geo.Build())
+			history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
+			require.NoError(t, err)
+			model, err := New(geo, WithHistory(history), testModelSettings())
+			require.NoError(t, err)
+			updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 40})
 
-	var upperBend, lowerBend layout.PinnedBend
-	found := false
-	for lowerIndex := 1; lowerIndex+1 < len(geo.Edges[lower].Points); lowerIndex++ {
-		lowerCandidate := bendAt(geo.Edges[lower].Points, lowerIndex)
-		lowerArm := bendArm(lowerCandidate, bendAxisHorizontal)
-		if !lowerCandidate.Valid() || lowerArm == 0 {
+			firstBend, secondBend, found := alignedBendPair(
+				geo.Edges[first].Points,
+				geo.Edges[second].Points,
+				test.axis,
+			)
+			require.True(t, found, "first=%v second=%v", geo.Edges[first].Points, geo.Edges[second].Points)
+
+			require.True(t, geo.Selection().SelectOnly(layout.Hit{ID: first, Kind: layout.HitEdge}))
+			require.True(t, geo.Selection().Toggle(layout.Hit{ID: second, Kind: layout.HitEdge}))
+			require.NoError(t, model.render())
+			history.Clear()
+			model.updateMouseClick(modelMouseAt(model, secondBend.Point, tea.MouseRight))
+
+			firstMotion, ok := movePoint(secondBend.Point, test.dx/2, test.dy/2)
+			require.True(t, ok)
+			model.updateMouseMotion(modelMouseAt(model, firstMotion, tea.MouseRight))
+			dragPoint, ok := movePoint(secondBend.Point, test.dx, test.dy)
+			require.True(t, ok)
+			drag := modelMouseAt(model, dragPoint, tea.MouseRight)
+			model.updateMouseMotion(drag)
+			require.Len(t, model.interaction.session.bend.targets, 2)
+			require.True(t, model.interaction.session.bend.valid, model.status)
+			model.updateMouseRelease(drag)
+
+			for edgeID, bend := range map[uint32]layout.PinnedBend{
+				first:  firstBend,
+				second: secondBend,
+			} {
+				target := bend.Point
+				if test.axis == bendAxisHorizontal {
+					target.X = dragPoint.X
+				} else {
+					target.Y = dragPoint.Y
+				}
+				pins, pinErr := geo.PinnedBends(edgeID)
+				require.NoError(t, pinErr)
+				require.Len(t, pins, 2, "edge %d pins=%v", edgeID, pins)
+				require.Contains(t, []layout.Point{pins[0].Point, pins[1].Point}, target)
+				for _, pin := range pins {
+					if test.axis == bendAxisHorizontal {
+						require.Equal(t, dragPoint.X, pin.Point.X)
+					} else {
+						require.Equal(t, dragPoint.Y, pin.Point.Y)
+					}
+				}
+				require.True(t, geo.Selection().Contains(layout.Hit{ID: edgeID, Kind: layout.HitEdge}))
+			}
+
+			updateModel(t, model, keyPress('u', "u"))
+			for _, edgeID := range []uint32{first, second} {
+				pins, pinErr := geo.PinnedBends(edgeID)
+				require.NoError(t, pinErr)
+				require.Empty(t, pins)
+			}
+		})
+	}
+}
+
+func alignedBendPair(
+	first, second []layout.Point,
+	axis bendDragAxis,
+) (layout.PinnedBend, layout.PinnedBend, bool) {
+	for secondIndex := 1; secondIndex+1 < len(second); secondIndex++ {
+		secondBend := bendAt(second, secondIndex)
+		arm := bendArm(secondBend, axis)
+		if !secondBend.Valid() || arm == 0 {
 			continue
 		}
-		for upperIndex := 1; upperIndex+1 < len(geo.Edges[upper].Points); upperIndex++ {
-			upperCandidate := bendAt(geo.Edges[upper].Points, upperIndex)
-			if upperCandidate.Valid() &&
-				upperCandidate.Point != lowerCandidate.Point &&
-				upperCandidate.Point.X == lowerCandidate.Point.X &&
-				bendArm(upperCandidate, bendAxisHorizontal) == lowerArm {
-				upperBend = upperCandidate
-				lowerBend = lowerCandidate
-				found = true
-				break
+		for firstIndex := 1; firstIndex+1 < len(first); firstIndex++ {
+			firstBend := bendAt(first, firstIndex)
+			if firstBend.Valid() &&
+				firstBend.Point != secondBend.Point &&
+				bendAligned(firstBend, secondBend, axis) &&
+				bendArm(firstBend, axis) == arm {
+				return firstBend, secondBend, true
 			}
 		}
-		if found {
-			break
-		}
 	}
-	require.True(t, found, "upper=%v lower=%v", geo.Edges[upper].Points, geo.Edges[lower].Points)
-
-	require.True(t, geo.Selection().SelectOnly(layout.Hit{ID: upper, Kind: layout.HitEdge}))
-	require.True(t, geo.Selection().Toggle(layout.Hit{ID: lower, Kind: layout.HitEdge}))
-	require.NoError(t, model.render())
-	history.Clear()
-	model.updateMouseClick(modelMouseAt(model, lowerBend.Point, tea.MouseRight))
-
-	firstMotion := layout.NewPoint(lowerBend.Point.X-1, lowerBend.Point.Y)
-	model.updateMouseMotion(modelMouseAt(model, firstMotion, tea.MouseRight))
-	dragPoint := layout.NewPoint(lowerBend.Point.X-2, lowerBend.Point.Y)
-	drag := modelMouseAt(model, dragPoint, tea.MouseRight)
-	model.updateMouseMotion(drag)
-	require.Len(t, model.interaction.session.bend.targets, 2)
-	require.True(t, model.interaction.session.bend.valid, model.status)
-	model.updateMouseRelease(drag)
-
-	for edgeID, bend := range map[uint32]layout.PinnedBend{
-		upper: upperBend,
-		lower: lowerBend,
-	} {
-		target := layout.NewPoint(dragPoint.X, bend.Point.Y)
-		pins, pinErr := geo.PinnedBends(edgeID)
-		require.NoError(t, pinErr)
-		require.Len(t, pins, 1, "edge %d pins=%v", edgeID, pins)
-		require.Equal(t, target, pins[0].Point)
-		require.True(t, geo.Selection().Contains(layout.Hit{ID: edgeID, Kind: layout.HitEdge}))
-	}
-
-	updateModel(t, model, keyPress('u', "u"))
-	for _, edgeID := range []uint32{upper, lower} {
-		pins, pinErr := geo.PinnedBends(edgeID)
-		require.NoError(t, pinErr)
-		require.Empty(t, pins)
-	}
+	return layout.PinnedBend{}, layout.PinnedBend{}, false
 }
 
 func TestModelBlurCommitsResize(t *testing.T) {

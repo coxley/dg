@@ -19,7 +19,11 @@ func (m *Model) beginBendDrag(point layout.Point) bool {
 	if !ok {
 		return false
 	}
-	primary, err := m.prepareBendTarget(edgeID, routeIndex, bend)
+	primary, err := m.prepareBendTarget(
+		edgeID,
+		routeIndex,
+		[]routeBend{{index: routeIndex, bend: bend}},
+	)
 	if err != nil {
 		m.setError(err.Error())
 		return true
@@ -80,13 +84,15 @@ func (m *Model) updateBendDrag(point layout.Point) {
 	}
 	for i := range session.targets {
 		target := &session.targets[i]
-		targetPoint := target.start
-		if axis == bendAxisHorizontal {
-			targetPoint.X = point.X
-		} else {
-			targetPoint.Y = point.Y
+		for _, move := range target.moves {
+			targetPoint := move.start
+			if axis == bendAxisHorizontal {
+				targetPoint.X = point.X
+			} else {
+				targetPoint.Y = point.Y
+			}
+			target.bends[move.index].Point = targetPoint
 		}
-		target.bends[target.index].Point = targetPoint
 	}
 	m.interaction.gesture.point = point
 	m.cursor = point
@@ -125,14 +131,18 @@ func (m *Model) prepareSharedBendTargets() error {
 		return nil
 	}
 	primary := session.primary()
-	primaryBend := primary.bends[primary.index]
-	primaryBend.Point = primary.start
+	primaryBend := bendAt(m.geo.Edges[primary.edge].Points, primary.routeIndex)
 	arm := bendArm(primaryBend, session.axis)
+	type targetSpec struct {
+		edge       uint32
+		routeIndex int
+	}
+	var specs []targetSpec
 	for selectedID := range m.geo.Selection().Edges() {
 		if selectedID == primary.edge {
 			continue
 		}
-		index, bend, ok := nearestAlignedBend(
+		index, _, ok := nearestAlignedBend(
 			m.geo.Edges[selectedID].Points,
 			primaryBend,
 			session.axis,
@@ -141,7 +151,26 @@ func (m *Model) prepareSharedBendTargets() error {
 		if !ok {
 			continue
 		}
-		target, err := m.prepareBendTarget(selectedID, index, bend)
+		specs = append(specs, targetSpec{edge: selectedID, routeIndex: index})
+	}
+	if len(specs) == 0 {
+		return nil
+	}
+	primary, err := m.prepareBendTarget(
+		primary.edge,
+		primary.routeIndex,
+		bendSegment(m.geo.Edges[primary.edge].Points, primary.routeIndex, session.axis),
+	)
+	if err != nil {
+		return err
+	}
+	session.targets[0] = primary
+	for _, spec := range specs {
+		target, err := m.prepareBendTarget(
+			spec.edge,
+			spec.routeIndex,
+			bendSegment(m.geo.Edges[spec.edge].Points, spec.routeIndex, session.axis),
+		)
 		if err != nil {
 			return err
 		}
@@ -156,6 +185,28 @@ func (m *Model) prepareSharedBendTargets() error {
 	}
 	m.interaction.render.bendLayout = preview
 	return nil
+}
+
+type routeBend struct {
+	index int
+	bend  layout.PinnedBend
+}
+
+func bendSegment(points []layout.Point, index int, axis bendDragAxis) []routeBend {
+	bend := bendAt(points, index)
+	neighbor := index + 1
+	if !connectionFollowsAxis(bend.Incoming, axis) {
+		neighbor = index - 1
+	}
+	first, last := min(index, neighbor), max(index, neighbor)
+	result := make([]routeBend, 0, 2)
+	for routeIndex := first; routeIndex <= last; routeIndex++ {
+		candidate := bendAt(points, routeIndex)
+		if candidate.Valid() && bendAligned(bend, candidate, axis) {
+			result = append(result, routeBend{index: routeIndex, bend: candidate})
+		}
+	}
+	return result
 }
 
 func nearestAlignedBend(
@@ -263,32 +314,36 @@ func (m *Model) finishBendDrag() {
 func (m *Model) prepareBendTarget(
 	edgeID uint32,
 	routeIndex int,
-	bend layout.PinnedBend,
+	constraints []routeBend,
 ) (bendTarget, error) {
 	bends, err := m.geo.PinnedBends(edgeID)
 	if err != nil {
 		return bendTarget{}, err
 	}
-	index := 0
-	existingBend := false
-	for i, existing := range bends {
-		if existing == bend {
-			index = i
-			existingBend = true
-			break
+	moves := make([]bendMove, 0, len(constraints))
+	for _, constraint := range constraints {
+		index := 0
+		existingBend := false
+		for i, existing := range bends {
+			if existing == constraint.bend {
+				index = i
+				existingBend = true
+				break
+			}
+			if indexOfBend(m.geo.Edges[edgeID].Points, existing) < constraint.index {
+				index = i + 1
+			}
 		}
-		if indexOfBend(m.geo.Edges[edgeID].Points, existing) < routeIndex {
-			index = i + 1
+		if !existingBend {
+			bends = slices.Insert(bends, index, constraint.bend)
 		}
-	}
-	if !existingBend {
-		bends = slices.Insert(bends, index, bend)
+		moves = append(moves, bendMove{index: index, start: constraint.bend.Point})
 	}
 	return bendTarget{
-		edge:  edgeID,
-		index: index,
-		bends: bends,
-		start: bend.Point,
+		edge:       edgeID,
+		routeIndex: routeIndex,
+		bends:      bends,
+		moves:      moves,
 	}, nil
 }
 

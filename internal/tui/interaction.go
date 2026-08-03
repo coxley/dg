@@ -31,9 +31,14 @@ type connectionSession struct {
 }
 
 type bendTarget struct {
-	edge  uint32
+	edge       uint32
+	routeIndex int
+	bends      []layout.PinnedBend
+	moves      []bendMove
+}
+
+type bendMove struct {
 	index int
-	bends []layout.PinnedBend
 	start layout.Point
 }
 
