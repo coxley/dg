@@ -95,7 +95,8 @@ selects the new objects, and leaves route computation to the next build.
 Selecting an edge first selects its attached nodes too. Selecting the same edge
 again leaves only the edge selected. Raster ownership remains authoritative:
 an edge passing under an attached node must not claim or highlight the node's
-label cells.
+label bounds. Empty padding on a borderless attached node preserves its host
+edge so the route remains visually continuous.
 
 ## Routing
 

@@ -275,12 +275,25 @@ func (g *Grid) claimNode(l *Layout, nodeID uint32) {
 	rect := l.Nodes[nodeID].Rect
 	owner := Hit{ID: nodeID, Kind: HitNode}
 	hasBorder := l.nodeHasBorder(nodeID)
+	attachment, attached := l.NodeAttachment(nodeID)
+	preserveHostPadding := !hasBorder && attached
+	var host Hit
+	var labelBounds Rect
+	if preserveHostPadding {
+		host = Hit{ID: attachment.EdgeID, Kind: HitEdge}
+		labelBounds = l.LabelBounds(nodeID)
+	}
 	limit := rect.Max()
 	for y := rect.Min.Y; y < limit.Y; y++ {
 		for x := rect.Min.X; x < limit.X; x++ {
 			point := Point{X: x, Y: y}
 			index, _ := g.Index(point)
 			previous := g.Owners[index]
+			if preserveHostPadding &&
+				!labelBounds.Contains(point) &&
+				previous == host {
+				continue
+			}
 			if !hasBorder ||
 				!rect.OnBoundary(point) ||
 				!l.sharedNodeBoundaryAt(rect, previous, point) {

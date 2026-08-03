@@ -842,6 +842,45 @@ func TestRasterizeOccludesUnrelatedCrossingByLayer(t *testing.T) {
 	require.Equal(t, vertical, owner)
 }
 
+func TestRasterizePreservesAttachedHostThroughBorderlessPadding(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", NewPoint(40, 4))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	portA, _, err := geo.EdgePorts(edge)
+	require.NoError(t, err)
+	point := NewPoint(18, geo.Ports[portA].Exit.Y)
+	label, err := geo.NewNodeAt("attached label", point)
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeStyle(label, NodeStyle{Border: BorderNone}))
+	require.NoError(t, geo.AttachNode(label, edge, point))
+	require.NoError(t, geo.BringToFront(Hit{ID: label, Kind: HitNode}))
+	require.NoError(t, geo.Build())
+
+	grid, err := RasterizeOwnedInto(nil, nil, geo)
+	require.NoError(t, err)
+	paddingCell := point.Add(3, 0)
+	connections, ok := grid.At(paddingCell)
+	require.True(t, ok)
+	require.Equal(t, East|West, connections)
+	owner, ok := grid.OwnerAt(paddingCell)
+	require.True(t, ok)
+	require.Equal(t, Hit{ID: edge, Kind: HitEdge}, owner)
+	labelCell := geo.Nodes[label].LabelPoint
+	connections, ok = grid.At(labelCell)
+	require.True(t, ok)
+	require.Zero(t, connections)
+	owner, ok = grid.OwnerAt(labelCell)
+	require.True(t, ok)
+	require.Equal(t, Hit{ID: label, Kind: HitNode}, owner)
+}
+
 func TestRasterizeDoesNotJoinCrossingNodeBorders(t *testing.T) {
 	t.Parallel()
 
