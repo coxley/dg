@@ -4302,6 +4302,76 @@ func TestModelRightDragPinsMultipleEdgeBendsAndDoubleClickResets(t *testing.T) {
 	require.Len(t, pins, 2)
 }
 
+func TestModelRightDragMovesSelectedSharedBendsTogether(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", layout.NewPoint(2, 12))
+	require.NoError(t, err)
+	top, err := geo.NewNodeAt("top", layout.NewPoint(30, 2))
+	require.NoError(t, err)
+	bottom, err := geo.NewNodeAt("bottom", layout.NewPoint(30, 22))
+	require.NoError(t, err)
+	upper := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, top)
+	lower := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, bottom)
+	require.NoError(t, geo.Build())
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	model, err := New(geo, WithHistory(history), testModelSettings())
+	require.NoError(t, err)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 30})
+
+	var shared layout.Point
+	found := false
+	for upperIndex := 1; upperIndex+1 < len(geo.Edges[upper].Points); upperIndex++ {
+		upperBend := bendAt(geo.Edges[upper].Points, upperIndex)
+		if !upperBend.Valid() {
+			continue
+		}
+		for lowerIndex := 1; lowerIndex+1 < len(geo.Edges[lower].Points); lowerIndex++ {
+			lowerBend := bendAt(geo.Edges[lower].Points, lowerIndex)
+			if lowerBend.Valid() && lowerBend.Point == upperBend.Point {
+				shared = upperBend.Point
+				found = true
+				break
+			}
+		}
+	}
+	require.True(t, found, "upper=%v lower=%v", geo.Edges[upper].Points, geo.Edges[lower].Points)
+
+	require.True(t, geo.Selection().SelectOnly(layout.Hit{ID: upper, Kind: layout.HitEdge}))
+	require.True(t, geo.Selection().Toggle(layout.Hit{ID: lower, Kind: layout.HitEdge}))
+	require.NoError(t, model.render())
+	history.Clear()
+	model.updateMouseClick(modelMouseAt(model, shared, tea.MouseRight))
+	require.Len(t, model.interaction.session.bend.targets, 2)
+
+	target := layout.NewPoint(shared.X-2, shared.Y)
+	drag := modelMouseAt(model, target, tea.MouseRight)
+	model.updateMouseMotion(drag)
+	require.True(t, model.interaction.session.bend.valid, model.status)
+	model.updateMouseRelease(drag)
+
+	for _, edgeID := range []uint32{upper, lower} {
+		pins, pinErr := geo.PinnedBends(edgeID)
+		require.NoError(t, pinErr)
+		require.Condition(t, func() bool {
+			return slices.ContainsFunc(pins, func(pin layout.PinnedBend) bool {
+				return pin.Point == target
+			})
+		}, "edge %d pins=%v", edgeID, pins)
+		require.True(t, geo.Selection().Contains(layout.Hit{ID: edgeID, Kind: layout.HitEdge}))
+	}
+
+	updateModel(t, model, keyPress('u', "u"))
+	for _, edgeID := range []uint32{upper, lower} {
+		pins, pinErr := geo.PinnedBends(edgeID)
+		require.NoError(t, pinErr)
+		require.Empty(t, pins)
+	}
+}
+
 func TestModelBlurCommitsResize(t *testing.T) {
 	t.Parallel()
 

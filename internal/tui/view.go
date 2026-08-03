@@ -744,10 +744,40 @@ func (m *Model) refreshBendPreview() {
 		return
 	}
 	session := &m.interaction.session.bend
+	if session.multiple() {
+		preview := m.interaction.render.bendLayout
+		for _, target := range session.targets {
+			if err := preview.SetPinnedBends(target.edge, target.bends); err != nil {
+				session.valid = false
+				m.status = err.Error()
+				_ = m.render()
+				return
+			}
+		}
+		if err := preview.BuildSelection(); err != nil {
+			session.valid = false
+			m.status = err.Error()
+			_ = m.render()
+			return
+		}
+		if err := m.canvas.Render(canvasview.BaseFrame, preview); err != nil {
+			session.valid = false
+			m.status = err.Error()
+			_ = m.render()
+			return
+		}
+		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
+		m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+		m.refreshSelectionHighlight()
+		session.valid = true
+		m.status = ""
+		return
+	}
+	primary := session.primary()
 	preview, err := m.geo.PreviewPinnedBends(
 		m.interaction.render.bendPreview[:0],
-		session.edge,
-		session.bends,
+		primary.edge,
+		primary.bends,
 	)
 	if err != nil {
 		session.valid = false
@@ -756,7 +786,7 @@ func (m *Model) refreshBendPreview() {
 		m.status = err.Error()
 		return
 	}
-	portA, portB, err := m.geo.EdgePorts(session.edge)
+	portA, portB, err := m.geo.EdgePorts(primary.edge)
 	if err != nil {
 		session.valid = false
 		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
@@ -920,7 +950,10 @@ func (m *Model) activeEdgePreview() (
 	layout.EdgeStyle,
 ) {
 	if m.interaction.session.kind == sessionBend {
-		style, _ := m.geo.EdgeStyle(m.interaction.session.bend.edge)
+		if m.interaction.session.bend.multiple() {
+			return nil, nil, layout.EdgeStyle{}
+		}
+		style, _ := m.geo.EdgeStyle(m.interaction.session.bend.primary().edge)
 		return m.interaction.render.bendPreview,
 			m.interaction.render.bendRaster,
 			style

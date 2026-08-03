@@ -1298,6 +1298,7 @@ func (m *Model) clearBendDrag() {
 	}
 	m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
 	m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
+	m.interaction.render.bendLayout = nil
 	m.canvas.Clear(canvasview.ConnectionFrame)
 }
 
@@ -1344,7 +1345,7 @@ func (m *Model) renderBendBase() error {
 	err := m.canvas.RenderWithoutEdge(
 		canvasview.ConnectionFrame,
 		m.geo,
-		m.interaction.session.bend.edge,
+		m.interaction.session.bend.primary().edge,
 	)
 	if err != nil {
 		return fmt.Errorf("render bend base: %w", err)

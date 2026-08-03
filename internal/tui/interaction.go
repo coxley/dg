@@ -30,12 +30,25 @@ type connectionSession struct {
 	reconnect bool
 }
 
-type bendSession struct {
+type bendTarget struct {
 	edge  uint32
 	index int
 	bends []layout.PinnedBend
-	valid bool
-	axis  bendDragAxis
+}
+
+type bendSession struct {
+	targets           []bendTarget
+	valid             bool
+	axis              bendDragAxis
+	preserveSelection bool
+}
+
+func (s bendSession) primary() bendTarget {
+	return s.targets[0]
+}
+
+func (s bendSession) multiple() bool {
+	return len(s.targets) > 1
 }
 
 type bendDragAxis uint8
@@ -110,6 +123,7 @@ type interactionRenderCache struct {
 	connectionRaster   []layout.RasterCell
 	bendPreview        []layout.Point
 	bendRaster         []layout.RasterCell
+	bendLayout         *layout.Layout
 	duplicateLayout    *layout.Layout
 	duplicateHighlight []bool
 	selectionHighlight []bool

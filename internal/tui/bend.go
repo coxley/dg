@@ -19,38 +19,52 @@ func (m *Model) beginBendDrag(point layout.Point) bool {
 	if !ok {
 		return false
 	}
-	bends, err := m.geo.PinnedBends(edgeID)
+	primary, err := m.prepareBendTarget(edgeID, routeIndex, bend)
 	if err != nil {
 		m.setError(err.Error())
 		return true
 	}
-	index := 0
-	existingBend := false
-	for i, existing := range bends {
-		if existing == bend {
-			index = i
-			existingBend = true
-			break
-		}
-		if indexOfBend(m.geo.Edges[edgeID].Points, existing) < routeIndex {
-			index = i + 1
-		}
-	}
-	if !existingBend {
-		bends = slices.Insert(bends, index, bend)
-	}
-
 	hit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
-	m.selectOnly(hit)
+	preserveSelection := m.geo.Selection().Contains(hit)
+	targets := append([]bendTarget(nil), primary)
+	if preserveSelection {
+		for selectedID := range m.geo.Selection().Edges() {
+			if selectedID == edgeID {
+				continue
+			}
+			for index := 1; index+1 < len(m.geo.Edges[selectedID].Points); index++ {
+				shared := bendAt(m.geo.Edges[selectedID].Points, index)
+				if !shared.Valid() || shared.Point != bend.Point {
+					continue
+				}
+				target, targetErr := m.prepareBendTarget(selectedID, index, shared)
+				if targetErr != nil {
+					m.setError(targetErr.Error())
+					return true
+				}
+				targets = append(targets, target)
+				break
+			}
+		}
+	} else {
+		m.selectOnly(hit)
+	}
+	var preview *layout.Layout
+	if len(targets) > 1 {
+		preview, err = m.geo.Clone()
+		if err != nil {
+			m.setError(err.Error())
+			return true
+		}
+	}
 	m.target = hit
 	m.beginTransaction(transactionBend)
 	m.interaction.session = interactionSession{
 		kind: sessionBend,
 		bend: bendSession{
-			edge:  edgeID,
-			index: index,
-			bends: bends,
-			valid: true,
+			targets:           targets,
+			valid:             true,
+			preserveSelection: preserveSelection,
 		},
 	}
 	m.interaction.gesture = pointerGesture{
@@ -59,9 +73,12 @@ func (m *Model) beginBendDrag(point layout.Point) bool {
 		start:  bend.Point,
 		point:  bend.Point,
 	}
-	if err := m.renderBendBase(); err != nil {
-		m.abortBendDrag(err)
-		return true
+	m.interaction.render.bendLayout = preview
+	if len(targets) == 1 {
+		if err := m.renderBendBase(); err != nil {
+			m.abortBendDrag(err)
+			return true
+		}
 	}
 	m.cursor = point
 	m.refreshBendPreview()
@@ -76,7 +93,10 @@ func (m *Model) updateBendDrag(point layout.Point) {
 	}
 	session := &m.interaction.session.bend
 	point = session.constrainPoint(m.interaction.gesture.start, point)
-	session.bends[session.index].Point = point
+	for i := range session.targets {
+		target := &session.targets[i]
+		target.bends[target.index].Point = point
+	}
 	m.interaction.gesture.point = point
 	m.cursor = point
 	m.refreshBendPreview()
@@ -116,9 +136,11 @@ func (m *Model) finishBendDrag() {
 		m.abortBendDrag(errors.New("bend placement has no valid route"))
 		return
 	}
-	if err := m.geo.SetPinnedBends(session.edge, session.bends); err != nil {
-		m.abortBendDrag(err)
-		return
+	for _, target := range session.targets {
+		if err := m.geo.SetPinnedBends(target.edge, target.bends); err != nil {
+			m.abortBendDrag(err)
+			return
+		}
 	}
 	if err := m.rebuildSelection(); err != nil {
 		m.abortBendDrag(err)
@@ -128,13 +150,42 @@ func (m *Model) finishBendDrag() {
 		m.abortBendDrag(err)
 		return
 	}
-	hit := layout.Hit{ID: session.edge, Kind: layout.HitEdge}
+	hit := layout.Hit{ID: session.primary().edge, Kind: layout.HitEdge}
 	m.target = hit
 	m.clearBendDrag()
-	m.selectOnly(hit)
+	if !session.preserveSelection {
+		m.selectOnly(hit)
+	}
 	m.refreshHits()
 	m.selectTarget()
 	m.status = ""
+}
+
+func (m *Model) prepareBendTarget(
+	edgeID uint32,
+	routeIndex int,
+	bend layout.PinnedBend,
+) (bendTarget, error) {
+	bends, err := m.geo.PinnedBends(edgeID)
+	if err != nil {
+		return bendTarget{}, err
+	}
+	index := 0
+	existingBend := false
+	for i, existing := range bends {
+		if existing == bend {
+			index = i
+			existingBend = true
+			break
+		}
+		if indexOfBend(m.geo.Edges[edgeID].Points, existing) < routeIndex {
+			index = i + 1
+		}
+	}
+	if !existingBend {
+		bends = slices.Insert(bends, index, bend)
+	}
+	return bendTarget{edge: edgeID, index: index, bends: bends}, nil
 }
 
 func (m *Model) abortBendDrag(cause error) {
