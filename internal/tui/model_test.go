@@ -115,12 +115,13 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	store := settings.NewStore(filepath.Join(t.TempDir(), "config.json"))
 
 	model, err := New(geo, WithHistory(history), WithSettings(settings.Snapshot{
-		ApplyToFuture: true,
-		SaveDirectory: "/diagrams",
-		CommentPrefix: "# ",
-		ShortcutStyle: settings.ShortcutMac,
-		DarkTint:      defaultDarkTint.ID,
-		LightTint:     defaultLightTint.ID,
+		ApplyToFuture:    true,
+		SaveDirectory:    "/diagrams",
+		CommentPrefix:    "# ",
+		ShortcutStyle:    settings.ShortcutMac,
+		DarkTint:         defaultDarkTint.ID,
+		LightTint:        defaultLightTint.ID,
+		OpaqueBackground: true,
 	}, store))
 
 	require.NoError(t, err)
@@ -131,6 +132,7 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	require.Equal(t, chrome.ProfileMac, model.preferences.baseline.KeyProfile)
 	require.Equal(t, defaultDarkTint.ID, model.preferences.baseline.DarkTint)
 	require.Equal(t, defaultLightTint.ID, model.preferences.baseline.LightTint)
+	require.True(t, model.preferences.baseline.OpaqueBackground)
 	require.NotNil(t, model.dialogs.preferences.model)
 	require.NotNil(t, model.dialogs.save.form)
 	require.NotNil(t, model.clipboard)
@@ -2088,7 +2090,7 @@ func TestPreferenceFormCanReachSaveAndCancel(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 16})
 	model.openPreferences()
-	for range 9 {
+	for range 12 {
 		model.updateDialog(keyPress(tea.KeyDown, ""))
 	}
 
@@ -2103,7 +2105,7 @@ func TestShortPreferenceFormRevealsTintAndActions(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 12})
 	model.openPreferences()
-	for range 9 {
+	for range 10 {
 		updateModel(t, model, keyPress(tea.KeyDown, ""))
 	}
 	require.Equal(t, chrome.ID("dark-tint"), model.dialogs.preferences.model.FocusID())
@@ -2165,6 +2167,22 @@ func TestPreferenceTintPreviewsRestoreBaselineOnCancel(t *testing.T) {
 	require.Equal(t, baseline.DarkTint, model.theme.TintID)
 }
 
+func TestPreferenceBackgroundPreviewsAndRestoresOnCancel(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	model.openPreferences()
+	require.True(t, model.dialogs.preferences.model.Focus("background"))
+
+	model.updateDialog(keyPress(tea.KeyRight, ""))
+	require.True(t, model.preferences.draft.OpaqueBackground)
+	require.NotNil(t, model.View().BackgroundColor)
+
+	model.cancelPreferences()
+	require.False(t, model.preferences.baseline.OpaqueBackground)
+	require.Nil(t, model.View().BackgroundColor)
+}
+
 func TestBackgroundColorSelectsRegisteredLightTint(t *testing.T) {
 	t.Parallel()
 
@@ -2182,6 +2200,34 @@ func TestBackgroundColorSelectsRegisteredLightTint(t *testing.T) {
 		model.preferences.draft.LightTint,
 	)
 	require.Equal(t, model.preferences.draft.LightTint, model.theme.TintID)
+}
+
+func TestOpaqueBackgroundSetsViewBackground(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
+	require.NoError(t, err)
+	model, err := New(geo, WithHistory(history), WithSettings(settings.Snapshot{
+		ShortcutStyle:    settings.ShortcutStandard,
+		OpaqueBackground: true,
+	}, nil), func(options *modelOptions) {
+		options.sidebarInitiallyClosed = true
+	})
+	require.NoError(t, err)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 20, Height: 5})
+
+	view := model.View()
+	darkBackground := rgba(view.BackgroundColor)
+	require.Equal(t, rgba(model.theme.Background.GetBackground()), darkBackground)
+	updateModel(t, model, tea.BackgroundColorMsg{Color: color.White})
+	view = model.View()
+	require.Equal(t, rgba(model.theme.Background.GetBackground()), rgba(view.BackgroundColor))
+	require.NotEqual(t, darkBackground, rgba(view.BackgroundColor))
+
+	model.preferences.baseline.OpaqueBackground = false
+	require.Nil(t, model.View().BackgroundColor)
 }
 
 func TestLiveBackgroundCommandsAndFocusReporting(t *testing.T) {

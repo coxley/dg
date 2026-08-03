@@ -20,6 +20,8 @@ form geometry and traversal, and `directorypicker` owns filesystem navigation.
   the right edge of the current modal body width.
 - The application supplies independent dark and light semantic tint options;
   the form stores only their selected IDs.
+- The background selector stores whether the parent should leave the terminal
+  background visible or paint the viewport with the active tint.
 - A growing declarative spacer anchors actions to the body bottom-left.
 - Wheel input moves form focus without activating fields. Arrow keys and
   `h`/`j`/`k`/`l` provide equivalent navigation.

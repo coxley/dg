@@ -183,9 +183,10 @@ func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {
 		CommentPrefix: preferencesview.NormalizeCommentPrefix(
 			snapshot.CommentPrefix,
 		),
-		KeyProfile: keyProfile(snapshot.ShortcutStyle),
-		DarkTint:   darkTint,
-		LightTint:  lightTint,
+		KeyProfile:       keyProfile(snapshot.ShortcutStyle),
+		OpaqueBackground: snapshot.OpaqueBackground,
+		DarkTint:         darkTint,
+		LightTint:        lightTint,
 	}
 	m.preferences.draft = m.preferences.baseline
 	m.preferences.applyToFuture = snapshot.ApplyToFuture
@@ -309,13 +310,14 @@ func (m *Model) savePreferences(message preferenceSaveMsg) tea.Cmd {
 	m.previewPreferences(message.Value)
 	draft := m.preferences.draft
 	snapshot := settings.Snapshot{
-		Router:        draft.Router,
-		ApplyToFuture: message.SaveDefaults,
-		SaveDirectory: draft.SaveDirectory,
-		CommentPrefix: draft.CommentPrefix,
-		ShortcutStyle: shortcutStyle(draft.KeyProfile),
-		DarkTint:      draft.DarkTint,
-		LightTint:     draft.LightTint,
+		Router:           draft.Router,
+		ApplyToFuture:    message.SaveDefaults,
+		SaveDirectory:    draft.SaveDirectory,
+		CommentPrefix:    draft.CommentPrefix,
+		ShortcutStyle:    shortcutStyle(draft.KeyProfile),
+		DarkTint:         draft.DarkTint,
+		LightTint:        draft.LightTint,
+		OpaqueBackground: draft.OpaqueBackground,
 	}
 	if err := m.settingsStore.Save(snapshot); err != nil {
 		m.setError("save preferences: " + err.Error())

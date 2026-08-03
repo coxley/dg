@@ -83,6 +83,9 @@ func (m *Model) View() tea.View {
 
 	content = m.composeSurfaces(content)
 	view := tea.NewView(content + "\n")
+	if m.preferenceValue().OpaqueBackground {
+		view.BackgroundColor = m.theme.Background.GetBackground()
+	}
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.MouseMode = tea.MouseModeAllMotion

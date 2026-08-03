@@ -24,6 +24,7 @@ var (
 type Theme struct {
 	Dark          bool
 	TintID        string
+	Background    lipgloss.Style
 	CandidateEdge lipgloss.Style
 	Canvas        canvasview.Styles
 	Navigation    nav.Styles
@@ -88,6 +89,14 @@ func themeForTints(dark bool, darkID, lightID string) Theme {
 }
 
 func convertTint(theme *tint.Tint) Theme {
+	background := theme.Bg
+	if background == nil {
+		if theme.Dark {
+			background = tint.FromHex("#000000")
+		} else {
+			background = tint.FromHex("#ffffff")
+		}
+	}
 	focus := cmp.Or(theme.SelectionBg, theme.BrightBlue, theme.Blue)
 	text := cmp.Or(theme.Fg, theme.White, theme.BrightWhite)
 	muted := cmp.Or(theme.BrightWhite, theme.Black, theme.Fg)
@@ -181,6 +190,7 @@ func convertTint(theme *tint.Tint) Theme {
 	return Theme{
 		Dark:          theme.Dark,
 		TintID:        theme.ID,
+		Background:    lipgloss.NewStyle().Background(background),
 		CandidateEdge: lipgloss.NewStyle().Foreground(candidate).Bold(true),
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().

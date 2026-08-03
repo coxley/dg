@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"image/color"
 	"strings"
 	"testing"
 
@@ -22,6 +23,15 @@ func TestThemeUsesRegisteredTintForTerminalBackground(t *testing.T) {
 	require.Equal(t, "github", light.TintID)
 	require.True(t, dark.Dark)
 	require.False(t, light.Dark)
+	darkBackground := registeredTint(true, "dracula_plus", "").Bg
+	lightBackground := registeredTint(false, "", "github").Bg
+	require.Equal(t, rgba(darkBackground), rgba(dark.Background.GetBackground()))
+	require.Equal(t, rgba(lightBackground), rgba(light.Background.GetBackground()))
+}
+
+func rgba(value color.Color) [4]uint32 {
+	r, g, b, a := value.RGBA()
+	return [4]uint32{r, g, b, a}
 }
 
 func TestThemeFallsBackToRegisteredDefaultTint(t *testing.T) {
