@@ -36,6 +36,31 @@ func TestAttachmentAtDoesNotMutate(t *testing.T) {
 	require.Equal(t, before, mustAttachment(t, geo, node))
 }
 
+func TestRouteAttachmentHostsDoesNotRetainRelationships(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(2, 4))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", NewPoint(30, 4))
+	require.NoError(t, err)
+	edge := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	portA, _, err := geo.EdgePorts(edge)
+	require.NoError(t, err)
+	crossing := NewPoint(16, geo.Ports[portA].Exit.Y)
+	hosted, err := geo.NewNodeAt("hosted", NewPoint(15, crossing.Y-1))
+	require.NoError(t, err)
+	require.NoError(t, geo.Build())
+	require.False(t, geo.Edges[edge].Contains(crossing))
+
+	require.NoError(t, geo.RouteAttachmentHosts(AttachmentHost{NodeID: hosted, EdgeID: edge}))
+	require.True(t, geo.Edges[edge].Contains(crossing))
+	_, attached := geo.NodeAttachment(hosted)
+	require.False(t, attached)
+}
+
 func TestDuplicateSelectionPreservesCompleteAttachment(t *testing.T) {
 	t.Parallel()
 

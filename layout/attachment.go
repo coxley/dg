@@ -60,6 +60,12 @@ type Attachment struct {
 	Anchor    Point
 }
 
+// AttachmentHost identifies a node exempted from one host edge's obstacles.
+type AttachmentHost struct {
+	NodeID uint32
+	EdgeID uint32
+}
+
 // NodeAttachment returns nodeID's attachment.
 func (l *Layout) NodeAttachment(nodeID uint32) (Attachment, bool) {
 	if !l.NodeExists(nodeID) ||
@@ -92,6 +98,35 @@ func (l *Layout) CanAttachNode(nodeID, edgeID uint32) bool {
 		return false
 	}
 	return true
+}
+
+// RouteAttachmentHosts routes edges while treating hosts as prospective
+// attachments. It retains the computed routes but not the relationships.
+func (l *Layout) RouteAttachmentHosts(hosts ...AttachmentHost) error {
+	for i, host := range hosts {
+		if !l.canHostNode(host.NodeID, host.EdgeID) {
+			return fmt.Errorf("node %d cannot attach to edge %d", host.NodeID, host.EdgeID)
+		}
+		for _, previous := range hosts[:i] {
+			if previous.NodeID == host.NodeID {
+				return fmt.Errorf("multiple attachment hosts for node %d", host.NodeID)
+			}
+		}
+	}
+	previous := slices.Clone(l.attachments)
+	defer copy(l.attachments, previous)
+	for _, host := range hosts {
+		l.attachments[host.NodeID] = Attachment{
+			NodeID:    host.NodeID,
+			EdgeID:    host.EdgeID,
+			Reference: AttachmentReference{End: AttachmentPortA},
+			Offset:    1,
+		}
+	}
+	if err := l.router.route(l); err != nil {
+		return fmt.Errorf("route attachment hosts: %w", err)
+	}
+	return nil
 }
 
 func (l *Layout) canHostNode(nodeID, edgeID uint32) bool {
