@@ -88,7 +88,6 @@ type layoutHistoryState struct {
 	EdgeStyles  []EdgeStyle    `json:"edge_styles"`
 	EdgeBends   [][]PinnedBend `json:"edge_bends"`
 	Order       []Hit          `json:"order"`
-	Padding     Padding        `json:"padding"`
 	Router      Router         `json:"router"`
 	Attachments []Attachment   `json:"attachments"`
 }
@@ -102,7 +101,6 @@ func (l *Layout) historyState() layoutHistoryState {
 		EdgeStyles:  slices.Clone(l.edgeStyles),
 		EdgeBends:   clonePinnedBends(l.edgeBends),
 		Order:       slices.Clone(l.drawOrder),
-		Padding:     l.padding,
 		Router:      l.router,
 		Attachments: slices.Clone(l.attachments),
 	}
@@ -110,7 +108,6 @@ func (l *Layout) historyState() layoutHistoryState {
 
 func (l *Layout) restoreHistoryState(state layoutHistoryState) error {
 	l.graph = state.Graph.Clone()
-	l.padding = state.Padding
 	l.router = state.Router
 	l.drawOrder = slices.Clone(state.Order)
 	if err := l.initializeGeometry(); err != nil {

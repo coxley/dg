@@ -50,7 +50,6 @@ func (l *Layout) CopySelection() (Fragment, error) {
 	if err != nil {
 		return Fragment{}, err
 	}
-	copy.padding = l.padding
 	if err := copy.copyNodesFrom(
 		l,
 		selectedNodes,

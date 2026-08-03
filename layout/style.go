@@ -87,6 +87,39 @@ func (a VerticalAlign) Next() VerticalAlign {
 	return (a + 1) % verticalAlignCount
 }
 
+// PaddingLevel controls the empty cells around a node label. The zero value
+// retains the standard horizontal padding.
+type PaddingLevel uint8
+
+const (
+	PaddingDefault PaddingLevel = iota
+	PaddingNone
+	PaddingExtra
+	paddingLevelCount
+)
+
+// Valid reports whether level is supported.
+func (p PaddingLevel) Valid() bool {
+	return p < paddingLevelCount
+}
+
+// Next cycles through default, no, and extra padding.
+func (p PaddingLevel) Next() PaddingLevel {
+	return (p + 1) % paddingLevelCount
+}
+
+// Cells returns the cell insets represented by the level.
+func (p PaddingLevel) Cells() Padding {
+	switch p {
+	case PaddingNone:
+		return Padding{}
+	case PaddingExtra:
+		return Padding{Top: 1, Right: 2, Bottom: 1, Left: 2}
+	default:
+		return Padding{Right: 1, Left: 1}
+	}
+}
+
 // ArrowStyle controls an edge endpoint marker.
 type ArrowStyle uint8
 
@@ -120,6 +153,7 @@ type NodeStyle struct {
 	Stroke     StrokeStyle
 	Horizontal HorizontalAlign
 	Vertical   VerticalAlign
+	Padding    PaddingLevel
 }
 
 // LabelLinePoint returns the aligned origin of one visible label line.
@@ -165,7 +199,8 @@ func (s NodeStyle) Valid() bool {
 	return s.Border.Valid() &&
 		s.Stroke.Valid() &&
 		s.Horizontal.Valid() &&
-		s.Vertical.Valid()
+		s.Vertical.Valid() &&
+		s.Padding.Valid()
 }
 
 // EdgeStyle controls endpoint rendering by graph port order.
@@ -204,6 +239,19 @@ func (l *Layout) SetNodeStyle(nodeID uint32, style NodeStyle) error {
 		return nil
 	}
 	l.nodeStyles[nodeID] = style
+	if previous.Padding != style.Padding {
+		node, err := l.prepareNode(
+			nodeID,
+			l.graph.Nodes[nodeID].Label,
+			l.origins[nodeID],
+		)
+		if err != nil {
+			l.nodeStyles[nodeID] = previous
+			return err
+		}
+		l.Nodes[nodeID] = node
+		l.commitNodePorts(nodeID)
+	}
 	if l.recordingChanges() {
 		l.recordChange(historyChange{
 			Kind:   historySetNodeStyle,

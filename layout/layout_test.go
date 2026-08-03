@@ -481,13 +481,11 @@ func TestNewOptions(t *testing.T) {
 	router.Costs.Crossing = 42
 	router.ReroutePasses = 3
 	got, err := New(
-		WithPadding(2, 3),
 		WithRouter(router),
 	)
 	require.NoError(t, err)
 	router.Costs.Crossing = 0
 
-	require.Equal(t, Padding{Top: 3, Right: 2, Bottom: 3, Left: 2}, got.padding)
 	require.Equal(t, uint32(42), got.router.Costs.Crossing)
 	require.Equal(t, uint8(3), got.router.ReroutePasses)
 }
@@ -497,7 +495,6 @@ func TestNewDefaults(t *testing.T) {
 
 	got, err := New()
 	require.NoError(t, err)
-	require.Equal(t, Padding{Right: 1, Left: 1}, got.padding)
 	require.Equal(t, DefaultRouter(), got.router)
 }
 
@@ -742,10 +739,7 @@ func TestWithGraphCopiesAndInitializes(t *testing.T) {
 	right := graph.NewNode("right")
 	edgeID := graph.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 
-	got, err := New(
-		WithGraph(graph),
-		WithPadding(2, 1),
-	)
+	got, err := New(WithGraph(graph))
 	require.NoError(t, err)
 	graph.Nodes[left].Label = "changed"
 	graph.Nodes[left].Ports[0] = math.MaxUint32
@@ -754,7 +748,7 @@ func TestWithGraphCopiesAndInitializes(t *testing.T) {
 	require.Len(t, got.Nodes, len(graph.Nodes))
 	require.Len(t, got.Ports, len(graph.Ports))
 	require.Len(t, got.Edges, len(graph.Edges))
-	require.Equal(t, Size{Width: 10, Height: 5}, got.Nodes[left].Rect.Size)
+	require.Equal(t, Size{Width: 8, Height: 3}, got.Nodes[left].Rect.Size)
 
 	require.NoError(t, got.PlaceNode(right, Point{X: 16, Y: 4}))
 	require.NoError(t, got.Build())

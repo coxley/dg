@@ -11,7 +11,8 @@ should mutate a diagram through `Layout`, not through a copied `ir.Graph`.
 - `Point` and `Size` use `uint32`
 - `Padding` uses `uint8`
 - `Rect` uses half-open bounds `[Min, Max)`
-- default padding is one horizontal cell and zero vertical cells
+- node padding cycles among none, one horizontal cell, and one extra cell on
+  every side
 - `Node` stores its rectangle and label origin
 - `Port.Anchor` is the boundary cell
 - `Port.Exit` is the first outward cell
@@ -31,7 +32,7 @@ ports. Apply this rule to every offset, including user-defined ports.
 ## Storage and mutation
 
 `Layout.Nodes`, `Layout.Ports`, and `Layout.Edges` align with the corresponding
-IR IDs. Origins, explicit sizes, styles, pinned edge bends, and selection
+IR IDs. Origins, explicit sizes, styles including padding, pinned edge bends, and selection
 membership also use index-aligned slices.
 
 Mutations update semantic and derived state in place. `Build` resolves labels

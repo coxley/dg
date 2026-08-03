@@ -149,7 +149,6 @@ type Layout struct {
 	nodeStyles  []NodeStyle
 	edgeStyles  []EdgeStyle
 	edgeBends   [][]PinnedBend
-	padding     Padding
 	router      Router
 	scratch     routeScratch
 	draftPorts  []Port
@@ -173,12 +172,11 @@ type Layout struct {
 // Option configures a Layout.
 type Option func(*Layout)
 
-// New returns a layout configured with one cell of horizontal padding and the
-// default router. New validates and resolves any graph supplied by WithGraph.
+// New returns a layout configured with the default router. New validates and
+// resolves any graph supplied by WithGraph.
 func New(options ...Option) (*Layout, error) {
 	l := &Layout{
-		padding: Padding{Left: 1, Right: 1},
-		router:  DefaultRouter(),
+		router: DefaultRouter(),
 	}
 	for _, option := range options {
 		option(l)
@@ -217,14 +215,12 @@ func (l *Layout) Replace(configure func(*Layout) error, options ...Option) error
 
 func (l *Layout) reset(options ...Option) error {
 	configured := Layout{
-		padding: Padding{Left: 1, Right: 1},
-		router:  DefaultRouter(),
+		router: DefaultRouter(),
 	}
 	for _, option := range options {
 		option(&configured)
 	}
 	configured.graph.CloneInto(&l.graph)
-	l.padding = configured.padding
 	l.router = configured.router
 	l.drawOrder = append(l.drawOrder[:0], configured.drawOrder...)
 	l.selection.Clear()
@@ -242,18 +238,6 @@ func (l *Layout) installReplacement(next *Layout) {
 	l.selection.Clear()
 	next.selection.attach(next)
 	next.selection.Clear()
-}
-
-// WithPadding sets symmetric horizontal and vertical node padding.
-func WithPadding(horizontal, vertical uint8) Option {
-	return func(l *Layout) {
-		l.padding = Padding{
-			Top:    vertical,
-			Right:  horizontal,
-			Bottom: vertical,
-			Left:   horizontal,
-		}
-	}
 }
 
 // WithRouter sets the router used by Build.
@@ -1040,29 +1024,34 @@ func (l *Layout) Label(nodeID uint32) string {
 // LabelBounds returns the cells available for a node's rendered label.
 func (l *Layout) LabelBounds(nodeID uint32) Rect {
 	node := l.Nodes[nodeID]
+	padding, _ := l.NodePadding(nodeID)
 	return Rect{
 		Min: node.LabelPoint,
 		Size: Size{
 			Width: node.Rect.Size.Width -
-				uint32(l.padding.Left) -
-				uint32(l.padding.Right) -
+				uint32(padding.Left) -
+				uint32(padding.Right) -
 				2,
 			Height: node.Rect.Size.Height -
-				uint32(l.padding.Top) -
-				uint32(l.padding.Bottom) -
+				uint32(padding.Top) -
+				uint32(padding.Bottom) -
 				2,
 		},
 	}
 }
 
+// NodePadding returns nodeID's label insets.
+func (l *Layout) NodePadding(nodeID uint32) (Padding, bool) {
+	if !l.graph.NodeExists(nodeID) ||
+		uint64(nodeID) >= uint64(len(l.nodeStyles)) {
+		return Padding{}, false
+	}
+	return l.nodeStyles[nodeID].Padding.Cells(), true
+}
+
 // Graph returns an independent copy of the semantic graph.
 func (l *Layout) Graph() ir.Graph {
 	return l.graph.Clone()
-}
-
-// Padding returns the configured node padding.
-func (l *Layout) Padding() Padding {
-	return l.padding
 }
 
 // Router returns the configured router.
@@ -1091,7 +1080,6 @@ func (l *Layout) SetRouter(router Router) {
 func (l *Layout) Clone() (*Layout, error) {
 	cloned, err := New(func(cloned *Layout) {
 		cloned.graph = l.graph
-		cloned.padding = l.padding
 		cloned.router = l.router
 		cloned.drawOrder = slices.Clone(l.drawOrder)
 	})
@@ -1388,23 +1376,25 @@ func (l *Layout) nodeGeometry(nodeID uint32, label string, point Point) (Node, e
 	if err != nil {
 		return Node{}, fmt.Errorf("size node %d: %w", nodeID, err)
 	}
+	padding := l.paddingForNode(nodeID)
 	return Node{
 		Rect: rect,
 		LabelPoint: Point{
-			X: rect.Min.X + 1 + uint32(l.padding.Left),
-			Y: rect.Min.Y + 1 + uint32(l.padding.Top),
+			X: rect.Min.X + 1 + uint32(padding.Left),
+			Y: rect.Min.Y + 1 + uint32(padding.Top),
 		},
 	}, nil
 }
 
 func (l *Layout) nodeRect(nodeID uint32, origin Point, label Size) (Rect, error) {
+	padding := l.paddingForNode(nodeID)
 	if uint64(nodeID) >= uint64(len(l.explicitSizes)) ||
 		l.explicitSizes[nodeID].Empty() {
-		return NodeRect(origin, label, l.padding)
+		return NodeRect(origin, label, padding)
 	}
 	size := l.explicitSizes[nodeID]
-	minWidth := uint32(l.padding.Left) + uint32(l.padding.Right) + 2
-	minHeight := uint32(l.padding.Top) + uint32(l.padding.Bottom) + 2
+	minWidth := uint32(padding.Left) + uint32(padding.Right) + 2
+	minHeight := uint32(padding.Top) + uint32(padding.Bottom) + 2
 	if size.Width < minWidth || size.Height < minHeight {
 		return Rect{}, fmt.Errorf(
 			"explicit node size %dx%d smaller than minimum %dx%d",
@@ -1423,6 +1413,13 @@ func (l *Layout) nodeRect(nodeID uint32, origin Point, label Size) (Rect, error)
 		)
 	}
 	return NewRect(origin, origin.Add(size.Width, size.Height))
+}
+
+func (l *Layout) paddingForNode(nodeID uint32) Padding {
+	if uint64(nodeID) >= uint64(len(l.nodeStyles)) {
+		return PaddingDefault.Cells()
+	}
+	return l.nodeStyles[nodeID].Padding.Cells()
 }
 
 func (l *Layout) prepareNode(nodeID uint32, label string, point Point) (Node, error) {
