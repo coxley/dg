@@ -1143,8 +1143,9 @@ func (l *Layout) Build() error {
 	return nil
 }
 
-// BuildSelection reroutes selected edges and edges incident to selected nodes
-// against existing unrelated routes. It changes no route when routing fails.
+// BuildSelection reroutes selected edges, edges incident to selected nodes,
+// and their exact-port siblings against existing unrelated routes. It changes
+// no route when routing fails.
 func (l *Layout) BuildSelection() error {
 	if l.hasAttachments() {
 		l.snapshotAttachmentBuildState(&l.attachmentBuildRollback)

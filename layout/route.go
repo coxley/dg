@@ -292,16 +292,18 @@ func (s *routeSearch) reset() {
 
 // routeScratch retains all routing work buffers across builds.
 type routeScratch struct {
-	occupancy routeOccupancy
-	obstacles obstacleIndex
-	search    routeSearch
-	paths     [][]Point
-	candidate []Point
-	expanded  []Point
-	relaxed   []Point
-	segment   []Point
-	arrowPort []bool
-	lastEdge  []uint32
+	occupancy    routeOccupancy
+	obstacles    obstacleIndex
+	search       routeSearch
+	paths        [][]Point
+	candidate    []Point
+	expanded     []Point
+	relaxed      []Point
+	segment      []Point
+	arrowPort    []bool
+	lastEdge     []uint32
+	affected     []bool
+	affectedPort []bool
 }
 
 func (s *routeScratch) reset(
@@ -327,6 +329,13 @@ func (s *routeScratch) reset(
 	clear(s.arrowPort)
 	s.lastEdge = slices.Grow(s.lastEdge[:0], portCount)[:portCount]
 	clear(s.lastEdge)
+}
+
+func (s *routeScratch) resetAffected(edgeCount, portCount int) {
+	s.affected = slices.Grow(s.affected[:0], edgeCount)[:edgeCount]
+	clear(s.affected)
+	s.affectedPort = slices.Grow(s.affectedPort[:0], portCount)[:portCount]
+	clear(s.affectedPort)
 }
 
 const (
@@ -764,7 +773,7 @@ func (r Router) route(l *Layout) error {
 	}
 
 	if r.ReroutePasses != 0 {
-		if _, err := r.rerouteSharedPredecessors(l); err != nil {
+		if _, err := r.rerouteSharedPredecessors(l, nil); err != nil {
 			return err
 		}
 	}
@@ -786,7 +795,10 @@ func (r Router) route(l *Layout) error {
 
 // rerouteSharedPredecessors aligns an earlier route's first branch with a later
 // sibling's branch when the resulting path remains legal and no more costly.
-func (r Router) rerouteSharedPredecessors(l *Layout) (bool, error) {
+func (r Router) rerouteSharedPredecessors(
+	l *Layout,
+	affected []bool,
+) (bool, error) {
 	g := &l.graph
 	scratch := &l.scratch
 	paths := scratch.paths
@@ -794,10 +806,11 @@ func (r Router) rerouteSharedPredecessors(l *Layout) (bool, error) {
 	changed := false
 	for i, edge := range g.Edges {
 		edgeID := uint32(i)
-		if !g.EdgeExists(edgeID) || len(l.edgeBends[edgeID]) != 0 {
+		if !g.EdgeExists(edgeID) || len(l.edgeBends[edgeID]) != 0 ||
+			affected != nil && !affected[i] {
 			continue
 		}
-		siblingID, commonPort, ok := l.laterSibling(edgeID, edge)
+		siblingID, commonPort, ok := l.laterSibling(edgeID, edge, affected)
 		if !ok {
 			continue
 		}
@@ -852,10 +865,12 @@ func (r Router) rerouteSharedPredecessors(l *Layout) (bool, error) {
 func (l *Layout) laterSibling(
 	edgeID uint32,
 	edge ir.Edge,
+	affected []bool,
 ) (uint32, uint32, bool) {
 	for _, portID := range [...]uint32{edge.PortA, edge.PortB} {
 		later := l.scratch.lastEdge[portID]
-		if later > edgeID+1 {
+		if later > edgeID+1 &&
+			(affected == nil || affected[later-1]) {
 			return later - 1, portID, true
 		}
 	}
@@ -988,6 +1003,7 @@ func (r Router) routeSelection(l *Layout) error {
 	g := &l.graph
 	scratch := &l.scratch
 	scratch.reset(len(g.Edges), len(g.Ports), l.Nodes)
+	scratch.resetAffected(len(g.Edges), len(g.Ports))
 	for edgeID, edge := range g.Edges {
 		id := uint32(edgeID)
 		if !g.EdgeExists(id) {
@@ -1000,11 +1016,30 @@ func (r Router) routeSelection(l *Layout) error {
 		if style.PortBArrow != ArrowNone {
 			scratch.arrowPort[edge.PortB] = true
 		}
+		scratch.lastEdge[edge.PortA] = id + 1
+		scratch.lastEdge[edge.PortB] = id + 1
+		if l.edgeDirectlySelectedForRouting(id) {
+			scratch.affected[edgeID] = true
+			scratch.affectedPort[edge.PortA] = true
+			scratch.affectedPort[edge.PortB] = true
+		}
+	}
+	for edgeID, edge := range g.Edges {
+		if g.EdgeExists(uint32(edgeID)) &&
+			(scratch.affectedPort[edge.PortA] || scratch.affectedPort[edge.PortB]) {
+			scratch.affected[edgeID] = true
+		}
+	}
+	for edgeID := range g.Edges {
+		id := uint32(edgeID)
+		if !g.EdgeExists(id) {
+			continue
+		}
 		scratch.paths[edgeID] = append(
 			scratch.paths[edgeID][:0],
 			l.Edges[edgeID].Points...,
 		)
-		if !l.edgeSelectedForRouting(id) {
+		if !scratch.affected[edgeID] {
 			var err error
 			scratch.expanded, err = scratch.occupancy.addCompact(
 				id,
@@ -1019,7 +1054,7 @@ func (r Router) routeSelection(l *Layout) error {
 
 	for edgeID, edge := range g.Edges {
 		id := uint32(edgeID)
-		if !g.EdgeExists(id) || !l.edgeSelectedForRouting(id) {
+		if !g.EdgeExists(id) || !scratch.affected[edgeID] {
 			continue
 		}
 		if l.edgeEndpointsSelected(edge) && len(scratch.paths[edgeID]) >= 2 {
@@ -1041,6 +1076,10 @@ func (r Router) routeSelection(l *Layout) error {
 				)
 			}
 			if valid {
+				scratch.paths[edgeID] = append(
+					scratch.paths[edgeID][:0],
+					expanded...,
+				)
 				scratch.occupancy.addExpanded(id, expanded)
 				continue
 			}
@@ -1060,9 +1099,14 @@ func (r Router) routeSelection(l *Layout) error {
 		scratch.paths[edgeID] = path
 		scratch.occupancy.addExpanded(id, path)
 	}
+	if r.ReroutePasses != 0 {
+		if _, err := r.rerouteSharedPredecessors(l, scratch.affected); err != nil {
+			return err
+		}
+	}
 	for edgeID := range g.Edges {
 		id := uint32(edgeID)
-		if !g.EdgeExists(id) || !l.edgeSelectedForRouting(id) {
+		if !g.EdgeExists(id) || !scratch.affected[edgeID] {
 			continue
 		}
 		l.Edges[edgeID].Points = compact(
@@ -1086,7 +1130,7 @@ func (l *Layout) pathClearForRoute(edgeID uint32, path []Point) bool {
 	return true
 }
 
-func (l *Layout) edgeSelectedForRouting(edgeID uint32) bool {
+func (l *Layout) edgeDirectlySelectedForRouting(edgeID uint32) bool {
 	if l.selection.Contains(Hit{ID: edgeID, Kind: HitEdge}) {
 		return true
 	}

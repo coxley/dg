@@ -391,6 +391,43 @@ func TestBuildAlignsCommonPortBranches(t *testing.T) {
 	require.Equal(t, south, lowerDirection, "lower route: %+v", geo.Edges[lower].Points)
 }
 
+func TestBuildSelectionRestoresAlignedCommonPortBranches(t *testing.T) {
+	t.Parallel()
+
+	for _, selectedNode := range []int{0, 1, 2} {
+		t.Run(fmt.Sprintf("node=%d", selectedNode), func(t *testing.T) {
+			t.Parallel()
+
+			geo, err := New()
+			require.NoError(t, err)
+			source, err := geo.NewNodeAt("source", NewPoint(2, 12))
+			require.NoError(t, err)
+			top, err := geo.NewNodeAt("top", NewPoint(30, 2))
+			require.NoError(t, err)
+			bottom, err := geo.NewNodeAt("bottom", NewPoint(30, 22))
+			require.NoError(t, err)
+			upper := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, top)
+			lower := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, bottom)
+			require.NoError(t, geo.Build())
+			wantUpper := slices.Clone(geo.Edges[upper].Points)
+			wantLower := slices.Clone(geo.Edges[lower].Points)
+
+			nodeID := [...]uint32{source, top, bottom}[selectedNode]
+			require.True(t, geo.Selection().SelectOnly(Hit{
+				ID:   nodeID,
+				Kind: HitNode,
+			}))
+			require.NoError(t, geo.MoveSelection(0, 2))
+			require.NoError(t, geo.BuildSelection())
+			require.NoError(t, geo.MoveSelection(0, -2))
+			require.NoError(t, geo.BuildSelection())
+
+			require.Equal(t, wantUpper, geo.Edges[upper].Points)
+			require.Equal(t, wantLower, geo.Edges[lower].Points)
+		})
+	}
+}
+
 func TestAlignSharedBranchHandlesRouteOrientation(t *testing.T) {
 	t.Parallel()
 

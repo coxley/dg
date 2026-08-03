@@ -192,8 +192,8 @@ automatic routing.
 
 Use the existing controls before adding another index or cache:
 
-- `BuildSelection` limits routing to selected edges and edges incident to
-  selected nodes
+- `BuildSelection` limits routing to selected edges, edges incident to selected
+  nodes, and exact-port siblings needed to preserve shared branch geometry
 - `BuildSelection` preserves a selected internal route when it remains clear
   and legal against static occupancy
 - rigid selection moves skip routing when static geometry cannot be affected
