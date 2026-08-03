@@ -184,7 +184,6 @@ func TestUnmarshalRejectsVersionOne(t *testing.T) {
 		"ports": [],
 		"edges": [],
 		"options": {
-			"padding": {"horizontal": 1, "vertical": 0},
 			"router": {
 				"costs": {"step": 10, "shared_step": 2, "bend": 5, "crossing": 15},
 				"reroute_passes": 1
@@ -592,6 +591,13 @@ func TestDocumentValidation(t *testing.T) {
 			want: "unknown stroke",
 		},
 		{
+			name: "unknown node padding",
+			mutate: func(doc *Document) {
+				doc.Nodes[0].Style.Padding = unknownStyle
+			},
+			want: "unknown padding",
+		},
+		{
 			name: "unknown arrow style",
 			mutate: func(doc *Document) {
 				doc.Edges[0].Style.PortBArrow = unknownStyle
@@ -728,7 +734,6 @@ func validDocument() Document {
 			{Kind: LayerEdge, ID: 0},
 		},
 		Options: Options{
-			Padding: Padding{Horizontal: 1},
 			Router: Router{
 				Costs: Costs{
 					Step:         10,
@@ -786,8 +791,6 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			portCount,
 		).Draw(t, "port offsets")
 
-		horizontalPadding := rapid.Uint8Range(0, 4).Draw(t, "horizontal padding")
-		verticalPadding := rapid.Uint8Range(0, 4).Draw(t, "vertical padding")
 		doc := Document{
 			Version: CurrentVersion,
 			ID:      uuid.New(),
@@ -795,10 +798,6 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 			Ports:   make([]Port, 0, portCount),
 			Edges:   make([]Edge, 0),
 			Options: Options{
-				Padding: Padding{
-					Horizontal: horizontalPadding,
-					Vertical:   verticalPadding,
-				},
 				Router: Router{
 					Costs: Costs{
 						Step:       rapid.Uint32Range(0, 100).Draw(t, "step cost"),
@@ -814,6 +813,11 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 		}
 		nextPort := 0
 		for nodeID := range nodeCount {
+			padding := rapid.SampledFrom([]PaddingLevel{
+				"",
+				PaddingNone,
+				PaddingExtra,
+			}).Draw(t, "node padding")
 			node := Node{
 				Label: labels[nodeID],
 				Origin: Point{
@@ -832,17 +836,19 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 						"",
 						StrokeDashed,
 					}).Draw(t, "node stroke"),
+					Padding: padding,
 				},
 			}
 			if rapid.Bool().Draw(t, "explicit size") {
+				cells := documentPaddingCells(padding)
 				node.Size = Size{
 					Width: rapid.Uint32Range(
-						2*uint32(horizontalPadding)+2,
-						2*uint32(horizontalPadding)+24,
+						uint32(cells.Left)+uint32(cells.Right)+2,
+						uint32(cells.Left)+uint32(cells.Right)+24,
 					).Draw(t, "node width"),
 					Height: rapid.Uint32Range(
-						2*uint32(verticalPadding)+2,
-						2*uint32(verticalPadding)+12,
+						uint32(cells.Top)+uint32(cells.Bottom)+2,
+						uint32(cells.Top)+uint32(cells.Bottom)+12,
 					).Draw(t, "node height"),
 				}
 			}
@@ -911,4 +917,15 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 		doc.Layers = rapid.Permutation(layers).Draw(t, "layers")
 		return doc
 	})
+}
+
+func documentPaddingCells(padding PaddingLevel) layout.Padding {
+	switch padding {
+	case PaddingNone:
+		return layout.PaddingNone.Cells()
+	case PaddingExtra:
+		return layout.PaddingExtra.Cells()
+	default:
+		return layout.PaddingDefault.Cells()
+	}
 }

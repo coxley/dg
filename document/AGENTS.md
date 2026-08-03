@@ -15,7 +15,7 @@
 - node border, stroke, and text alignment
 - edge stroke and endpoint arrows
 - ordered pinned edge bends
-- symmetric padding and router configuration
+- node padding and router configuration
 - back-to-front layers
 
 The zero value of optional style fields represents the runtime default.

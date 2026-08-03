@@ -46,7 +46,16 @@ type NodeStyle struct {
 	Stroke     StrokeStyle     `json:"stroke,omitempty"`
 	Horizontal HorizontalAlign `json:"horizontal,omitempty"`
 	Vertical   VerticalAlign   `json:"vertical,omitempty"`
+	Padding    PaddingLevel    `json:"padding,omitempty"`
 }
+
+// PaddingLevel identifies persisted node label spacing.
+type PaddingLevel string
+
+const (
+	PaddingNone  PaddingLevel = "none"
+	PaddingExtra PaddingLevel = "extra"
+)
 
 // BorderStyle identifies a persisted node border.
 type BorderStyle string
@@ -170,14 +179,7 @@ const (
 
 // Options stores layout and routing configuration.
 type Options struct {
-	Padding Padding `json:"padding"`
-	Router  Router  `json:"router"`
-}
-
-// Padding stores symmetric horizontal and vertical node padding.
-type Padding struct {
-	Horizontal uint8 `json:"horizontal"`
-	Vertical   uint8 `json:"vertical"`
+	Router Router `json:"router"`
 }
 
 // Router stores orthogonal routing configuration.
@@ -205,7 +207,6 @@ func New(geo *layout.Layout) Document {
 // Update replaces the document contents while preserving its identity and capacity.
 func (d *Document) Update(geo *layout.Layout) {
 	graph := geo.Graph()
-	padding := geo.Padding()
 	router := geo.Router()
 	previousNodes := d.Nodes[:cap(d.Nodes)]
 	previousEdges := d.Edges[:cap(d.Edges)]
@@ -216,10 +217,6 @@ func (d *Document) Update(geo *layout.Layout) {
 	d.Attachments = d.Attachments[:0]
 	d.Layers = d.Layers[:0]
 	d.Options = Options{
-		Padding: Padding{
-			Horizontal: padding.Left,
-			Vertical:   padding.Top,
-		},
 		Router: Router{
 			Costs: Costs{
 				Step:         router.Costs.Step,
@@ -454,10 +451,6 @@ func (d Document) conversionOptions(options []layout.Option) ([]layout.Option, e
 	baseOptions := []layout.Option{
 		layout.WithGraph(graph),
 		layout.WithDrawOrder(drawOrder),
-		layout.WithPadding(
-			d.Options.Padding.Horizontal,
-			d.Options.Padding.Vertical,
-		),
 		layout.WithRouter(router),
 	}
 	return slices.Concat(options, baseOptions), nil
@@ -565,11 +558,20 @@ func documentNodeStyle(style layout.NodeStyle) NodeStyle {
 	case layout.AlignBottom:
 		vertical = AlignBottom
 	}
+	var padding PaddingLevel
+	switch style.Padding {
+	case layout.PaddingDefault:
+	case layout.PaddingNone:
+		padding = PaddingNone
+	case layout.PaddingExtra:
+		padding = PaddingExtra
+	}
 	return NodeStyle{
 		Border:     border,
 		Stroke:     documentStrokeStyle(style.Stroke),
 		Horizontal: horizontal,
 		Vertical:   vertical,
+		Padding:    padding,
 	}
 }
 
@@ -612,11 +614,23 @@ func (s NodeStyle) layoutStyle() (layout.NodeStyle, error) {
 	default:
 		return layout.NodeStyle{}, fmt.Errorf("unknown vertical alignment %q", s.Vertical)
 	}
+	var padding layout.PaddingLevel
+	switch s.Padding {
+	case "":
+		padding = layout.PaddingDefault
+	case PaddingNone:
+		padding = layout.PaddingNone
+	case PaddingExtra:
+		padding = layout.PaddingExtra
+	default:
+		return layout.NodeStyle{}, fmt.Errorf("unknown padding %q", s.Padding)
+	}
 	return layout.NodeStyle{
 		Border:     border,
 		Stroke:     s.Stroke.layoutStyle(),
 		Horizontal: horizontal,
 		Vertical:   vertical,
+		Padding:    padding,
 	}, nil
 }
 
