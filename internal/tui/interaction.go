@@ -34,12 +34,14 @@ type bendTarget struct {
 	edge  uint32
 	index int
 	bends []layout.PinnedBend
+	start layout.Point
 }
 
 type bendSession struct {
 	targets           []bendTarget
 	valid             bool
 	axis              bendDragAxis
+	sharedPrepared    bool
 	preserveSelection bool
 }
 

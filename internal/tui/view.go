@@ -760,7 +760,7 @@ func (m *Model) refreshBendPreview() {
 			_ = m.render()
 			return
 		}
-		if err := m.canvas.Render(canvasview.BaseFrame, preview); err != nil {
+		if err := m.canvas.Render(canvasview.ConnectionFrame, preview); err != nil {
 			session.valid = false
 			m.status = err.Error()
 			_ = m.render()
@@ -768,7 +768,12 @@ func (m *Model) refreshBendPreview() {
 		}
 		m.interaction.render.bendPreview = m.interaction.render.bendPreview[:0]
 		m.interaction.render.bendRaster = m.interaction.render.bendRaster[:0]
-		m.refreshSelectionHighlight()
+		m.interaction.render.selectionHighlight = appendSelectionHighlight(
+			m.interaction.render.selectionHighlight[:0],
+			preview,
+			&m.canvas,
+			canvasview.ConnectionFrame,
+		)
 		session.valid = true
 		m.status = ""
 		return

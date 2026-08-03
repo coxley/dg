@@ -59,7 +59,8 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - right drag on a node body resizes from the nearest corner; otherwise, right
   drag within three Manhattan cells of a visible edge corner pins and moves
   that bend along one dominant axis; selected edges win ambiguous bend hits,
-  and selected edges sharing the bend move it together
+  and aligned bends on selected edges move together while retaining their
+  coordinates on the fixed axis
 - double-click restores automatic node sizing
 - double-clicking an edge clears all of its pinned bends
 - Alt-drag duplicates selected nodes and their internal edges

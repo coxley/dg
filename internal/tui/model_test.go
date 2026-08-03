@@ -4322,20 +4322,28 @@ func TestModelRightDragMovesSelectedSharedBendsTogether(t *testing.T) {
 	require.NoError(t, err)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 30})
 
-	var shared layout.Point
+	var upperBend, lowerBend layout.PinnedBend
 	found := false
-	for upperIndex := 1; upperIndex+1 < len(geo.Edges[upper].Points); upperIndex++ {
-		upperBend := bendAt(geo.Edges[upper].Points, upperIndex)
-		if !upperBend.Valid() {
+	for lowerIndex := 1; lowerIndex+1 < len(geo.Edges[lower].Points); lowerIndex++ {
+		lowerCandidate := bendAt(geo.Edges[lower].Points, lowerIndex)
+		lowerArm := bendArm(lowerCandidate, bendAxisHorizontal)
+		if !lowerCandidate.Valid() || lowerArm == 0 {
 			continue
 		}
-		for lowerIndex := 1; lowerIndex+1 < len(geo.Edges[lower].Points); lowerIndex++ {
-			lowerBend := bendAt(geo.Edges[lower].Points, lowerIndex)
-			if lowerBend.Valid() && lowerBend.Point == upperBend.Point {
-				shared = upperBend.Point
+		for upperIndex := 1; upperIndex+1 < len(geo.Edges[upper].Points); upperIndex++ {
+			upperCandidate := bendAt(geo.Edges[upper].Points, upperIndex)
+			if upperCandidate.Valid() &&
+				upperCandidate.Point != lowerCandidate.Point &&
+				upperCandidate.Point.X == lowerCandidate.Point.X &&
+				bendArm(upperCandidate, bendAxisHorizontal) == lowerArm {
+				upperBend = upperCandidate
+				lowerBend = lowerCandidate
 				found = true
 				break
 			}
+		}
+		if found {
+			break
 		}
 	}
 	require.True(t, found, "upper=%v lower=%v", geo.Edges[upper].Points, geo.Edges[lower].Points)
@@ -4344,23 +4352,26 @@ func TestModelRightDragMovesSelectedSharedBendsTogether(t *testing.T) {
 	require.True(t, geo.Selection().Toggle(layout.Hit{ID: lower, Kind: layout.HitEdge}))
 	require.NoError(t, model.render())
 	history.Clear()
-	model.updateMouseClick(modelMouseAt(model, shared, tea.MouseRight))
-	require.Len(t, model.interaction.session.bend.targets, 2)
+	model.updateMouseClick(modelMouseAt(model, lowerBend.Point, tea.MouseRight))
 
-	target := layout.NewPoint(shared.X-2, shared.Y)
-	drag := modelMouseAt(model, target, tea.MouseRight)
+	firstMotion := layout.NewPoint(lowerBend.Point.X-1, lowerBend.Point.Y)
+	model.updateMouseMotion(modelMouseAt(model, firstMotion, tea.MouseRight))
+	dragPoint := layout.NewPoint(lowerBend.Point.X-2, lowerBend.Point.Y)
+	drag := modelMouseAt(model, dragPoint, tea.MouseRight)
 	model.updateMouseMotion(drag)
+	require.Len(t, model.interaction.session.bend.targets, 2)
 	require.True(t, model.interaction.session.bend.valid, model.status)
 	model.updateMouseRelease(drag)
 
-	for _, edgeID := range []uint32{upper, lower} {
+	for edgeID, bend := range map[uint32]layout.PinnedBend{
+		upper: upperBend,
+		lower: lowerBend,
+	} {
+		target := layout.NewPoint(dragPoint.X, bend.Point.Y)
 		pins, pinErr := geo.PinnedBends(edgeID)
 		require.NoError(t, pinErr)
-		require.Condition(t, func() bool {
-			return slices.ContainsFunc(pins, func(pin layout.PinnedBend) bool {
-				return pin.Point == target
-			})
-		}, "edge %d pins=%v", edgeID, pins)
+		require.Len(t, pins, 1, "edge %d pins=%v", edgeID, pins)
+		require.Equal(t, target, pins[0].Point)
 		require.True(t, geo.Selection().Contains(layout.Hit{ID: edgeID, Kind: layout.HitEdge}))
 	}
 

@@ -27,35 +27,8 @@ func (m *Model) beginBendDrag(point layout.Point) bool {
 	hit := layout.Hit{ID: edgeID, Kind: layout.HitEdge}
 	preserveSelection := m.geo.Selection().Contains(hit)
 	targets := append([]bendTarget(nil), primary)
-	if preserveSelection {
-		for selectedID := range m.geo.Selection().Edges() {
-			if selectedID == edgeID {
-				continue
-			}
-			for index := 1; index+1 < len(m.geo.Edges[selectedID].Points); index++ {
-				shared := bendAt(m.geo.Edges[selectedID].Points, index)
-				if !shared.Valid() || shared.Point != bend.Point {
-					continue
-				}
-				target, targetErr := m.prepareBendTarget(selectedID, index, shared)
-				if targetErr != nil {
-					m.setError(targetErr.Error())
-					return true
-				}
-				targets = append(targets, target)
-				break
-			}
-		}
-	} else {
+	if !preserveSelection {
 		m.selectOnly(hit)
-	}
-	var preview *layout.Layout
-	if len(targets) > 1 {
-		preview, err = m.geo.Clone()
-		if err != nil {
-			m.setError(err.Error())
-			return true
-		}
 	}
 	m.target = hit
 	m.beginTransaction(transactionBend)
@@ -73,12 +46,9 @@ func (m *Model) beginBendDrag(point layout.Point) bool {
 		start:  bend.Point,
 		point:  bend.Point,
 	}
-	m.interaction.render.bendLayout = preview
-	if len(targets) == 1 {
-		if err := m.renderBendBase(); err != nil {
-			m.abortBendDrag(err)
-			return true
-		}
+	if err := m.renderBendBase(); err != nil {
+		m.abortBendDrag(err)
+		return true
 	}
 	m.cursor = point
 	m.refreshBendPreview()
@@ -92,10 +62,31 @@ func (m *Model) updateBendDrag(point layout.Point) {
 		return
 	}
 	session := &m.interaction.session.bend
-	point = session.constrainPoint(m.interaction.gesture.start, point)
+	start := m.interaction.gesture.start
+	point = session.constrainPoint(start, point)
+	axis := session.axis
+	if axis == bendAxisNone {
+		if point.X == start.X {
+			axis = bendAxisVertical
+		} else {
+			axis = bendAxisHorizontal
+		}
+	}
+	if session.axis != bendAxisNone && !session.sharedPrepared {
+		if err := m.prepareSharedBendTargets(); err != nil {
+			m.abortBendDrag(err)
+			return
+		}
+	}
 	for i := range session.targets {
 		target := &session.targets[i]
-		target.bends[target.index].Point = point
+		targetPoint := target.start
+		if axis == bendAxisHorizontal {
+			targetPoint.X = point.X
+		} else {
+			targetPoint.Y = point.Y
+		}
+		target.bends[target.index].Point = targetPoint
 	}
 	m.interaction.gesture.point = point
 	m.cursor = point
@@ -125,6 +116,114 @@ func (s *bendSession) constrainPoint(
 		point.Y = start.Y
 	}
 	return point
+}
+
+func (m *Model) prepareSharedBendTargets() error {
+	session := &m.interaction.session.bend
+	session.sharedPrepared = true
+	if !session.preserveSelection {
+		return nil
+	}
+	primary := session.primary()
+	primaryBend := primary.bends[primary.index]
+	primaryBend.Point = primary.start
+	arm := bendArm(primaryBend, session.axis)
+	for selectedID := range m.geo.Selection().Edges() {
+		if selectedID == primary.edge {
+			continue
+		}
+		index, bend, ok := nearestAlignedBend(
+			m.geo.Edges[selectedID].Points,
+			primaryBend,
+			session.axis,
+			arm,
+		)
+		if !ok {
+			continue
+		}
+		target, err := m.prepareBendTarget(selectedID, index, bend)
+		if err != nil {
+			return err
+		}
+		session.targets = append(session.targets, target)
+	}
+	if !session.multiple() {
+		return nil
+	}
+	preview, err := m.geo.Clone()
+	if err != nil {
+		return err
+	}
+	m.interaction.render.bendLayout = preview
+	return nil
+}
+
+func nearestAlignedBend(
+	points []layout.Point,
+	primary layout.PinnedBend,
+	axis bendDragAxis,
+	arm layout.Connections,
+) (int, layout.PinnedBend, bool) {
+	bestIndex := 0
+	bestDistance := uint64(0)
+	var best layout.PinnedBend
+	found := false
+	for index := 1; index+1 < len(points); index++ {
+		candidate := bendAt(points, index)
+		if !candidate.Valid() ||
+			!bendAligned(primary, candidate, axis) ||
+			bendArm(candidate, axis) != arm {
+			continue
+		}
+		distance := pointDistance(primary.Point, candidate.Point)
+		if found && distance >= bestDistance {
+			continue
+		}
+		bestIndex = index
+		bestDistance = distance
+		best = candidate
+		found = true
+	}
+	return bestIndex, best, found
+}
+
+func bendAligned(a, b layout.PinnedBend, axis bendDragAxis) bool {
+	if axis == bendAxisHorizontal {
+		return a.Point.X == b.Point.X
+	}
+	return a.Point.Y == b.Point.Y
+}
+
+func bendArm(bend layout.PinnedBend, axis bendDragAxis) layout.Connections {
+	if connectionFollowsAxis(bend.Incoming, axis) {
+		return oppositeConnection(bend.Incoming)
+	}
+	if connectionFollowsAxis(bend.Outgoing, axis) {
+		return bend.Outgoing
+	}
+	return 0
+}
+
+func connectionFollowsAxis(connection layout.Connections, axis bendDragAxis) bool {
+	if axis == bendAxisHorizontal {
+		return connection == layout.East || connection == layout.West
+	}
+	return connection == layout.North || connection == layout.South
+}
+
+func oppositeConnection(connection layout.Connections) layout.Connections {
+	switch connection {
+	case layout.North:
+		return layout.South
+	case layout.East:
+		return layout.West
+	case layout.South:
+		return layout.North
+	case layout.West:
+		return layout.East
+	default:
+		return 0
+	}
 }
 
 func (m *Model) finishBendDrag() {
@@ -185,7 +284,12 @@ func (m *Model) prepareBendTarget(
 	if !existingBend {
 		bends = slices.Insert(bends, index, bend)
 	}
-	return bendTarget{edge: edgeID, index: index, bends: bends}, nil
+	return bendTarget{
+		edge:  edgeID,
+		index: index,
+		bends: bends,
+		start: bend.Point,
+	}, nil
 }
 
 func (m *Model) abortBendDrag(cause error) {
