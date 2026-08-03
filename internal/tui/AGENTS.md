@@ -218,6 +218,7 @@ message.
 - `l`: line tool
 - `e`: edit label
 - `b`: cycle borders
+- `p`: cycle node padding
 - `-`: toggle dashed stroke
 - `a` and `A`: cycle endpoint arrows
 - `t` and `T`: cycle text alignment

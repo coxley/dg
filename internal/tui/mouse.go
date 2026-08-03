@@ -528,7 +528,7 @@ func (m *Model) resizeNode(point layout.Point) {
 		return
 	}
 	gesture := m.interaction.gesture
-	padding := m.geo.Padding()
+	padding, _ := m.geo.NodePadding(nodeID)
 	originX, width := resizeAxis(
 		point.X,
 		gesture.fixed.X,

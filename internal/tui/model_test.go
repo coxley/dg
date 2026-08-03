@@ -1294,6 +1294,7 @@ func helpCommandPerformed(
 		commandLayerBackward,
 		commandLayerForward,
 		commandLayerFront,
+		commandPadding,
 		commandTextHorizontal,
 		commandTextVertical:
 		return helpAppearanceCommandPerformed(commandID, before, after)
@@ -1369,6 +1370,10 @@ func helpAppearanceCommandPerformed(
 	case commandBorder:
 		return helpNodeStyleChanged(before, after, func(style *layout.NodeStyle) {
 			style.Border = style.Border.Next()
+		})
+	case commandPadding:
+		return helpNodeStyleChanged(before, after, func(style *layout.NodeStyle) {
+			style.Padding = style.Padding.Next()
 		})
 	case commandDashed:
 		return helpStrokeChanged(before, after)

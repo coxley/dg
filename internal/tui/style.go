@@ -57,6 +57,56 @@ func (m *Model) cycleBorder() {
 	m.status = ""
 }
 
+func (m *Model) cyclePadding() {
+	if !m.interaction.idle() {
+		m.setError(finishOperation)
+		return
+	}
+	targets, ok := m.styleTargets(layout.HitNode)
+	if !ok {
+		m.setError("select a node to change its padding")
+		return
+	}
+	inherited, _ := m.geo.NodeStyle(targets.primary.ID)
+	inherited.Padding = inherited.Padding.Next()
+
+	m.beginTransaction(transactionImmediate)
+	apply := func(nodeID uint32) error {
+		style, _ := m.geo.NodeStyle(nodeID)
+		style.Padding = style.Padding.Next()
+		return m.geo.SetNodeStyle(nodeID, style)
+	}
+	var err error
+	if targets.selection {
+		for nodeID := range m.geo.Selection().Nodes() {
+			if err = apply(nodeID); err != nil {
+				break
+			}
+		}
+	} else {
+		err = apply(targets.primary.ID)
+	}
+	if err == nil {
+		err = m.rebuild()
+	}
+	if err != nil {
+		m.setError(errors.Join(err, m.cancelTransaction()).Error())
+		return
+	}
+	if err := m.commitTransaction(); err != nil {
+		m.setError(err.Error())
+		return
+	}
+	m.nodeStyle = inherited
+	if !targets.selection {
+		m.target = targets.primary
+		m.selectOnly(targets.primary)
+	}
+	m.refreshHits()
+	m.selectTarget()
+	m.status = ""
+}
+
 func (m *Model) cycleTextAlignment(vertical bool) {
 	if !m.interaction.idle() {
 		m.setError(finishOperation)

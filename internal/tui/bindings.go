@@ -43,6 +43,7 @@ const (
 	commandMoveUp          chrome.CommandID = "move-up"
 	commandNewCanvas       chrome.CommandID = "new-canvas"
 	commandNewNode         chrome.CommandID = "new-node"
+	commandPadding         chrome.CommandID = "padding"
 	commandPreferences     chrome.CommandID = "preferences"
 	commandQuit            chrome.CommandID = "quit"
 	commandRectangle       chrome.CommandID = "rectangle"
@@ -86,6 +87,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeCanvas, Chords: chrome.Keys("r"), Command: commandRectangle, Label: string(commandRectangle)},
 	{Scope: scopeCanvas, Chords: chrome.Keys("l"), Command: commandLine, Label: "line"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("b"), Command: commandBorder, Label: "border"},
+	{Scope: scopeCanvas, Chords: chrome.Keys("p"), Command: commandPadding, Label: "padding"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("-"), Command: commandDashed, Label: "dashed"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("a"), Command: commandArrowEnd, Label: "end arrow"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("shift+a"), Command: commandArrowStart, Label: "start arrow"},
@@ -150,6 +152,7 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 		commandLayerBackward,
 		commandLayerForward,
 		commandLayerFront,
+		commandPadding,
 		commandTextHorizontal,
 		commandTextVertical:
 		m.updateAppearanceCommand(message.Command)
@@ -254,6 +257,7 @@ func (m *Model) canvasCommandAvailable(command chrome.CommandID) bool {
 		commandLayerBackward,
 		commandLayerForward,
 		commandLayerFront,
+		commandPadding,
 		commandTextHorizontal,
 		commandTextVertical:
 		return m.canvasAppearanceCommandAvailable(command)
@@ -294,7 +298,7 @@ func (m *Model) canvasAppearanceCommandAvailable(command chrome.CommandID) bool 
 	switch command {
 	case commandArrowEnd, commandArrowStart:
 		return edges != 0
-	case commandBorder, commandTextHorizontal, commandTextVertical:
+	case commandBorder, commandPadding, commandTextHorizontal, commandTextVertical:
 		return hasNode
 	case commandDashed:
 		return hasSelection || hasHit &&
@@ -463,6 +467,8 @@ func (m *Model) updateAppearanceCommand(command chrome.CommandID) {
 		m.reorderLayer(false, false)
 	case commandLayerFront:
 		m.reorderLayer(true, false)
+	case commandPadding:
+		m.cyclePadding()
 	case commandTextHorizontal:
 		m.cycleTextAlignment(false)
 	case commandTextVertical:

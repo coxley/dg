@@ -901,7 +901,7 @@ func (m *Model) newNode() {
 }
 
 func (m *Model) newNodeOrigin() (layout.Point, error) {
-	padding := m.geo.Padding()
+	padding := m.nodeStyle.Padding.Cells()
 	dx := int(padding.Left) + int(padding.Right) + 4
 	dy := int(padding.Top) + int(padding.Bottom) + 4
 	offsets := [...]struct {
