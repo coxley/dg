@@ -15,6 +15,7 @@
 - node border, stroke, and text alignment
 - edge stroke and endpoint arrows
 - ordered pinned edge bends
+- landmark-relative edge attachments
 - node padding and router configuration
 - back-to-front layers
 
@@ -45,7 +46,7 @@ conversion explicit so schema evolution does not leak into engine types.
 
 ## Compatibility
 
-Version 2 is the only accepted schema. Reject every other version with
+Version 3 is the only accepted schema. Reject every other version with
 `ErrUnsupportedVersion`; the project does not retain legacy readers yet.
 
 When adding runtime capabilities:

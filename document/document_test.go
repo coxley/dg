@@ -171,7 +171,7 @@ func TestMarshalCompactsDeletedSlots(t *testing.T) {
 
 	data, err := Marshal(doc)
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"version": 2`)
+	require.Contains(t, string(data), `"version": 3`)
 	require.NotContains(t, string(data), "points")
 }
 
@@ -320,7 +320,9 @@ func TestRoundTripAttachment(t *testing.T) {
 	got, ok := loaded.NodeAttachment(doc.Attachments[0].Node)
 	require.True(t, ok)
 	require.Equal(t, doc.Attachments[0].Edge, got.EdgeID)
-	require.Equal(t, doc.Attachments[0].Position, got.Position)
+	require.Equal(t, doc.Attachments[0].Reference, documentAttachmentReference(got.Reference))
+	require.Equal(t, doc.Attachments[0].Offset, got.Offset)
+	require.Equal(t, doc.Attachments[0].Anchor, Point{X: got.Anchor.X, Y: got.Anchor.Y})
 }
 
 func TestRoundTripAttachmentProperties(t *testing.T) {
@@ -405,18 +407,53 @@ func TestDocumentAttachmentValidation(t *testing.T) {
 			want: "duplicates node",
 		},
 		{
-			name: "edge start",
+			name: "unknown landmark end",
 			mutate: func(doc *Document) {
-				doc.Attachments[0].Position = 0
+				doc.Attachments[0].Reference.End = "middle"
 			},
-			want: "overlap an edge endpoint",
+			want: "unknown attachment end",
 		},
 		{
-			name: "edge end",
+			name: "endpoint without inward offset",
 			mutate: func(doc *Document) {
-				doc.Attachments[0].Position = math.MaxUint16
+				doc.Attachments[0].Reference = AttachmentReference{End: AttachmentPortA}
+				doc.Attachments[0].Offset = 0
 			},
-			want: "overlap an edge endpoint",
+			want: "invalid attachment location",
+		},
+		{
+			name: "endpoint with bend directions",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Reference = AttachmentReference{
+					End:      AttachmentPortA,
+					Incoming: DirectionEast,
+				}
+			},
+			want: "endpoint has bend directions",
+		},
+		{
+			name: "invalid bend direction",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Reference = AttachmentReference{
+					End:      AttachmentPortA,
+					Bend:     1,
+					Incoming: "diagonal",
+					Outgoing: DirectionSouth,
+				}
+			},
+			want: `unknown direction "diagonal"`,
+		},
+		{
+			name: "parallel bend directions",
+			mutate: func(doc *Document) {
+				doc.Attachments[0].Reference = AttachmentReference{
+					End:      AttachmentPortA,
+					Bend:     1,
+					Incoming: DirectionNorth,
+					Outgoing: DirectionSouth,
+				}
+			},
+			want: "invalid bend turn",
 		},
 		{
 			name: "incident node",
@@ -511,12 +548,12 @@ func TestUnmarshalRejectsInvalidJSONShape(t *testing.T) {
 	}{
 		{
 			name: "unknown field",
-			data: `{"version":2,"id":"123e4567-e89b-42d3-a456-426614174000","nodes":[],"ports":[],"edges":[],"options":{},"unknown":true}`,
+			data: `{"version":3,"id":"123e4567-e89b-42d3-a456-426614174000","nodes":[],"ports":[],"edges":[],"options":{},"unknown":true}`,
 			want: "unknown field",
 		},
 		{
 			name: "trailing value",
-			data: `{"version":2,"id":"123e4567-e89b-42d3-a456-426614174000","nodes":[],"ports":[],"edges":[],"options":{}} {}`,
+			data: `{"version":3,"id":"123e4567-e89b-42d3-a456-426614174000","nodes":[],"ports":[],"edges":[],"options":{}} {}`,
 			want: "trailing JSON value",
 		},
 	}
@@ -703,7 +740,7 @@ func TestDocumentRejectsUnsupportedVersion(t *testing.T) {
 	_, err := doc.Convert()
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 
-	_, err = Unmarshal([]byte(`{"version":3,"future_field":true}`))
+	_, err = Unmarshal([]byte(`{"version":4,"future_field":true}`))
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 }
 

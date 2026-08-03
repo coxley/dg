@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const CurrentVersion uint32 = 2
+const CurrentVersion uint32 = 3
 
 var ErrUnsupportedVersion = errors.New("unsupported document version")
 
@@ -140,12 +140,29 @@ const (
 	DirectionWest  Direction = "west"
 )
 
-// Attachment stores a node's stable relative position along an edge.
+// AttachmentEnd identifies the route endpoint used to address a landmark.
+type AttachmentEnd string
+
+const (
+	AttachmentPortA AttachmentEnd = "port_a"
+	AttachmentPortB AttachmentEnd = "port_b"
+)
+
+// AttachmentReference identifies an endpoint or bend in route order.
+type AttachmentReference struct {
+	End      AttachmentEnd `json:"end"`
+	Bend     uint32        `json:"bend,omitempty"`
+	Incoming Direction     `json:"incoming,omitempty"`
+	Outgoing Direction     `json:"outgoing,omitempty"`
+}
+
+// Attachment stores a node's cell offset from an edge landmark.
 type Attachment struct {
-	Node     uint32 `json:"node"`
-	Edge     uint32 `json:"edge"`
-	Position uint16 `json:"position"`
-	Anchor   Point  `json:"anchor"`
+	Node      uint32              `json:"node"`
+	Edge      uint32              `json:"edge"`
+	Reference AttachmentReference `json:"reference"`
+	Offset    int64               `json:"offset"`
+	Anchor    Point               `json:"anchor"`
 }
 
 // EdgeStyle stores endpoint arrow choices.
@@ -296,10 +313,11 @@ func (d *Document) Update(geo *layout.Layout) {
 			continue
 		}
 		d.Attachments = append(d.Attachments, Attachment{
-			Node:     nodeIDs[attachment.NodeID],
-			Edge:     edgeIDs[attachment.EdgeID],
-			Position: attachment.Position,
-			Anchor:   Point{X: attachment.Anchor.X, Y: attachment.Anchor.Y},
+			Node:      nodeIDs[attachment.NodeID],
+			Edge:      edgeIDs[attachment.EdgeID],
+			Reference: documentAttachmentReference(attachment.Reference),
+			Offset:    attachment.Offset,
+			Anchor:    Point{X: attachment.Anchor.X, Y: attachment.Anchor.Y},
 		})
 	}
 	for hit := range geo.DrawOrder() {
@@ -518,17 +536,70 @@ func (d Document) populate(geo *layout.Layout) error {
 			)
 		}
 		seenAttachments = append(seenAttachments, attachment.Node)
+		reference, err := attachment.Reference.layoutReference()
+		if err != nil {
+			return fmt.Errorf("attachment %d reference: %w", i, err)
+		}
 		attachments = append(attachments, layout.Attachment{
-			NodeID:   attachment.Node,
-			EdgeID:   attachment.Edge,
-			Position: attachment.Position,
-			Anchor:   layout.NewPoint(attachment.Anchor.X, attachment.Anchor.Y),
+			NodeID:    attachment.Node,
+			EdgeID:    attachment.Edge,
+			Reference: reference,
+			Offset:    attachment.Offset,
+			Anchor:    layout.NewPoint(attachment.Anchor.X, attachment.Anchor.Y),
 		})
 	}
 	if err := geo.SetAttachments(attachments...); err != nil {
 		return fmt.Errorf("restore attachments: %w", err)
 	}
 	return nil
+}
+
+func documentAttachmentReference(reference layout.AttachmentReference) AttachmentReference {
+	var end AttachmentEnd
+	switch reference.End {
+	case layout.AttachmentPortA:
+		end = AttachmentPortA
+	case layout.AttachmentPortB:
+		end = AttachmentPortB
+	}
+	return AttachmentReference{
+		End:      end,
+		Bend:     reference.Bend,
+		Incoming: documentDirection(reference.Incoming),
+		Outgoing: documentDirection(reference.Outgoing),
+	}
+}
+
+func (r AttachmentReference) layoutReference() (layout.AttachmentReference, error) {
+	var end layout.AttachmentEnd
+	switch r.End {
+	case AttachmentPortA:
+		end = layout.AttachmentPortA
+	case AttachmentPortB:
+		end = layout.AttachmentPortB
+	default:
+		return layout.AttachmentReference{}, fmt.Errorf("unknown attachment end %q", r.End)
+	}
+	reference := layout.AttachmentReference{End: end, Bend: r.Bend}
+	if r.Bend == 0 {
+		if r.Incoming != "" || r.Outgoing != "" {
+			return layout.AttachmentReference{}, errors.New("endpoint has bend directions")
+		}
+		return reference, nil
+	}
+	var err error
+	reference.Incoming, err = r.Incoming.layoutConnection()
+	if err != nil {
+		return layout.AttachmentReference{}, fmt.Errorf("incoming: %w", err)
+	}
+	reference.Outgoing, err = r.Outgoing.layoutConnection()
+	if err != nil {
+		return layout.AttachmentReference{}, fmt.Errorf("outgoing: %w", err)
+	}
+	if !reference.Valid() {
+		return layout.AttachmentReference{}, errors.New("invalid bend turn")
+	}
+	return reference, nil
 }
 
 func documentNodeStyle(style layout.NodeStyle) NodeStyle {
