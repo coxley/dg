@@ -30,14 +30,25 @@ func (s *Store) LoadCurrentInto(entry Entry, dst *document.Document) (Entry, err
 	if err != nil {
 		return Entry{}, fmt.Errorf("read current canvas: %w", err)
 	}
-	if err := decodeDocumentInto(data, dst); err != nil {
+	migrated, err := decodeDocumentMigrationInto(data, dst)
+	if err != nil {
 		return Entry{}, fmt.Errorf("decode current canvas: %w", err)
+	}
+	if migrated {
+		data, err = s.rewriteMigratedDocument(path, data, *dst)
+		if err != nil {
+			return Entry{}, err
+		}
 	}
 	current, err := entryFromData(path, entry.Section, entry.Name, entry.Draft, dst.ID, data)
 	if err != nil {
 		return Entry{}, err
 	}
-	s.warm.put(warmKey(path, current.Revision), data)
+	if migrated {
+		s.recordMigration(path, current, data)
+	} else {
+		s.warm.put(warmKey(path, current.Revision), data)
+	}
 	return current, nil
 }
 

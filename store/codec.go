@@ -29,33 +29,44 @@ func encodeDocument(doc document.Document) ([]byte, error) {
 }
 
 func decodeDocument(data []byte) (document.Document, error) {
+	doc, _, err := decodeDocumentMigration(data)
+	return doc, err
+}
+
+func decodeDocumentMigration(data []byte) (document.Document, bool, error) {
 	var doc document.Document
-	if err := decodeDocumentInto(data, &doc); err != nil {
-		return document.Document{}, err
+	migrated, err := decodeDocumentMigrationInto(data, &doc)
+	if err != nil {
+		return document.Document{}, false, err
 	}
-	return doc, nil
+	return doc, migrated, nil
 }
 
 func decodeDocumentInto(data []byte, dst *document.Document) error {
+	_, err := decodeDocumentMigrationInto(data, dst)
+	return err
+}
+
+func decodeDocumentMigrationInto(data []byte, dst *document.Document) (bool, error) {
 	source := bytes.NewBuffer(data)
 	reader, err := gzip.NewReader(source)
 	if err != nil {
-		return fmt.Errorf("open compressed document: %w", err)
+		return false, fmt.Errorf("open compressed document: %w", err)
 	}
 	reader.Multistream(false)
 	plain, readErr := io.ReadAll(io.LimitReader(reader, maxDocumentSize+1))
 	closeErr := reader.Close()
 	if readErr != nil {
-		return errors.Join(fmt.Errorf("decompress document: %w", readErr), closeErr)
+		return false, errors.Join(fmt.Errorf("decompress document: %w", readErr), closeErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close compressed document: %w", closeErr)
+		return false, fmt.Errorf("close compressed document: %w", closeErr)
 	}
 	if len(plain) > maxDocumentSize {
-		return fmt.Errorf("decompress document: exceeds %d-byte limit", maxDocumentSize)
+		return false, fmt.Errorf("decompress document: exceeds %d-byte limit", maxDocumentSize)
 	}
 	if source.Len() != 0 {
-		return errors.New("decode document: multiple gzip members")
+		return false, errors.New("decode document: multiple gzip members")
 	}
-	return document.UnmarshalInto(plain, dst)
+	return document.Migrate(plain, dst)
 }

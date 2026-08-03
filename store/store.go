@@ -503,11 +503,21 @@ func (s *Store) inspectNamed(section, name string) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	doc, err := decodeDocument(data)
+	doc, migrated, err := decodeDocumentMigration(data)
 	if err != nil {
 		return Entry{}, err
 	}
-	return entryFromData(path, section, name, false, doc.ID, data)
+	if migrated {
+		data, err = s.rewriteMigratedDocument(path, data, doc)
+		if err != nil {
+			return Entry{}, err
+		}
+	}
+	entry, err := entryFromData(path, section, name, false, doc.ID, data)
+	if err == nil && migrated {
+		s.recordMigration(path, entry, data)
+	}
+	return entry, err
 }
 
 func (s *Store) inspectDraft(id uuid.UUID) (Entry, error) {
@@ -516,11 +526,49 @@ func (s *Store) inspectDraft(id uuid.UUID) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	doc, err := decodeDocument(data)
+	doc, migrated, err := decodeDocumentMigration(data)
 	if err != nil || doc.ID != id {
 		return Entry{}, errors.New("invalid draft document")
 	}
-	return entryFromData(path, "", "", true, id, data)
+	if migrated {
+		data, err = s.rewriteMigratedDocument(path, data, doc)
+		if err != nil {
+			return Entry{}, err
+		}
+	}
+	entry, err := entryFromData(path, "", "", true, id, data)
+	if err == nil && migrated {
+		s.recordMigration(path, entry, data)
+	}
+	return entry, err
+}
+
+func (s *Store) rewriteMigratedDocument(
+	path string,
+	source []byte,
+	doc document.Document,
+) ([]byte, error) {
+	observed, err := revisionFor(path, source)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRevision(path, observed); err != nil {
+		return nil, err
+	}
+	data, err := encodeDocument(doc)
+	if err != nil {
+		return nil, err
+	}
+	if err := replaceFile(path, data); err != nil {
+		return nil, fmt.Errorf("migrate stored canvas: %w", err)
+	}
+	s.warm.remove(warmKey(path, observed))
+	return data, nil
+}
+
+func (s *Store) recordMigration(path string, entry Entry, data []byte) {
+	s.warm.put(warmKey(path, entry.Revision), data)
+	s.self[path] = entry.Revision
 }
 
 func (s *Store) entryPath(entry Entry) (string, error) {

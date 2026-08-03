@@ -145,6 +145,71 @@ func TestStoreImportPreservesSourceAndIdentity(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestStoreImportMigratesOnlyDraftCopy(t *testing.T) {
+	t.Parallel()
+
+	doc := testDocument(t, "shared")
+	doc.Version = 2
+	legacy, err := encodeDocument(doc)
+	require.NoError(t, err)
+	source := filepath.Join(t.TempDir(), "shared.dg")
+	require.NoError(t, os.WriteFile(source, legacy, 0o600))
+
+	store := newTestStore(t)
+	draft, imported, err := store.Import(source)
+	require.NoError(t, err)
+	require.Equal(t, document.CurrentVersion, imported.Version)
+	unchanged, err := os.ReadFile(source)
+	require.NoError(t, err)
+	require.Equal(t, legacy, unchanged)
+	draftData, err := os.ReadFile(store.draftPath(draft.ID))
+	require.NoError(t, err)
+	_, migrated, err := decodeDocumentMigration(draftData)
+	require.NoError(t, err)
+	require.False(t, migrated)
+}
+
+func TestStoreCatalogMigratesExistingRecordsInPlace(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	namedDoc := testDocument(t, "named")
+	named, err := store.Create("", "Canvas", namedDoc)
+	require.NoError(t, err)
+	draftDoc := testDocument(t, "draft")
+	draft, err := store.CreateDraft(draftDoc)
+	require.NoError(t, err)
+	for path, doc := range map[string]document.Document{
+		store.namedPath("", "Canvas"): namedDoc,
+		store.draftPath(draftDoc.ID):  draftDoc,
+	} {
+		doc.Version = 2
+		legacy, err := encodeDocument(doc)
+		require.NoError(t, err)
+		require.NoError(t, replaceFile(path, legacy))
+	}
+
+	event := store.Reconcile([]Entry{named, draft})
+	require.NoError(t, event.Err)
+	require.Len(t, event.Entries, 2)
+	require.Len(t, event.Changes, 2)
+	for _, change := range event.Changes {
+		require.False(t, change.External)
+	}
+	for _, entry := range event.Entries {
+		path, err := store.Path(entry)
+		require.NoError(t, err)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		doc, migrated, err := decodeDocumentMigration(data)
+		require.NoError(t, err)
+		require.False(t, migrated)
+		require.Equal(t, document.CurrentVersion, doc.Version)
+		_, err = store.Save(entry, doc)
+		require.NoError(t, err)
+	}
+}
+
 func TestStoreReturnsIndependentDocuments(t *testing.T) {
 	t.Parallel()
 

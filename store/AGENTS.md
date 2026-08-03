@@ -20,6 +20,12 @@ Decode rejects additional members and JSON larger than `64 << 20` bytes.
 Writes create a same-directory temporary file before link or rename. Creation
 never replaces an existing name.
 
+Catalog discovery atomically rewrites supported legacy documents in place and
+returns the resulting revision. Imported files migrate only in the new draft;
+Store never changes the external source. Migration writes use the same revision
+check, warm-cache replacement, and self-authored watcher marker as ordinary
+Store writes.
+
 Conflict resolution reads the current path without trusting a stale revision.
 Keeping local content hard-links the current raw bytes to the first available
 `.bak`, `.bak1`, and later name, removes the original, then atomically recreates
