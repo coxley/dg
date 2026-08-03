@@ -359,33 +359,48 @@ func Unmarshal(data []byte) (Document, error) {
 // UnmarshalInto decodes and validates one JSON document while reusing dst capacity.
 // An error may leave dst partially decoded.
 func UnmarshalInto(data []byte, dst *Document) error {
+	_, err := Migrate(data, dst)
+	return err
+}
+
+// Migrate decodes data into the current schema and reports whether it upgraded
+// an older supported version. An error may leave dst partially decoded.
+func Migrate(data []byte, dst *Document) (bool, error) {
 	if dst == nil {
-		return errors.New("decode document into nil destination")
+		return false, errors.New("decode document into nil destination")
+	}
+	sourceVersion, err := encodedVersion(data)
+	if err != nil {
+		return false, err
+	}
+	migrated := sourceVersion != CurrentVersion
+	if migrated {
+		data, err = migrateJSON(data, sourceVersion)
+		if err != nil {
+			return false, err
+		}
 	}
 	dst.resetForDecode()
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
-		if dst.Version != 0 && dst.Version != CurrentVersion {
-			return fmt.Errorf("%w: %d", ErrUnsupportedVersion, dst.Version)
-		}
-		return fmt.Errorf("decode document: %w", err)
+		return false, fmt.Errorf("decode document: %w", err)
 	}
 	if dst.Version != CurrentVersion {
-		return fmt.Errorf("%w: %d", ErrUnsupportedVersion, dst.Version)
+		return false, fmt.Errorf("%w: %d", ErrUnsupportedVersion, dst.Version)
 	}
 	var trailing json.RawMessage
-	err := decoder.Decode(&trailing)
+	err = decoder.Decode(&trailing)
 	switch {
 	case err == nil:
-		return errors.New("decode document: trailing JSON value")
+		return false, errors.New("decode document: trailing JSON value")
 	case !errors.Is(err, io.EOF):
-		return fmt.Errorf("decode document trailing data: %w", err)
+		return false, fmt.Errorf("decode document trailing data: %w", err)
 	}
 	if _, err := dst.Convert(); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return migrated, nil
 }
 
 func (d *Document) resetForDecode() {

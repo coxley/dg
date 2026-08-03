@@ -1,6 +1,7 @@
 package document
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -192,6 +193,86 @@ func TestUnmarshalRejectsVersionOne(t *testing.T) {
 	}`)
 	_, err := Unmarshal(data)
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
+}
+
+func TestMigrateVersion2Attachment(t *testing.T) {
+	t.Parallel()
+
+	want := validAttachmentDocument(t)
+	data := version2AttachmentData(t, want, math.MaxUint16/2)
+	var got Document
+	migrated, err := Migrate(data, &got)
+	require.NoError(t, err)
+	require.True(t, migrated)
+	require.Equal(t, CurrentVersion, got.Version)
+	require.Equal(t, want.ID, got.ID)
+	require.Len(t, got.Attachments, 1)
+	require.True(t, got.Attachments[0].Reference.End == AttachmentPortA ||
+		got.Attachments[0].Reference.End == AttachmentPortB)
+
+	geo, err := got.Convert()
+	require.NoError(t, err)
+	attachment, ok := geo.NodeAttachment(got.Attachments[0].Node)
+	require.True(t, ok)
+	point := geo.Nodes[attachment.NodeID].Rect.Min.Add(attachment.Anchor.X, attachment.Anchor.Y)
+	require.True(t, geo.Edges[attachment.EdgeID].Contains(point))
+	wantAttachment := want.Attachments[0]
+	wantPoint := layout.NewPoint(
+		want.Nodes[wantAttachment.Node].Origin.X+wantAttachment.Anchor.X,
+		want.Nodes[wantAttachment.Node].Origin.Y+wantAttachment.Anchor.Y,
+	)
+	require.Equal(t, wantPoint, point)
+
+	current, err := Marshal(got)
+	require.NoError(t, err)
+	migrated, err = Migrate(current, &got)
+	require.NoError(t, err)
+	require.False(t, migrated)
+}
+
+func TestMigrateVersion2WithoutAttachments(t *testing.T) {
+	t.Parallel()
+
+	want := validDocument()
+	want.Version = 2
+	data, err := Marshal(want)
+	require.NoError(t, err)
+	var got Document
+	migrated, err := Migrate(data, &got)
+	require.NoError(t, err)
+	require.True(t, migrated)
+	want.Version = CurrentVersion
+	require.Equal(t, want, got)
+}
+
+func TestMigrateVersion2RejectsEndpointAttachment(t *testing.T) {
+	t.Parallel()
+
+	data := version2AttachmentData(t, validAttachmentDocument(t), 0)
+	var doc Document
+	_, err := Migrate(data, &doc)
+	require.ErrorContains(t, err, "overlaps an edge endpoint")
+}
+
+func version2AttachmentData(t testing.TB, doc Document, position uint16) []byte {
+	t.Helper()
+
+	data, err := Marshal(doc)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &fields))
+	fields["version"] = json.RawMessage("2")
+	attachments := []attachmentV2{{
+		Node:     doc.Attachments[0].Node,
+		Edge:     doc.Attachments[0].Edge,
+		Position: position,
+		Anchor:   doc.Attachments[0].Anchor,
+	}}
+	fields["attachments"], err = json.Marshal(attachments)
+	require.NoError(t, err)
+	data, err = json.Marshal(fields)
+	require.NoError(t, err)
+	return data
 }
 
 func TestRoundTripMultilineLabelAndExplicitSize(t *testing.T) {

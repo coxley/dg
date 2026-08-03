@@ -28,8 +28,10 @@ The zero value of optional style fields represents the runtime default.
 reusing document capacity. Export compacts runtime tombstones and remaps every
 node, port, edge, and layer reference.
 
-`Unmarshal` decodes once and validates the complete document. `UnmarshalInto`
-reuses top-level and nested slice capacity; callers must treat its destination
+`Unmarshal` and `UnmarshalInto` upgrade supported older schemas before
+validating the complete current document. `Migrate` additionally reports
+whether decoding upgraded the source. `UnmarshalInto` reuses top-level and
+nested slice capacity for current documents; callers must treat its destination
 as undefined after an error.
 
 `Convert` creates an independent Layout. `ConvertInto` atomically replaces an
@@ -46,8 +48,14 @@ conversion explicit so schema evolution does not leak into engine types.
 
 ## Compatibility
 
-Version 3 is the only accepted schema. Reject every other version with
-`ErrUnsupportedVersion`; the project does not retain legacy readers yet.
+Version 3 is the write schema. Version 2 decodes through an explicit migration;
+reject every other version with `ErrUnsupportedVersion`.
+
+Migrations form a sequential version chain. Each step consumes one frozen wire
+shape and emits the next version. Retain migration code and fixtures once a
+version ships. Version 2 attachments replay their normalized-position routing
+loop before conversion so host-node obstacle exemptions and anchors remain
+intact.
 
 When adding runtime capabilities:
 
@@ -58,9 +66,8 @@ When adding runtime capabilities:
 
 ## Areas for improvement
 
-Future schema work may include custom shapes, portless endpoints, document
-metadata, and migration between versions. Persistent undo history remains a
-separate gzip cache.
+Future schema work may include custom shapes, portless endpoints, and document
+metadata. Persistent undo history remains a separate gzip cache.
 
 ## Verification
 
