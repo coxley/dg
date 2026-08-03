@@ -89,6 +89,9 @@ persists a dirty document and flushes dirty history before reusing the same
 Document and Layout storage for the destination. Each canvas restores its own
 UUID-keyed history. Clean switches skip document and history writes.
 
+Ctrl-S opens the naming form for both drafts and named canvases. Named canvases
+prefill their current section and name so the same action renames them.
+
 Ctrl-N replaces the active state with a pristine memory-only draft. The first
 semantic mutation or an explicit name materializes its Store entry. Once
 materialized, undoing or deleting all content still autosaves the empty document.

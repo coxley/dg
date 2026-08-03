@@ -3634,7 +3634,7 @@ func TestModelSaveFormRightJustifiesCompactValues(t *testing.T) {
 	}
 }
 
-func TestModelNamesDraftAndNamedControlSSavesImmediately(t *testing.T) {
+func TestModelNamesDraftAndRenamesNamedCanvas(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID, store := newStoredTestModel(t, "node")
@@ -3655,10 +3655,19 @@ func TestModelNamesDraftAndNamedControlSSavesImmediately(t *testing.T) {
 	require.NoError(t, model.geo.SetNodeLabel(nodeID, "updated"))
 	require.NoError(t, model.rebuild())
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
+	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
+	require.Equal(t, "RFCs", model.dialogs.save.section)
+	require.Equal(t, "Proposal 1", model.dialogs.save.name)
+	require.Contains(t, model.dialogs.save.form.AccessibleLines(), "action: Rename Canvas")
+	model.dialogs.save.SetValue("RFCs", "Proposal 2")
+	command = updateModelCommand(t, model, keyPress(tea.KeyEnter, ""))
+	require.NotNil(t, command)
+	updateModel(t, model, command())
+	require.Equal(t, "Proposal 2", model.entry.Name)
+	require.Equal(t, "renamed RFCs/Proposal 2", model.status)
 	loaded, err := store.Load(*model.entry)
 	require.NoError(t, err)
 	require.Equal(t, "updated", loaded.Nodes[0].Label)
-	require.Equal(t, "autosaved", model.status)
 }
 
 func TestModelNamingDraftDoesNotTreatWatchedRenameAsExternal(t *testing.T) {

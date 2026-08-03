@@ -24,11 +24,12 @@ type saveDocumentMsg struct {
 }
 
 type saveDialogBody struct {
-	form    *chrome.Form
-	section string
-	name    string
-	styles  saveStyles
-	bounds  chrome.Rect
+	form     *chrome.Form
+	section  string
+	name     string
+	styles   saveStyles
+	bounds   chrome.Rect
+	renaming bool
 }
 
 func newSaveDialogBody(styles saveStyles) *saveDialogBody {
@@ -40,11 +41,16 @@ func newSaveDialogBody(styles saveStyles) *saveDialogBody {
 func (b *saveDialogBody) Reset() {
 	b.section = ""
 	b.name = ""
+	b.renaming = false
 	b.form = b.newForm()
 	b.SetBounds(b.bounds)
 }
 
 func (b *saveDialogBody) newForm() *chrome.Form {
+	confirmLabel := "Name Canvas"
+	if b.renaming {
+		confirmLabel = "Rename Canvas"
+	}
 	return chrome.NewForm(chrome.FormDeclaration{
 		DefaultAction: saveConfirmAction,
 		Fields: []chrome.FormField{
@@ -61,7 +67,7 @@ func (b *saveDialogBody) newForm() *chrome.Form {
 		Actions: chrome.ButtonListDeclaration{
 			ID: "save-actions",
 			Buttons: []chrome.Button{
-				{ID: saveConfirmAction, Label: "Name Canvas"},
+				{ID: saveConfirmAction, Label: confirmLabel},
 				{ID: saveCancelAction, Label: "Cancel"},
 			},
 		},
@@ -120,6 +126,12 @@ func (b *saveDialogBody) SetValue(section, name string) {
 	b.SetBounds(b.bounds)
 }
 
+func (b *saveDialogBody) SetRenaming(renaming bool) {
+	b.renaming = renaming
+	b.form = b.newForm()
+	b.SetBounds(b.bounds)
+}
+
 func (b *saveDialogBody) sync() {
 	b.section, _ = b.form.Text(saveSectionField)
 	b.name, _ = b.form.Text(saveNameField)
@@ -134,19 +146,12 @@ func (m *Model) requestSave() {
 		m.setError("no canvas store configured")
 		return
 	}
-	if m.entry == nil || m.entry.Draft {
-		m.dialogs.OpenSave()
-		m.status = ""
-		return
+	m.dialogs.OpenSave()
+	if m.entry != nil && !m.entry.Draft {
+		m.dialogs.save.SetValue(m.entry.Section, m.entry.Name)
+		m.dialogs.save.SetRenaming(true)
 	}
-	if m.dirty != m.saved {
-		if err := m.persistActive(); err != nil {
-			m.setError(err.Error())
-		}
-		return
-	}
-	m.status = "autosaved"
-	m.statusError = ""
+	m.status = ""
 }
 
 func (m *Model) saveFromDialog(message saveDocumentMsg) {
@@ -162,17 +167,22 @@ func (m *Model) saveFromDialog(message saveDocumentMsg) {
 			return
 		}
 	}
-	if !m.entry.Draft {
-		m.setError("only drafts can be named")
-		return
-	}
 	if m.dirty != m.saved {
 		if err := m.persistActive(); err != nil {
 			m.setError(err.Error())
 			return
 		}
 	}
-	entry, err := m.canvasStore.Name(*m.entry, section, name)
+	previous := *m.entry
+	var entry canvasstore.Entry
+	var err error
+	if previous.Draft {
+		entry, err = m.canvasStore.Name(previous, section, name)
+	} else if previous.Section == section && previous.Name == name {
+		entry = previous
+	} else {
+		entry, err = m.canvasStore.Move(previous, section, name)
+	}
 	if err != nil {
 		if errors.Is(err, canvasstore.ErrEntryExists) {
 			m.setError("a canvas with that name already exists")
@@ -183,7 +193,11 @@ func (m *Model) saveFromDialog(message saveDocumentMsg) {
 	}
 	m.setActiveEntry(entry)
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
-	m.status = "named " + canvasTitle(entry)
+	verb := "named "
+	if !previous.Draft {
+		verb = "renamed "
+	}
+	m.status = verb + canvasTitle(entry)
 	m.statusError = ""
 	m.dialogs.CloseWithoutMessage()
 }
