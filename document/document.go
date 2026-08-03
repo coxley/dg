@@ -369,38 +369,60 @@ func Migrate(data []byte, dst *Document) (bool, error) {
 	if dst == nil {
 		return false, errors.New("decode document into nil destination")
 	}
-	sourceVersion, err := encodedVersion(data)
+	dst.resetForDecode()
+	decodeErr := decodeJSONInto(data, dst)
+	sourceVersion := dst.Version
+	if decodeErr != nil && sourceVersion == 0 {
+		version, err := encodedVersion(data)
+		if err != nil {
+			return false, decodeErr
+		}
+		sourceVersion = version
+	}
+	if sourceVersion == CurrentVersion {
+		if decodeErr != nil {
+			return false, decodeErr
+		}
+		if _, err := dst.Convert(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if sourceVersion != 2 {
+		return false, fmt.Errorf("%w: %d", ErrUnsupportedVersion, sourceVersion)
+	}
+	data, err := migrateJSON(data, sourceVersion)
 	if err != nil {
 		return false, err
 	}
-	migrated := sourceVersion != CurrentVersion
-	if migrated {
-		data, err = migrateJSON(data, sourceVersion)
-		if err != nil {
-			return false, err
-		}
-	}
 	dst.resetForDecode()
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
-		return false, fmt.Errorf("decode document: %w", err)
+	if err := decodeJSONInto(data, dst); err != nil {
+		return false, err
 	}
 	if dst.Version != CurrentVersion {
 		return false, fmt.Errorf("%w: %d", ErrUnsupportedVersion, dst.Version)
 	}
-	var trailing json.RawMessage
-	err = decoder.Decode(&trailing)
-	switch {
-	case err == nil:
-		return false, errors.New("decode document: trailing JSON value")
-	case !errors.Is(err, io.EOF):
-		return false, fmt.Errorf("decode document trailing data: %w", err)
-	}
 	if _, err := dst.Convert(); err != nil {
 		return false, err
 	}
-	return migrated, nil
+	return true, nil
+}
+
+func decodeJSONInto(data []byte, dst *Document) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return fmt.Errorf("decode document: %w", err)
+	}
+	var trailing json.RawMessage
+	err := decoder.Decode(&trailing)
+	switch {
+	case err == nil:
+		return errors.New("decode document: trailing JSON value")
+	case !errors.Is(err, io.EOF):
+		return fmt.Errorf("decode document trailing data: %w", err)
+	}
+	return nil
 }
 
 func (d *Document) resetForDecode() {
