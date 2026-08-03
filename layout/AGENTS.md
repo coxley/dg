@@ -117,7 +117,9 @@ Routing proceeds in this order:
 8. Reconstruct each winning route part as a cell-by-cell path, join the parts
    at their pinned points, and add the complete route to
    occupancy.
-9. During a full build, reconsider crossing edges for at most `ReroutePasses`.
+9. During a full build, align earlier common-port routes with trunks introduced
+   by later siblings, then reconsider crossing edges for at most
+   `ReroutePasses`.
 10. Compact committed routes to endpoints and bend vertices in `Edge.Points`.
 
 Occupancy always uses expanded, cell-by-cell paths. Committed routes remain
@@ -138,7 +140,7 @@ Default costs provide these reference points:
 - `Bend = 5`: direction changes
 - `Crossing = 15`: unrelated edge crossings
 - `EndpointStep = 40`: travel through source or destination rectangles
-- `ReroutePasses = 1`: one extra whole-edge reroute pass
+- `ReroutePasses = 1`: align shared branches and run one crossing reroute pass
 
 Lower shared-step cost favors trunks. Higher bend, crossing, or endpoint cost
 favors straighter, separated, exterior routes.
@@ -146,6 +148,10 @@ favors straighter, separated, exterior routes.
 Only edges with a common endpoint may share segments. Sharing starts where the
 common endpoint is nearer than both distinct endpoints. Unrelated edges may
 cross, but they may not share a segment or touch another edge's endpoint.
+After the initial ID-ordered pass, the router aligns an earlier sibling's first
+branch with a later sibling's branch when moving the segment preserves route
+legality and score. This local refinement produces one clean junction without
+running A* again.
 
 The A* heuristic is Manhattan distance multiplied by the cheapest step the
 current route can take:
@@ -192,7 +198,7 @@ Use the existing controls before adding another index or cache:
   and legal against static occupancy
 - rigid selection moves skip routing when static geometry cannot be affected
 - `PreviewRouteWithoutEdge` excludes the edge being relocated
-- `ReroutePasses` bounds the optional crossing-improvement work
+- `ReroutePasses` bounds optional shared-branch and crossing-improvement work
 - `routeScratch` retains maps, slices, paths, and the concrete heap across
   builds
 - the obstacle index groups ordinary nodes into 16 by 16 cell buckets

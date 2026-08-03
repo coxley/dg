@@ -59,7 +59,9 @@ type Costs struct {
 type Router struct {
 	Costs Costs
 
-	// ReroutePasses bounds additional passes that reconsider crossing edges.
+	// ReroutePasses bounds additional route-improvement work. A nonzero value
+	// first aligns earlier common-port routes with their later siblings, then
+	// reconsiders crossing edges for at most this many passes.
 	ReroutePasses uint8
 }
 
@@ -299,6 +301,7 @@ type routeScratch struct {
 	relaxed   []Point
 	segment   []Point
 	arrowPort []bool
+	lastEdge  []uint32
 }
 
 func (s *routeScratch) reset(
@@ -322,6 +325,8 @@ func (s *routeScratch) reset(
 		portCount,
 	)[:portCount]
 	clear(s.arrowPort)
+	s.lastEdge = slices.Grow(s.lastEdge[:0], portCount)[:portCount]
+	clear(s.lastEdge)
 }
 
 const (
@@ -733,6 +738,8 @@ func (r Router) route(l *Layout) error {
 		if style.PortBArrow != ArrowNone {
 			scratch.arrowPort[edge.PortB] = true
 		}
+		scratch.lastEdge[edge.PortA] = uint32(edgeID) + 1
+		scratch.lastEdge[edge.PortB] = uint32(edgeID) + 1
 	}
 	occupancy := &scratch.occupancy
 
@@ -756,6 +763,11 @@ func (r Router) route(l *Layout) error {
 		occupancy.addExpanded(uint32(i), path)
 	}
 
+	if r.ReroutePasses != 0 {
+		if _, err := r.rerouteSharedPredecessors(l); err != nil {
+			return err
+		}
+	}
 	for range r.ReroutePasses {
 		changed, err := r.rerouteCrossings(l)
 		if err != nil {
@@ -770,6 +782,201 @@ func (r Router) route(l *Layout) error {
 		l.Edges[i].Points = compact(l.Edges[i].Points[:0], scratch.paths[i])
 	}
 	return nil
+}
+
+// rerouteSharedPredecessors aligns an earlier route's first branch with a later
+// sibling's branch when the resulting path remains legal and no more costly.
+func (r Router) rerouteSharedPredecessors(l *Layout) (bool, error) {
+	g := &l.graph
+	scratch := &l.scratch
+	paths := scratch.paths
+	occupancy := &scratch.occupancy
+	changed := false
+	for i, edge := range g.Edges {
+		edgeID := uint32(i)
+		if !g.EdgeExists(edgeID) || len(l.edgeBends[edgeID]) != 0 {
+			continue
+		}
+		siblingID, commonPort, ok := l.laterSibling(edgeID, edge)
+		if !ok {
+			continue
+		}
+		occupancy.removeExpanded(edgeID, paths[i])
+
+		oldCost, oldCrossings, ok := r.scorePath(l, edgeID, paths[i], occupancy)
+		if !ok {
+			return false, fmt.Errorf("score shared edge %d", i)
+		}
+		currentReversed := edge.PortB == commonPort
+		sibling := g.Edges[siblingID]
+		candidate, ok := alignSharedBranch(
+			scratch.candidate[:0],
+			paths[i],
+			paths[siblingID],
+			currentReversed,
+			sibling.PortB == commonPort,
+		)
+		if !ok || !l.pathClearForRoute(edgeID, candidate) {
+			scratch.candidate = candidate[:0]
+			occupancy.addExpanded(edgeID, paths[i])
+			continue
+		}
+		scratch.candidate = candidate
+		candidateCost, candidateCrossings, ok := r.scorePath(
+			l,
+			edgeID,
+			candidate,
+			occupancy,
+		)
+		if !ok {
+			return false, fmt.Errorf("score rerouted shared edge %d", i)
+		}
+		oldScore := routeScore{cost: oldCost, crossings: oldCrossings}
+		candidateScore := routeScore{
+			cost:      candidateCost,
+			crossings: candidateCrossings,
+		}
+		if !slices.Equal(candidate, paths[i]) &&
+			compareRouteScore(candidateScore, oldScore) <= 0 {
+			scratch.candidate = paths[i][:0]
+			paths[i] = candidate
+			changed = true
+		} else {
+			scratch.candidate = candidate[:0]
+		}
+		occupancy.addExpanded(edgeID, paths[i])
+	}
+	return changed, nil
+}
+
+func (l *Layout) laterSibling(
+	edgeID uint32,
+	edge ir.Edge,
+) (uint32, uint32, bool) {
+	for _, portID := range [...]uint32{edge.PortA, edge.PortB} {
+		later := l.scratch.lastEdge[portID]
+		if later > edgeID+1 {
+			return later - 1, portID, true
+		}
+	}
+	return 0, 0, false
+}
+
+func alignSharedBranch(
+	dst, current, sibling []Point,
+	currentReversed, siblingReversed bool,
+) ([]Point, bool) {
+	pointAt := func(path []Point, reversed bool, index int) Point {
+		if reversed {
+			return path[len(path)-1-index]
+		}
+		return path[index]
+	}
+	limit := min(len(current), len(sibling))
+	common := 0
+	for common < limit &&
+		pointAt(current, currentReversed, common) ==
+			pointAt(sibling, siblingReversed, common) {
+		common++
+	}
+	if common < 2 || common == limit {
+		return dst, false
+	}
+	branch := pointAt(current, currentReversed, common-1)
+	incoming, ok := directionBetween(
+		pointAt(current, currentReversed, common-2),
+		branch,
+	)
+	if !ok {
+		return dst, false
+	}
+	currentNext, ok := directionBetween(
+		branch,
+		pointAt(current, currentReversed, common),
+	)
+	if !ok || currentNext != incoming {
+		return dst, false
+	}
+	siblingNext, ok := directionBetween(
+		branch,
+		pointAt(sibling, siblingReversed, common),
+	)
+	if !ok || siblingNext == incoming || siblingNext == oppositeDirection(incoming) {
+		return dst, false
+	}
+
+	firstTurn := common
+	for firstTurn < len(current) {
+		dir, valid := directionBetween(
+			pointAt(current, currentReversed, firstTurn-1),
+			pointAt(current, currentReversed, firstTurn),
+		)
+		if !valid {
+			return dst, false
+		}
+		if dir != incoming {
+			break
+		}
+		firstTurn++
+	}
+	if firstTurn == len(current) {
+		return dst, false
+	}
+	turnDirection, _ := directionBetween(
+		pointAt(current, currentReversed, firstTurn-1),
+		pointAt(current, currentReversed, firstTurn),
+	)
+	secondTurn := firstTurn + 1
+	for secondTurn < len(current) {
+		dir, valid := directionBetween(
+			pointAt(current, currentReversed, secondTurn-1),
+			pointAt(current, currentReversed, secondTurn),
+		)
+		if !valid {
+			return dst, false
+		}
+		if dir != turnDirection {
+			if dir != incoming {
+				return dst, false
+			}
+			break
+		}
+		secondTurn++
+	}
+	if secondTurn == len(current) {
+		return dst, false
+	}
+	oldSecondBend := pointAt(current, currentReversed, secondTurn-1)
+	alignedBend := Point{X: branch.X, Y: oldSecondBend.Y}
+	if incoming == north || incoming == south {
+		alignedBend = Point{X: oldSecondBend.X, Y: branch.Y}
+	}
+	if alignedBend == branch {
+		return dst, false
+	}
+
+	dst = slices.Grow(dst[:0], len(current))
+	for index := range common {
+		dst = append(dst, pointAt(current, currentReversed, index))
+	}
+	if err := walkSegment(branch, alignedBend, func(point Point) {
+		dst = append(dst, point)
+	}); err != nil {
+		return dst[:0], false
+	}
+	afterBend := pointAt(current, currentReversed, secondTurn)
+	if err := walkSegment(alignedBend, afterBend, func(point Point) {
+		dst = append(dst, point)
+	}); err != nil {
+		return dst[:0], false
+	}
+	for index := secondTurn + 1; index < len(current); index++ {
+		dst = append(dst, pointAt(current, currentReversed, index))
+	}
+	if currentReversed {
+		reverse(dst)
+	}
+	return dst, true
 }
 
 // routeSelection computes and commits only affected routes:

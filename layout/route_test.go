@@ -1,7 +1,9 @@
 package layout
 
 import (
+	"fmt"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -353,6 +355,80 @@ func TestRerouteCrossingsReconsidersEarlierEdges(t *testing.T) {
 	)
 	require.True(t, ok)
 	require.Zero(t, crossings)
+}
+
+func TestBuildAlignsCommonPortBranches(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("source", NewPoint(2, 12))
+	require.NoError(t, err)
+	top, err := geo.NewNodeAt("top", NewPoint(30, 2))
+	require.NoError(t, err)
+	bottom, err := geo.NewNodeAt("bottom", NewPoint(30, 22))
+	require.NoError(t, err)
+	upper := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, top)
+	lower := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, bottom)
+	require.NoError(t, geo.Build())
+
+	upperPath, err := appendExpandedPath(nil, geo.Edges[upper].Points)
+	require.NoError(t, err)
+	lowerPath, err := appendExpandedPath(nil, geo.Edges[lower].Points)
+	require.NoError(t, err)
+	common := 0
+	for common < min(len(upperPath), len(lowerPath)) &&
+		upperPath[common] == lowerPath[common] {
+		common++
+	}
+	require.GreaterOrEqual(t, common, 2)
+	require.Less(t, common, min(len(upperPath), len(lowerPath)))
+	upperDirection, ok := directionBetween(upperPath[common-1], upperPath[common])
+	require.True(t, ok)
+	lowerDirection, ok := directionBetween(lowerPath[common-1], lowerPath[common])
+	require.True(t, ok)
+	require.Equal(t, north, upperDirection, "upper route: %+v", geo.Edges[upper].Points)
+	require.Equal(t, south, lowerDirection, "lower route: %+v", geo.Edges[lower].Points)
+}
+
+func TestAlignSharedBranchHandlesRouteOrientation(t *testing.T) {
+	t.Parallel()
+
+	current := segmentPoints(NewPoint(0, 5), NewPoint(8, 5))
+	current = append(current, segmentPoints(NewPoint(8, 4), NewPoint(8, 0))...)
+	current = append(current, segmentPoints(NewPoint(9, 0), NewPoint(10, 0))...)
+	sibling := segmentPoints(NewPoint(0, 5), NewPoint(5, 5))
+	sibling = append(sibling, segmentPoints(NewPoint(5, 6), NewPoint(5, 10))...)
+	sibling = append(sibling, segmentPoints(NewPoint(6, 10), NewPoint(10, 10))...)
+	want := []Point{
+		NewPoint(0, 5),
+		NewPoint(5, 5),
+		NewPoint(5, 0),
+		NewPoint(10, 0),
+	}
+
+	for _, reversed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reversed=%t", reversed), func(t *testing.T) {
+			currentPath := slices.Clone(current)
+			siblingPath := slices.Clone(sibling)
+			if reversed {
+				reverse(currentPath)
+				reverse(siblingPath)
+			}
+			got, ok := alignSharedBranch(
+				nil,
+				currentPath,
+				siblingPath,
+				reversed,
+				reversed,
+			)
+			require.True(t, ok)
+			if reversed {
+				reverse(got)
+			}
+			require.Equal(t, want, compact(nil, got))
+		})
+	}
 }
 
 func TestBuildSelectionAccountsForCompactUnrelatedRoutes(t *testing.T) {
