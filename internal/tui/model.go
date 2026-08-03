@@ -105,6 +105,7 @@ type Model struct {
 	viewBuffer []byte
 	statusText []byte
 	styledRuns map[styledRunKey]string
+	background backgroundRenderer
 
 	// Bubble Tea compares consecutive cursor pointers, so each View writes the
 	// cursor value that the previous View does not reference.

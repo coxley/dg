@@ -2171,16 +2171,21 @@ func TestPreferenceBackgroundPreviewsAndRestoresOnCancel(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 40, Height: 15})
 	model.openPreferences()
 	require.True(t, model.dialogs.preferences.model.Focus("background"))
 
 	model.updateDialog(keyPress(tea.KeyRight, ""))
 	require.True(t, model.preferences.draft.OpaqueBackground)
-	require.NotNil(t, model.View().BackgroundColor)
+	canvas := lipgloss.NewCanvas(40, 15)
+	canvas.Compose(lipgloss.NewLayer(strings.TrimSuffix(model.View().Content, "\n")))
+	require.NotNil(t, canvas.CellAt(39, 14).Style.Bg)
 
 	model.cancelPreferences()
 	require.False(t, model.preferences.baseline.OpaqueBackground)
-	require.Nil(t, model.View().BackgroundColor)
+	canvas.Clear()
+	canvas.Compose(lipgloss.NewLayer(strings.TrimSuffix(model.View().Content, "\n")))
+	require.Nil(t, canvas.CellAt(39, 14).Style.Bg)
 }
 
 func TestBackgroundColorSelectsRegisteredLightTint(t *testing.T) {
@@ -2202,7 +2207,7 @@ func TestBackgroundColorSelectsRegisteredLightTint(t *testing.T) {
 	require.Equal(t, model.preferences.draft.LightTint, model.theme.TintID)
 }
 
-func TestOpaqueBackgroundSetsViewBackground(t *testing.T) {
+func TestOpaqueBackgroundPaintsViewCells(t *testing.T) {
 	t.Parallel()
 
 	geo, err := layout.New()
@@ -2219,15 +2224,25 @@ func TestOpaqueBackgroundSetsViewBackground(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 20, Height: 5})
 
 	view := model.View()
-	darkBackground := rgba(view.BackgroundColor)
+	require.Nil(t, view.BackgroundColor)
+	canvas := lipgloss.NewCanvas(20, 5)
+	canvas.Compose(lipgloss.NewLayer(strings.TrimSuffix(view.Content, "\n")))
+	darkBackground := rgba(canvas.CellAt(19, 4).Style.Bg)
 	require.Equal(t, rgba(model.theme.Background.GetBackground()), darkBackground)
 	updateModel(t, model, tea.BackgroundColorMsg{Color: color.White})
 	view = model.View()
-	require.Equal(t, rgba(model.theme.Background.GetBackground()), rgba(view.BackgroundColor))
-	require.NotEqual(t, darkBackground, rgba(view.BackgroundColor))
+	canvas.Clear()
+	canvas.Compose(lipgloss.NewLayer(strings.TrimSuffix(view.Content, "\n")))
+	lightBackground := rgba(canvas.CellAt(19, 4).Style.Bg)
+	require.Equal(t, rgba(model.theme.Background.GetBackground()), lightBackground)
+	require.NotEqual(t, darkBackground, lightBackground)
 
 	model.preferences.baseline.OpaqueBackground = false
-	require.Nil(t, model.View().BackgroundColor)
+	view = model.View()
+	canvas.Clear()
+	canvas.Compose(lipgloss.NewLayer(strings.TrimSuffix(view.Content, "\n")))
+	require.Nil(t, view.BackgroundColor)
+	require.Nil(t, canvas.CellAt(19, 4).Style.Bg)
 }
 
 func TestLiveBackgroundCommandsAndFocusReporting(t *testing.T) {

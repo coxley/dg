@@ -144,10 +144,11 @@ persistence succeeds before root commits the layout-backed preview and promotes
 the draft. Numeric fields change only with Left and Right or `h` and `l`, and
 briefly highlight the pressed arrow. Independent dark and light tint selectors
 follow the terminal background. Terminal background mode leaves the viewport
-unpainted; opaque mode gives `tea.View` the selected tint's background color.
-The directory field opens the bounded filesystem adapter. Save applies the
-current form; Save as Defaults also enables the persisted router for new
-diagrams. Growing form spacers anchor actions to the body bottom.
+unpainted; opaque mode applies the selected tint's background to every visible
+cell through a retained composition buffer. The directory field opens the
+bounded filesystem adapter. Save applies the current form; Save as Defaults
+also enables the persisted router for new diagrams. Growing form spacers anchor
+actions to the body bottom.
 
 Enter submits the primary action from ordinary form fields: Save in
 Preferences, Copy in Export, and Name Canvas in the naming form. Fields with

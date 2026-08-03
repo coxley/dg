@@ -82,10 +82,15 @@ func (m *Model) View() tea.View {
 	}
 
 	content = m.composeSurfaces(content)
-	view := tea.NewView(content + "\n")
 	if m.preferenceValue().OpaqueBackground {
-		view.BackgroundColor = m.theme.Background.GetBackground()
+		content = m.background.render(
+			content,
+			workspace.Terminal.Width,
+			workspace.Terminal.Height,
+			m.theme.Background,
+		)
 	}
+	view := tea.NewView(content + "\n")
 	view.AltScreen = true
 	view.ReportFocus = true
 	view.MouseMode = tea.MouseModeAllMotion
@@ -104,6 +109,37 @@ func (m *Model) View() tea.View {
 		}
 	}
 	return view
+}
+
+type backgroundRenderer struct {
+	canvas *lipgloss.Canvas
+}
+
+func (r *backgroundRenderer) render(
+	content string,
+	width, height int,
+	style lipgloss.Style,
+) string {
+	if width <= 0 || height <= 0 {
+		return content
+	}
+	if r.canvas == nil {
+		r.canvas = lipgloss.NewCanvas(width, height)
+	} else {
+		r.canvas.Resize(width, height)
+		r.canvas.Clear()
+	}
+	r.canvas.Compose(lipgloss.NewLayer(content))
+	background := style.GetBackground()
+	for y := range height {
+		for x := range width {
+			cell := r.canvas.CellAt(x, y)
+			if cell.Width != 0 && cell.Style.Bg == nil {
+				cell.Style.Bg = background
+			}
+		}
+	}
+	return r.canvas.Render()
 }
 
 func (m *Model) activeTool() nav.Tool {
