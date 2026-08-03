@@ -116,31 +116,41 @@ func (l *Layout) CanAttachNodeAt(nodeID, edgeID uint32, point Point) bool {
 	return point != points[0] && point != points[len(points)-1]
 }
 
-// AttachNode attaches nodeID to the edge cell at point. The node keeps its
-// current origin until the host route changes.
-func (l *Layout) AttachNode(nodeID, edgeID uint32, point Point) error {
+// AttachmentAt returns the attachment represented by an edge cell inside a
+// node without changing the layout.
+func (l *Layout) AttachmentAt(nodeID, edgeID uint32, point Point) (Attachment, error) {
 	if !l.CanAttachNode(nodeID, edgeID) {
-		return fmt.Errorf("node %d cannot attach to edge %d", nodeID, edgeID)
+		return Attachment{}, fmt.Errorf("node %d cannot attach to edge %d", nodeID, edgeID)
 	}
 	if !l.Nodes[nodeID].Rect.Contains(point) {
-		return fmt.Errorf("attachment point %+v outside node %d", point, nodeID)
+		return Attachment{}, fmt.Errorf("attachment point %+v outside node %d", point, nodeID)
 	}
 	reference, offset, ok := attachmentLocation(l.Edges[edgeID].Points, point)
 	if !ok {
-		return fmt.Errorf("point %+v is not on edge %d", point, edgeID)
+		return Attachment{}, fmt.Errorf("point %+v is not on edge %d", point, edgeID)
 	}
 	origin := l.Nodes[nodeID].Rect.Min
 	points := l.Edges[edgeID].Points
 	if point == points[0] || point == points[len(points)-1] {
-		return errors.New("attachment cannot overlap an edge endpoint")
+		return Attachment{}, errors.New("attachment cannot overlap an edge endpoint")
 	}
-	return l.SetAttachment(Attachment{
+	return Attachment{
 		NodeID:    nodeID,
 		EdgeID:    edgeID,
 		Reference: reference,
 		Offset:    offset,
 		Anchor:    NewPoint(point.X-origin.X, point.Y-origin.Y),
-	})
+	}, nil
+}
+
+// AttachNode attaches nodeID to the edge cell at point. The node keeps its
+// current origin until the host route changes.
+func (l *Layout) AttachNode(nodeID, edgeID uint32, point Point) error {
+	attachment, err := l.AttachmentAt(nodeID, edgeID, point)
+	if err != nil {
+		return err
+	}
+	return l.SetAttachment(attachment)
 }
 
 // SetAttachment restores or updates an attachment from its route landmark.

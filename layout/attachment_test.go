@@ -24,6 +24,18 @@ func TestAttachmentSelection(t *testing.T) {
 	require.False(t, geo.Selection().Contains(nodeHit))
 }
 
+func TestAttachmentAtDoesNotMutate(t *testing.T) {
+	t.Parallel()
+
+	geo, _, _, node, edge := newAttachmentLayout(t)
+	before := mustAttachment(t, geo, node)
+	point := geo.Nodes[node].Rect.Min.Add(before.Anchor.X, before.Anchor.Y)
+	attachment, err := geo.AttachmentAt(node, edge, point)
+	require.NoError(t, err)
+	require.Equal(t, before, attachment)
+	require.Equal(t, before, mustAttachment(t, geo, node))
+}
+
 func TestDuplicateSelectionPreservesCompleteAttachment(t *testing.T) {
 	t.Parallel()
 
