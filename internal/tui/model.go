@@ -430,8 +430,6 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 	case tea.MouseWheelMsg:
 		m.clipboard.CancelPending()
 		return m, m.updateMouseWheelMessage(message)
-	case tea.BlurMsg:
-		m.interruptInteraction()
 	case chrome.FormActivateMsg:
 		return m, m.updateDialog(message)
 	case chrome.FormSubmitMsg:

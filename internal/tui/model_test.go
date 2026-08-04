@@ -344,7 +344,7 @@ func TestModelRectangleToolReturnsToCursor(t *testing.T) {
 	require.Len(t, model.geo.Nodes, 2)
 }
 
-func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
+func TestModelBlurPreservesRectangleGesture(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
@@ -361,12 +361,13 @@ func TestModelBlurCommitsRectangleAtVisibleSize(t *testing.T) {
 		Y:      12,
 		Button: tea.MouseLeft,
 	})
+	before := model.geo.Nodes[nodeID].Rect
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, modeNavigate, model.interaction.mode())
-	require.Equal(t, layout.Size{Width: 8, Height: 5}, model.geo.Nodes[nodeID].Rect.Size)
-	updateModel(t, model, keyPress('u', "u"))
-	require.False(t, model.geo.NodeExists(nodeID))
+	require.Equal(t, modeRectangle, model.interaction.mode())
+	require.Equal(t, gestureRectangle, model.interaction.gesture.kind)
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect)
+	require.True(t, model.interaction.transaction.open())
 }
 
 func TestModelCancelDiscardsRectangle(t *testing.T) {
@@ -675,7 +676,7 @@ func TestModelAltControlDragAxisLocksDuplicate(t *testing.T) {
 	require.Equal(t, before.Add(0, 10), model.geo.Nodes[duplicate].Rect.Min)
 }
 
-func TestModelBlurDiscardsDuplicatePreview(t *testing.T) {
+func TestModelBlurPreservesDuplicatePreview(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -697,9 +698,9 @@ func TestModelBlurDiscardsDuplicatePreview(t *testing.T) {
 
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, gestureNone, model.interaction.gesture.kind)
-	require.Nil(t, model.interaction.render.duplicateLayout)
-	require.Empty(t, model.canvas.Frame(canvasview.DuplicateFrame).Text)
+	require.Equal(t, gestureDuplicate, model.interaction.gesture.kind)
+	require.NotNil(t, model.interaction.render.duplicateLayout)
+	require.NotEmpty(t, model.canvas.Frame(canvasview.DuplicateFrame).Text)
 	require.Len(t, model.geo.Graph().Nodes, 1)
 }
 
@@ -916,6 +917,18 @@ func TestDialogControllerOwnsDistinctModalSurfacesAndScopes(t *testing.T) {
 				model.showNotice("Saved", surfaceNone)
 			},
 		},
+		{
+			name: "confirmation dialog",
+			id:   surfaceConfirmation,
+			open: func(model *Model) {
+				model.dialogs.OpenConfirmation(
+					"Confirm",
+					"Continue?",
+					"Continue",
+					dialogCancelMsg{},
+				)
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -933,6 +946,8 @@ func TestDialogControllerOwnsDistinctModalSurfacesAndScopes(t *testing.T) {
 			require.True(t, ok)
 			require.Equal(t, test.id, back)
 			require.Equal(t, model.dialogs.Scopes(), model.activeBindingScopes())
+			updateModel(t, model, tea.BlurMsg{})
+			require.Equal(t, test.id, model.dialogs.ActiveID())
 
 			model.dismissDialog()
 			require.Equal(t, surfaceNone, model.dialogs.ActiveID())
@@ -2116,20 +2131,22 @@ func TestShortPreferenceFormRevealsTintAndActions(t *testing.T) {
 	require.Contains(t, ansi.Strip(model.View().Content), "Save")
 }
 
-func TestPreferenceModalInterruptCancelsLiveChanges(t *testing.T) {
+func TestPreferenceModalSurvivesTerminalBlur(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	model.openPreferences()
 	before := model.geo.Router()
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
-	require.NotEqual(t, before, model.geo.Router())
+	draft := model.geo.Router()
+	require.NotEqual(t, before, draft)
 
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, before, model.geo.Router())
-	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
-	require.False(t, model.preferenceEdit)
+	require.Equal(t, draft, model.geo.Router())
+	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
+	require.True(t, model.preferenceEdit)
+	require.True(t, model.interaction.transaction.open())
 }
 
 func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
@@ -2755,7 +2772,7 @@ func TestModelReordersLayersWithUndo(t *testing.T) {
 	)
 }
 
-func TestModelBlurCommitsLabelEdit(t *testing.T) {
+func TestModelBlurPreservesLabelEdit(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -2764,10 +2781,9 @@ func TestModelBlurCommitsLabelEdit(t *testing.T) {
 	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, modeEditLabel, model.interaction.mode())
 	require.Equal(t, "nod", model.geo.Label(nodeID))
-	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'z', Mod: tea.ModCtrl}))
-	require.Equal(t, "node", model.geo.Label(nodeID))
+	require.True(t, model.interaction.transaction.open())
 }
 
 func TestModelEditsLabel(t *testing.T) {
@@ -3193,7 +3209,7 @@ func TestModelLineDragMissClearsSource(t *testing.T) {
 	require.Empty(t, model.geo.Edges)
 }
 
-func TestModelBlurDiscardsConnectionPreview(t *testing.T) {
+func TestModelBlurPreservesConnectionPreview(t *testing.T) {
 	t.Parallel()
 
 	model, left, right := newTwoNodeModel(t)
@@ -3216,9 +3232,10 @@ func TestModelBlurDiscardsConnectionPreview(t *testing.T) {
 
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, modeNavigate, model.interaction.mode())
-	require.Empty(t, model.interaction.render.connectionPreview)
-	require.Empty(t, model.interaction.render.connectionRaster)
+	require.Equal(t, modeConnect, model.interaction.mode())
+	require.Equal(t, sessionConnection, model.interaction.session.kind)
+	require.NotEmpty(t, model.interaction.render.connectionPreview)
+	require.NotEmpty(t, model.interaction.render.connectionRaster)
 	require.Empty(t, model.geo.Edges)
 }
 
@@ -3856,7 +3873,7 @@ func TestModelControlDragAxisLocksSelectionMove(t *testing.T) {
 	require.Equal(t, rightBefore.Add(10, 0), model.geo.Nodes[right].Rect.Min)
 }
 
-func TestModelBlurCommitsPointerMove(t *testing.T) {
+func TestModelBlurPreservesPointerMove(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -3879,10 +3896,9 @@ func TestModelBlurCommitsPointerMove(t *testing.T) {
 
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, gestureNone, model.interaction.gesture.kind)
+	require.Equal(t, gestureMove, model.interaction.gesture.kind)
 	require.Equal(t, before.Add(2, 1), model.geo.Nodes[nodeID].Rect.Min)
-	updateModel(t, model, keyPress('u', "u"))
-	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
+	require.True(t, model.interaction.transaction.open())
 }
 
 func TestModelMouseAreaSelectsIntersectingObjects(t *testing.T) {
@@ -4514,7 +4530,7 @@ func alignedBendPair(
 	return layout.PinnedBend{}, layout.PinnedBend{}, false
 }
 
-func TestModelBlurCommitsResize(t *testing.T) {
+func TestModelBlurPreservesResize(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -4537,11 +4553,10 @@ func TestModelBlurCommitsResize(t *testing.T) {
 
 	updateModel(t, model, tea.BlurMsg{})
 
-	require.Equal(t, gestureNone, model.interaction.gesture.kind)
+	require.Equal(t, gestureResize, model.interaction.gesture.kind)
 	require.Equal(t, before.Width+4, model.geo.Nodes[nodeID].Rect.Size.Width)
 	require.Equal(t, before.Height+2, model.geo.Nodes[nodeID].Rect.Size.Height)
-	updateModel(t, model, keyPress('u', "u"))
-	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Size)
+	require.True(t, model.interaction.transaction.open())
 }
 
 func TestModelMouseResizeUsesNearestCorner(t *testing.T) {
