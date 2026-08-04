@@ -78,6 +78,7 @@ type Model struct {
 	catalog     []canvasstore.Entry
 	catalogFeed <-chan canvasstore.CatalogEvent
 	cancelWatch context.CancelFunc
+	devReload   devReloadState
 	externalDoc document.Document
 	external    *externalConflict
 	windowTitle string
@@ -146,6 +147,8 @@ type modelOptions struct {
 	history                *history.History
 	document               *document.Document
 	devSession             *DevSession
+	devMarkerPath          string
+	devSessionPath         string
 	canvasStore            *canvasstore.Store
 	entry                  *canvasstore.Entry
 	sidebarInitiallyClosed bool
@@ -156,6 +159,14 @@ type modelOptions struct {
 func WithDevSession(value DevSession) Option {
 	return func(options *modelOptions) {
 		options.devSession = &value
+	}
+}
+
+// WithDevReload requests a session handoff when markerPath changes.
+func WithDevReload(markerPath, sessionPath string) Option {
+	return func(options *modelOptions) {
+		options.devMarkerPath = markerPath
+		options.devSessionPath = sessionPath
 	}
 }
 
@@ -297,6 +308,8 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 		}
 	}
 	m.history.SetChangeCallback(m.markDocumentDirty)
+	m.devReload.markerPath = configured.devMarkerPath
+	m.devReload.sessionPath = configured.devSessionPath
 	if configured.devSession != nil {
 		m.restoreDevSession(*configured.devSession)
 	}
@@ -321,6 +334,9 @@ func Run(geo *layout.Layout, options ...Option) error {
 	if model.cancelWatch != nil {
 		model.cancelWatch()
 	}
+	if model.devReload.cancel != nil {
+		model.devReload.cancel()
+	}
 	cleanupErr := resetLiveTint(os.Stdout)
 	if model.panicValue != nil {
 		cleanupErr = errors.Join(flushAfterPanic(model, panicFlushTimeout), cleanupErr)
@@ -328,10 +344,14 @@ func Run(geo *layout.Layout, options ...Option) error {
 		panic(model.panicValue)
 	}
 	var flushErr error
-	if model.exitErr == nil {
+	if model.exitErr == nil && !model.devReload.requested {
 		flushErr = model.flushActive()
 	}
-	return errors.Join(runErr, model.exitErr, flushErr, cleanupErr)
+	var reloadErr error
+	if model.devReload.requested {
+		reloadErr = ErrDevReload
+	}
+	return errors.Join(runErr, model.exitErr, flushErr, cleanupErr, reloadErr)
 }
 
 func resetLiveTint(writer io.Writer) error {
@@ -342,11 +362,12 @@ func resetLiveTint(writer io.Writer) error {
 func (m *Model) Init() tea.Cmd {
 	defer m.retainPanic()
 	raw := tea.Raw(ansi.SetModeLightDark + ansi.RequestBackgroundColor)
-	watch := m.startCatalogWatch()
-	if watch == nil {
+	watchCatalog := m.startCatalogWatch()
+	watchReload := m.startDevReloadWatch()
+	if watchCatalog == nil && watchReload == nil {
 		return raw
 	}
-	return tea.Batch(raw, watch)
+	return tea.Batch(raw, watchCatalog, watchReload)
 }
 
 func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
@@ -363,6 +384,9 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 		return m, command
 	}
 	if command, handled := m.updatePersistence(message); handled {
+		return m, command
+	}
+	if command, handled := m.updateDevReload(message); handled {
 		return m, command
 	}
 	switch message := message.(type) {
