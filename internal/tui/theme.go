@@ -92,9 +92,9 @@ func convertTint(theme *tint.Tint) Theme {
 	background := theme.Bg
 	if background == nil {
 		if theme.Dark {
-			background = tint.FromHex("#000000")
+			background = theme.Bg
 		} else {
-			background = tint.FromHex("#ffffff")
+			background = theme.Bg
 		}
 	}
 	focus := cmp.Or(theme.SelectionBg, theme.BrightBlue, theme.Blue)
@@ -187,6 +187,13 @@ func convertTint(theme *tint.Tint) Theme {
 		Empty:        plain.Foreground(muted),
 		Error:        plain.Foreground(alert),
 	}
+
+	sidebarTabHeader := plain.
+		MarginBottom(1).
+		BorderForeground(focus).
+		BorderBackground(focus).
+		Border(lipgloss.NormalBorder(), false, false, true, false)
+
 	return Theme{
 		Dark:          theme.Dark,
 		TintID:        theme.ID,
@@ -232,14 +239,11 @@ func convertTint(theme *tint.Tint) Theme {
 		Sidebar: sidebarStyles{
 			Container:        sidebar,
 			FocusedContainer: sidebar,
-			Header: plain.
-				MarginBottom(1).
-				BorderForeground(lipgloss.BrightBlack).
-				Border(lipgloss.NormalBorder(), false, false, true, false),
-			Tab:        plain,
-			ActiveTab:  activeNav,
-			HoveredTab: hoverNav,
-			Item:       tab.Padding(0, 1),
+			Header:           sidebarTabHeader,
+			Tab:              plain,
+			ActiveTab:        activeNav,
+			HoveredTab:       hoverNav,
+			Item:             tab.Padding(0, 1),
 			FocusedItem: activeControl.
 				Padding(0, 1),
 			ActiveItem: activeControl.Padding(0, 1),
