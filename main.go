@@ -170,5 +170,6 @@ func emptyLayoutWithSettings(snapshot settings.Snapshot) (*layout.Layout, error)
 	if router == (layout.Router{}) {
 		router = layout.DefaultRouter()
 	}
+
 	return layout.New(layout.WithRouter(router))
 }
