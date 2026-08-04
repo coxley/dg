@@ -18,8 +18,9 @@ partially applied pointer gestures.
   running. Later build failures silently leave the current editor untouched.
 - A successful build atomically replaces the staged executable and asks the
   child to create a development-session handoff.
-- The child exits normally after writing the handoff. The supervisor starts the
-  replacement with the same terminal and command arguments.
+- The child exits with a dedicated reload code after writing the handoff. The
+  supervisor starts the replacement with the same terminal and command
+  arguments.
 - The replacement consumes and removes the handoff before rendering.
 
 The build-failure branch contains one comment identifying where diagnostics
@@ -41,7 +42,8 @@ The handoff excludes workspace plans, hits, routes, raster frames, rendered
 strings, clipboard data, hover state, notices, confirmations, export state, and
 pointer-preview caches. The replacement derives those values normally.
 
-Before capture:
+At handoff, capture semantic interaction state first, then prepare the document
+and history snapshot:
 
 - cancel active pointer transactions and discard their previews;
 - commit active label editing;
@@ -80,7 +82,9 @@ when the session ends.
 2. Add reload-marker lifecycle integration to `tui.Run`.
 3. Add root command parsing, source watching, atomic builds, and child restart
    supervision.
-4. Add process-level tests for silent failed builds and successful handoff.
+4. Add supervisor tests for source watching and retaining the last successful
+   build, then exercise silent failures and successful handoff in a headless
+   terminal.
 5. Run session benchmarks and repository verification.
 
 ## Verification
