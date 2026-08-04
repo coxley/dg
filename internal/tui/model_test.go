@@ -26,6 +26,7 @@ import (
 	"github.com/coxley/dg/internal/tui/chrome"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 	"github.com/coxley/dg/internal/tui/nav"
+	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 	"github.com/coxley/dg/render"
@@ -34,6 +35,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
+
+const testCanvasName = "Canvas"
 
 var benchmarkView tea.View
 
@@ -113,12 +116,17 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	store := settings.NewStore(filepath.Join(t.TempDir(), "config.json"))
+	defaultRouter := layout.DefaultRouter()
+	defaultRouter.Costs.Step = 37
 
 	model, err := New(geo, WithHistory(history), WithSettings(settings.Snapshot{
-		ApplyToFuture:    true,
-		SaveDirectory:    "/diagrams",
-		CommentPrefix:    "# ",
-		ShortcutStyle:    settings.ShortcutMac,
+		Router:        defaultRouter,
+		SaveDirectory: "/diagrams",
+		CommentPrefix: "# ",
+		Theme:         settings.ThemeLight,
+		Keybinds: []settings.Keybind{{
+			Scope: "global", Action: "save", Mappings: []string{"alt+s"},
+		}},
 		DarkTint:         defaultDarkTint.ID,
 		LightTint:        defaultLightTint.ID,
 		OpaqueBackground: true,
@@ -126,10 +134,13 @@ func TestNewUsesInjectedSettingsWithoutGlobalConfigLookup(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Same(t, store, model.settingsStore)
-	require.True(t, model.preferences.applyToFuture)
+	require.Equal(t, defaultRouter, model.preferences.defaultRouter)
 	require.Equal(t, "/diagrams", model.preferences.baseline.SaveDirectory)
 	require.Equal(t, "# ", model.preferences.baseline.CommentPrefix)
-	require.Equal(t, chrome.ProfileMac, model.preferences.baseline.KeyProfile)
+	require.Equal(t, preferencesview.ThemeLight, model.preferences.baseline.Theme)
+	save, ok := findKeybindValue(model.preferences.baseline.Keybinds, scopeGlobal, commandSave)
+	require.True(t, ok)
+	require.Equal(t, chrome.Chord("alt+s"), save.Mappings[0])
 	require.Equal(t, defaultDarkTint.ID, model.preferences.baseline.DarkTint)
 	require.Equal(t, defaultLightTint.ID, model.preferences.baseline.LightTint)
 	require.True(t, model.preferences.baseline.OpaqueBackground)
@@ -787,9 +798,10 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
+	defaultRouter := model.geo.Router()
+	defaultRouter.Costs.Step += 10
+	model.preferences.defaultRouter = defaultRouter
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
-	model.preferences.baseline.KeyProfile = chrome.ProfileStandard
-	model.bindings.SetProfile(chrome.ProfileStandard)
 	updateModel(t, model, keyPress('?', "?"))
 	require.True(t, model.helpInspector.visible)
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
@@ -810,18 +822,20 @@ func TestModelHelpAndPreferencesApplyRouterLive(t *testing.T) {
 		Mod:  tea.ModCtrl,
 	}))
 	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
-	require.Contains(t, ansi.Strip(model.View().Content), "Step cost")
+	require.Contains(t, ansi.Strip(model.View().Content), "Theme")
 	require.Contains(
 		t,
 		ansi.Strip(strings.Join(model.helpInspector.lines(), "\n")),
 		"HELP · preferences",
 	)
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	before := model.geo.Router()
 	command := updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.Equal(t, before.Costs.Step+1, model.geo.Router().Costs.Step)
 	require.NotNil(t, command)
 	updateModel(t, model, keyPress(tea.KeyEscape, ""))
 	require.Equal(t, before, model.geo.Router())
+	require.Equal(t, defaultRouter, model.preferences.defaultRouter)
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	require.True(t, model.helpInspector.visible)
 }
@@ -862,8 +876,6 @@ func TestPreferencesPrimaryShortcutClosesAndRestoresPreview(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.baseline.KeyProfile = chrome.ProfileStandard
-	model.bindings.SetProfile(chrome.ProfileStandard)
 	preferencesKey := tea.KeyPressMsg(tea.Key{
 		Code: 'p',
 		Text: "p",
@@ -873,6 +885,7 @@ func TestPreferencesPrimaryShortcutClosesAndRestoresPreview(t *testing.T) {
 
 	updateModel(t, model, preferencesKey)
 	require.Equal(t, surfacePreferences, model.dialogs.ActiveID())
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.NotEqual(t, before, model.geo.Router())
 
@@ -1918,17 +1931,13 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 		require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	})
 
-	t.Run("save as defaults", func(t *testing.T) {
+	t.Run("save", func(t *testing.T) {
 		model, _ := newTestModel(t)
 		updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 		path := filepath.Join(t.TempDir(), "config.json")
 		model.settingsStore = settings.NewStore(path)
 		model.openPreferences()
-		x, y := modalTextPoint(
-			t,
-			model.dialogs.Overlay(),
-			"Save as Defaults",
-		)
+		x, y := modalLastTextPoint(t, model.dialogs.Overlay(), "Save")
 
 		command := updateModelCommand(t, model, tea.MouseClickMsg{
 			X:      x,
@@ -1939,8 +1948,38 @@ func TestPreferenceActionsAcceptMouseClicks(t *testing.T) {
 		require.NotNil(t, command)
 		data, err := os.ReadFile(path)
 		require.NoError(t, err)
-		require.Contains(t, string(data), `"apply_to_future": true`)
+		require.NotContains(t, string(data), "apply_to_future")
 	})
+}
+
+func TestPreferenceMappingPillBlankSpaceAcceptsClick(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
+	model.openPreferences()
+	model.dialogs.preferences.SetTab(preferencesview.KeybindsTab)
+	model.syncWorkspace()
+	_ = model.View()
+
+	body := model.dialogs.plan.body
+	gap := 1
+	labelWidth := min(24, body.Width/3, body.Width-8)
+	pillWidth := (body.Width - labelWidth - 2*gap) / 3
+	point := chrome.Point{
+		X: labelWidth + pillWidth - 2,
+		Y: 2,
+	}
+	require.True(t, model.dialogs.preferences.PointerOccupied(point))
+
+	updateModel(t, model, tea.MouseClickMsg{
+		X:      body.X + point.X,
+		Y:      body.Y + point.Y,
+		Button: tea.MouseLeft,
+	})
+
+	require.True(t, model.dialogs.preferences.CapturesKey())
+	require.False(t, model.dialogs.shell.CapturesPointer())
 }
 
 func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
@@ -1949,9 +1988,7 @@ func TestPreferenceEscapeClosesDirectoryBeforeModal(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
-	for range 7 {
-		model.updateDialog(keyPress(tea.KeyDown, ""))
-	}
+	require.True(t, model.dialogs.preferences.model.Focus("directory"))
 	command := updateModelCommand(t, model, keyPress('l', "l"))
 	require.NotNil(t, command)
 	updateModel(t, model, command())
@@ -1971,9 +2008,7 @@ func TestPreferenceQClosesDirectoryBeforeModal(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 120, Height: 50})
 	model.openPreferences()
-	for range 7 {
-		model.updateDialog(keyPress(tea.KeyDown, ""))
-	}
+	require.True(t, model.dialogs.preferences.model.Focus("directory"))
 	command := updateModelCommand(t, model, keyPress('l', "l"))
 	require.NotNil(t, command)
 	updateModel(t, model, command())
@@ -1993,6 +2028,7 @@ func TestSettingsModalCanMoveAndOutsideClickCancelsPreferences(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 40})
 	model.openPreferences()
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	before := model.geo.Router()
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.NotEqual(t, before, model.geo.Router())
@@ -2087,6 +2123,7 @@ func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
 	model.openPreferences()
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	before := model.geo.Router().Costs.Step
 	require.Contains(t, ansi.Strip(model.View().Content), "⇽")
 	require.Contains(t, ansi.Strip(model.View().Content), "⇾")
@@ -2120,13 +2157,13 @@ func TestShortPreferenceFormRevealsTintAndActions(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 12})
 	model.openPreferences()
-	for range 10 {
-		updateModel(t, model, keyPress(tea.KeyDown, ""))
-	}
+	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
 	require.Equal(t, chrome.ID("dark-tint"), model.dialogs.preferences.model.FocusID())
 	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	require.Equal(t, chrome.ID("light-tint"), model.dialogs.preferences.model.FocusID())
-	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	for range 4 {
+		updateModel(t, model, keyPress(tea.KeyTab, ""))
+	}
 	require.Equal(t, chrome.ID("save"), model.dialogs.preferences.model.FocusID())
 	require.Contains(t, ansi.Strip(model.View().Content), "Save")
 }
@@ -2136,6 +2173,7 @@ func TestPreferenceModalSurvivesTerminalBlur(t *testing.T) {
 
 	model, _ := newTestModel(t)
 	model.openPreferences()
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	before := model.geo.Router()
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	draft := model.geo.Router()
@@ -2155,6 +2193,7 @@ func TestPreferenceModalReopensWithCancelledValues(t *testing.T) {
 	model, _ := newTestModel(t)
 	before := model.geo.Router()
 	model.openPreferences()
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	updateModelCommand(t, model, keyPress(tea.KeyRight, ""))
 	require.NotEqual(t, before, model.geo.Router())
 	model.cancelPreferences()
@@ -2232,7 +2271,6 @@ func TestOpaqueBackgroundPaintsViewCells(t *testing.T) {
 	history, err := undohistory.New(geo, undohistory.WithCacheDir(t.TempDir()))
 	require.NoError(t, err)
 	model, err := New(geo, WithHistory(history), WithSettings(settings.Snapshot{
-		ShortcutStyle:    settings.ShortcutStandard,
 		OpaqueBackground: true,
 	}, nil), func(options *modelOptions) {
 		options.sidebarInitiallyClosed = true
@@ -2246,6 +2284,11 @@ func TestOpaqueBackgroundPaintsViewCells(t *testing.T) {
 	canvas.Compose(lipgloss.NewLayer(strings.TrimSuffix(view.Content, "\n")))
 	darkBackground := rgba(canvas.CellAt(19, 4).Style.Bg)
 	require.Equal(t, rgba(model.theme.Background.GetBackground()), darkBackground)
+	require.Equal(
+		t,
+		rgba(model.theme.Background.GetForeground()),
+		rgba(canvas.CellAt(19, 4).Style.Fg),
+	)
 	updateModel(t, model, tea.BackgroundColorMsg{Color: color.White})
 	view = model.View()
 	canvas.Clear()
@@ -2262,17 +2305,39 @@ func TestOpaqueBackgroundPaintsViewCells(t *testing.T) {
 	require.Nil(t, canvas.CellAt(19, 4).Style.Bg)
 }
 
+func TestThemeModeOverridesAndReturnsToTerminalDetection(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+	updateModel(t, model, tea.BackgroundColorMsg{Color: color.Black})
+	require.True(t, model.theme.Dark)
+
+	model.openPreferences()
+	value := model.preferences.draft
+	value.Theme = preferencesview.ThemeLight
+	model.previewPreferences(value)
+	require.False(t, model.theme.Dark)
+	updateModel(t, model, tea.BackgroundColorMsg{Color: color.Black})
+	require.False(t, model.theme.Dark)
+
+	value.Theme = preferencesview.ThemeAuto
+	model.previewPreferences(value)
+	require.True(t, model.theme.Dark)
+	updateModel(t, model, tea.BackgroundColorMsg{Color: color.White})
+	require.False(t, model.theme.Dark)
+}
+
 func TestLiveBackgroundCommandsAndFocusReporting(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	raw, ok := model.Init()().(tea.RawMsg)
+	batch, ok := model.Init()().(tea.BatchMsg)
 	require.True(t, ok)
-	require.Equal(
-		t,
-		ansi.SetModeLightDark+ansi.RequestBackgroundColor,
-		raw.Msg,
-	)
+	require.Len(t, batch, 2)
+	raw, ok := batch[0]().(tea.RawMsg)
+	require.True(t, ok)
+	require.Equal(t, ansi.SetModeLightDark, raw.Msg)
+	require.Equal(t, tea.RequestBackgroundColor(), batch[1]())
 
 	for _, message := range []tea.Msg{
 		uv.DarkColorSchemeEvent{},
@@ -2565,46 +2630,45 @@ func TestRejectedRigidDropsDoNotPoisonUndo(t *testing.T) {
 	require.Equal(t, initial, model.geo.Nodes[left].Rect.Min)
 }
 
-func TestPreferenceShortcutStyleUpdatesLiveRestoresAndPersists(t *testing.T) {
+func TestPreferenceKeybindsUpdateLiveRestoreAndPersist(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
 	path := filepath.Join(t.TempDir(), "config.json")
 	model.settingsStore = settings.NewStore(path)
+	baseline := model.preferences.baseline
 	model.openPreferences()
-	for range 8 {
-		model.updateDialog(keyPress(tea.KeyDown, ""))
-	}
-	model.updateDialog(keyPress(tea.KeyLeft, ""))
-	require.Equal(t, chrome.ProfileMac, model.preferences.draft.KeyProfile)
+	draft := model.preferences.draft
+	setPreferenceMappings(&draft, scopeGlobal, commandSave, "alt+s")
+	setPreferenceMappings(&draft, scopeGlobal, commandSidebar, "alt+b")
+	model.previewPreferences(draft)
 	chord, ok := model.bindings.ChordFor(scopeGlobal, commandSave)
 	require.True(t, ok)
-	require.Equal(t, chrome.Chord("super+s"), chord)
-	require.Contains(t, model.sidebar.declaration.Footer, "cmd+b")
+	require.Equal(t, chrome.Chord("alt+s"), chord)
+	require.Contains(t, model.sidebar.declaration.Footer, "alt+b")
 
 	model.cancelPreferences()
-	require.Equal(t, chrome.ProfileStandard, model.preferences.baseline.KeyProfile)
+	require.Equal(t, baseline, model.preferences.baseline)
 	chord, ok = model.bindings.ChordFor(scopeGlobal, commandSave)
 	require.True(t, ok)
-	require.Equal(t, chrome.Chord("ctrl+s"), chord)
-	require.Contains(t, model.sidebar.declaration.Footer, "ctrl+b")
+	baselineSave, _ := findKeybindValue(baseline.Keybinds, scopeGlobal, commandSave)
+	require.Equal(t, baselineSave.Mappings[0], chord)
 
 	model.openPreferences()
-	for range 8 {
-		model.updateDialog(keyPress(tea.KeyDown, ""))
-	}
-	model.updateDialog(keyPress(tea.KeyLeft, ""))
+	draft = model.preferences.draft
+	setPreferenceMappings(&draft, scopeGlobal, commandSave, "alt+s")
+	model.previewPreferences(draft)
 	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
 	model.updateDialog(keyPress(tea.KeyRight, ""))
 	darkTint := model.preferences.draft.DarkTint
 	require.NotNil(t, model.savePreferences(preferenceSaveMsg{
-		Value:        model.dialogs.preferences.model.Value(),
-		SaveDefaults: true,
+		Value: model.dialogs.preferences.model.Value(),
 	}))
 
 	snapshot, err := model.settingsStore.Load()
 	require.NoError(t, err)
-	require.Equal(t, settings.ShortcutMac, snapshot.ShortcutStyle)
+	saved := settingsMapping(snapshot.Keybinds, scopeGlobal, commandSave)
+	require.Equal(t, []string{"alt+s"}, saved)
 	require.Equal(t, darkTint, snapshot.DarkTint)
 	require.Equal(t, model.preferences.baseline, model.preferences.draft)
 	require.Equal(t, darkTint, model.preferences.baseline.DarkTint)
@@ -2619,8 +2683,7 @@ func TestPreferencesSaveShowsNotice(t *testing.T) {
 	model.openPreferences()
 
 	command := model.savePreferences(preferenceSaveMsg{
-		Value:        model.dialogs.preferences.model.Value(),
-		SaveDefaults: true,
+		Value: model.dialogs.preferences.model.Value(),
 	})
 
 	require.NotNil(t, command)
@@ -2637,6 +2700,7 @@ func TestPreferencePersistenceFailureKeepsDraftOpen(t *testing.T) {
 	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
 	model.settingsStore = settings.NewStore(filepath.Join(blocker, "config.json"))
 	model.openPreferences()
+	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	before := model.geo.Router()
 	model.updateDialog(keyPress(tea.KeyRight, ""))
 	require.True(t, model.dialogs.preferences.model.Focus("dark-tint"))
@@ -2646,8 +2710,7 @@ func TestPreferencePersistenceFailureKeepsDraftOpen(t *testing.T) {
 	require.Equal(t, draft.DarkTint, model.theme.TintID)
 
 	command := model.savePreferences(preferenceSaveMsg{
-		Value:        draft,
-		SaveDefaults: true,
+		Value: draft,
 	})
 
 	require.Nil(t, command)
@@ -2678,22 +2741,21 @@ func TestPreferencePersistenceFailurePermitsRetry(t *testing.T) {
 	draft := model.preferences.draft
 
 	require.Nil(t, model.savePreferences(preferenceSaveMsg{
-		Value:        draft,
-		SaveDefaults: true,
+		Value: draft,
 	}))
 	require.True(t, model.interaction.transaction.open())
 
 	path := filepath.Join(t.TempDir(), "config.json")
 	model.settingsStore = settings.NewStore(path)
 	command := model.savePreferences(preferenceSaveMsg{
-		Value:        draft,
-		SaveDefaults: true,
+		Value: draft,
 	})
 
 	require.NotNil(t, command)
 	require.False(t, model.preferenceEdit)
 	require.False(t, model.interaction.transaction.open())
 	require.Equal(t, draft, model.preferences.baseline)
+	require.Equal(t, draft.Router, model.preferences.defaultRouter)
 	require.Equal(t, draft.DarkTint, model.theme.TintID)
 	snapshot, err := model.settingsStore.Load()
 	require.NoError(t, err)
@@ -3347,6 +3409,47 @@ func TestModelLineToolDoesNotReconnectSelectedEdge(t *testing.T) {
 	require.True(t, model.geo.EdgeExists(edgeID))
 }
 
+func TestCompletedLineRemainsSelectedAndEditable(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	source := portExiting(t, model, left, 1)
+	destination := portExiting(t, model, right, -1)
+	model.interaction.tool = toolConnect
+	model.interaction.session = interactionSession{
+		kind: sessionConnection,
+		connection: connectionSession{
+			source: source,
+		},
+	}
+
+	model.completeConnectionTo(destination)
+
+	edge := model.target
+	require.Equal(t, layout.HitEdge, edge.Kind)
+	require.True(t, model.geo.Selection().Contains(edge))
+	require.Equal(t, toolConnect, model.interaction.tool)
+	require.Equal(t, sessionNone, model.interaction.session.kind)
+	require.True(t, model.canvasCommandAvailable(commandDashed))
+	require.True(t, model.canvasCommandAvailable(commandArrowEnd))
+	require.True(t, model.canvasCommandAvailable(commandDelete))
+
+	updateModel(t, model, keyPress('-', "-"))
+	require.Equal(t, layout.StrokeDashed, mustEdgeStyle(t, model, edge.ID).Stroke)
+	require.Equal(t, toolConnect, model.interaction.tool)
+	require.Equal(t, dragFromSource, model.status)
+
+	updateModel(t, model, keyPress('a', "a"))
+	require.Equal(t, layout.ArrowFilled, mustEdgeStyle(t, model, edge.ID).PortBArrow)
+	require.Equal(t, toolConnect, model.interaction.tool)
+	require.Equal(t, dragFromSource, model.status)
+
+	updateModel(t, model, keyPress(tea.KeyBackspace, ""))
+	require.False(t, model.geo.EdgeExists(edge.ID))
+	require.Equal(t, toolConnect, model.interaction.tool)
+	require.Equal(t, dragFromSource, model.status)
+}
+
 func TestModelMouseDragsNearbyEdgeEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -3595,8 +3698,6 @@ func TestKeyboardEnhancementsAdvertiseMacVocabulary(t *testing.T) {
 
 	model, nodeID := newTestModel(t)
 	model.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
-	model.preferences.baseline.KeyProfile = chrome.ProfileMac
-	model.bindings.SetProfile(chrome.ProfileMac)
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
 	model.openHelp()
 	require.False(t, slices.ContainsFunc(
@@ -3760,11 +3861,11 @@ func TestModelNamingDraftDoesNotTreatWatchedRenameAsExternal(t *testing.T) {
 		return !event.Closed
 	})
 
-	model.saveFromDialog(saveDocumentMsg{Name: "Canvas"})
+	model.saveFromDialog(saveDocumentMsg{Name: testCanvasName})
 	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 	event := receiveModelCatalogEvent(t, events, func(event canvasstore.CatalogEvent) bool {
 		for _, change := range event.Changes {
-			if change.Kind == canvasstore.ChangeAdded && change.Entry.Name == "Canvas" {
+			if change.Kind == canvasstore.ChangeAdded && change.Entry.Name == testCanvasName {
 				return true
 			}
 		}
@@ -4696,11 +4797,40 @@ func mustLayoutWithLabel(t testing.TB, label string) *layout.Layout {
 
 func testModelSettings() Option {
 	return func(options *modelOptions) {
-		WithSettings(settings.Snapshot{
-			ShortcutStyle: settings.ShortcutStandard,
-		}, nil)(options)
+		WithSettings(settings.Snapshot{}, nil)(options)
 		options.sidebarInitiallyClosed = true
 	}
+}
+
+func setPreferenceMappings(
+	value *preferenceDialogValue,
+	scope chrome.ScopeID,
+	command chrome.CommandID,
+	mappings ...string,
+) {
+	for i := range value.Keybinds {
+		if value.Keybinds[i].Scope != scope || value.Keybinds[i].Command != command {
+			continue
+		}
+		value.Keybinds[i].Mappings = [3]chrome.Chord{}
+		for j, mapping := range mappings[:min(len(mappings), 3)] {
+			value.Keybinds[i].Mappings[j] = chrome.NormalizeChord(mapping)
+		}
+		return
+	}
+}
+
+func settingsMapping(
+	keybinds []settings.Keybind,
+	scope chrome.ScopeID,
+	command chrome.CommandID,
+) []string {
+	for _, keybind := range keybinds {
+		if keybind.Scope == string(scope) && keybind.Action == string(command) {
+			return keybind.Mappings
+		}
+	}
+	return nil
 }
 
 func findEffectiveBinding(
@@ -4877,6 +5007,26 @@ func modalTextPoint(
 	}
 	require.Fail(t, "modal text not rendered", text)
 	return 0, 0
+}
+
+func modalLastTextPoint(
+	t testing.TB,
+	overlay modalview.Overlay,
+	text string,
+) (x, y int) {
+	t.Helper()
+
+	found := false
+	for row, line := range strings.Split(ansi.Strip(overlay.Content), "\n") {
+		column := strings.LastIndex(line, text)
+		if column >= 0 {
+			x = overlay.Left + ansi.StringWidth(line[:column]) + 1
+			y = overlay.Top + row
+			found = true
+		}
+	}
+	require.True(t, found, "modal text not rendered: %s", text)
+	return x, y
 }
 
 func updateModel(t testing.TB, model *Model, message tea.Msg) {

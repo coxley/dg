@@ -16,31 +16,18 @@ const (
 	tabChord    = "tab"
 )
 
-func TestApplicationPrimaryBindingsFollowShortcutStyle(t *testing.T) {
+func TestApplicationPrimaryBindingsIncludeControlAndCommand(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		profile chrome.KeyProfile
-		prefix  string
-	}{
-		{name: "standard", profile: chrome.ProfileStandard, prefix: "ctrl+"},
-		{name: "mac", profile: chrome.ProfileMac, prefix: "super+"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+	resolver, err := chrome.NewResolver(applicationBindings)
+	require.NoError(t, err)
+	resolver.SetKeyDisambiguation(true)
 
-			resolver, err := chrome.NewResolver(applicationBindings)
-			require.NoError(t, err)
-			resolver.SetProfile(test.profile)
-			resolver.SetKeyDisambiguation(true)
-
-			requirePrimaryBinding(t, resolver, scopeGlobal, commandSave, test.prefix+"s")
-			requirePrimaryBinding(t, resolver, scopeGlobal, commandPreferences, test.prefix+"p")
-			requirePrimaryBinding(t, resolver, scopeGlobal, commandSidebar, test.prefix+"b")
-			requirePrimaryBinding(t, resolver, scopeCanvas, commandExpand, test.prefix+"a")
-		})
+	for _, prefix := range []string{"ctrl+", "super+"} {
+		requirePrimaryBinding(t, resolver, scopeGlobal, commandSave, prefix+"s")
+		requirePrimaryBinding(t, resolver, scopeGlobal, commandPreferences, prefix+"p")
+		requirePrimaryBinding(t, resolver, scopeGlobal, commandSidebar, prefix+"b")
+		requirePrimaryBinding(t, resolver, scopeCanvas, commandExpand, prefix+"a")
 	}
 }
 

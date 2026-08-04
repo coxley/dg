@@ -13,7 +13,7 @@ form geometry and traversal, and `directorypicker` owns filesystem navigation.
   decides when to persist a completed value.
 - Commands from chrome and the picker return as `UpdateMsg`; route those
   messages back to `Model.Update`.
-- `Completed` reports Save, Save as Defaults, or Cancel.
+- `Completed` reports Save or Cancel.
 - A zero height hugs declared content. Positive heights constrain the form and
   let its retained plan reveal the focused control.
 - Preference rows justify titles against the left edge and controls against
@@ -28,7 +28,7 @@ form geometry and traversal, and `directorypicker` owns filesystem navigation.
 - The directory picker stays collapsed until Right, `l`, or Enter opens its
   zoomed subview. Escape or `q` closes that subview before it closes the modal.
 - Enter on any other preference field submits Save. Focused actions still
-  submit their own Save, Save as Defaults, or Cancel behavior.
+  submit their own Save or Cancel behavior.
 - Do not add filesystem-picker or generic form geometry back to the preference
   declaration.
 

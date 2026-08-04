@@ -70,19 +70,20 @@ func (m mode) String() string {
 
 // Model coordinates terminal interaction with a layout.
 type Model struct {
-	geo         *layout.Layout
-	history     *history.History
-	document    document.Document
-	canvasStore *canvasstore.Store
-	entry       *canvasstore.Entry
-	catalog     []canvasstore.Entry
-	catalogFeed <-chan canvasstore.CatalogEvent
-	cancelWatch context.CancelFunc
-	devReload   devReloadState
-	externalDoc document.Document
-	external    *externalConflict
-	windowTitle string
-	theme       Theme
+	geo          *layout.Layout
+	history      *history.History
+	document     document.Document
+	canvasStore  *canvasstore.Store
+	entry        *canvasstore.Entry
+	catalog      []canvasstore.Entry
+	catalogFeed  <-chan canvasstore.CatalogEvent
+	cancelWatch  context.CancelFunc
+	devReload    devReloadState
+	externalDoc  document.Document
+	external     *externalConflict
+	windowTitle  string
+	theme        Theme
+	terminalDark bool
 
 	cursor      layout.Point
 	viewport    layout.Point
@@ -129,6 +130,7 @@ type Model struct {
 	settingsStore  *settings.Store
 	preferenceEdit bool
 	helpInspector  helpInspector
+	updateNotice   updateState
 
 	nodeStyle layout.NodeStyle
 	edgeStyle layout.EdgeStyle
@@ -239,6 +241,7 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 		geo:           geo,
 		history:       configured.history,
 		theme:         DefaultTheme(true),
+		terminalDark:  true,
 		styledRuns:    make(map[styledRunKey]string),
 		settingsStore: configured.settingsStore,
 		canvasStore:   configured.canvasStore,
@@ -252,7 +255,9 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	}
 	m.syncWindowTitle()
 	m.helpInspector = newHelpInspector(m.theme.Help)
-	resolver, err := chrome.NewResolver(applicationBindings)
+	m.updateNotice.setStyles(m.theme.Update)
+	bindings := configuredBindings(configured.settings)
+	resolver, err := chrome.NewResolver(bindings)
 	if err != nil {
 		return nil, fmt.Errorf("configure bindings: %w", err)
 	}
@@ -361,13 +366,11 @@ func resetLiveTint(writer io.Writer) error {
 
 func (m *Model) Init() tea.Cmd {
 	defer m.retainPanic()
-	raw := tea.Raw(ansi.SetModeLightDark + ansi.RequestBackgroundColor)
+	raw := tea.Raw(ansi.SetModeLightDark)
 	watchCatalog := m.startCatalogWatch()
 	watchReload := m.startDevReloadWatch()
-	if watchCatalog == nil && watchReload == nil {
-		return raw
-	}
-	return tea.Batch(raw, watchCatalog, watchReload)
+	checkUpdate := checkForUpdate()
+	return tea.Batch(raw, requestBackgroundColor(), watchCatalog, watchReload, checkUpdate)
 }
 
 func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
@@ -392,9 +395,10 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 	switch message := message.(type) {
 	case tea.BackgroundColorMsg:
 		syncWorkspace = true
+		m.terminalDark = message.IsDark()
 		preferences := m.preferenceValue()
 		m.applyTheme(themeForTints(
-			message.IsDark(),
+			m.preferredDark(preferences.Theme),
 			preferences.DarkTint,
 			preferences.LightTint,
 		))
@@ -468,6 +472,7 @@ func (m *Model) applyTheme(theme Theme) {
 	m.canvas.SetStyles(theme.Canvas)
 	m.helpInspector.setStyles(theme.Help)
 	m.sidebar.setStyles(theme.Sidebar)
+	m.updateNotice.setStyles(theme.Update)
 	clear(m.styledRuns)
 }
 
@@ -482,7 +487,8 @@ func (m *Model) workspaceNeedsSync() bool {
 		m.dialogs.ActiveID() != surfaceNone ||
 		m.sidebar.open ||
 		m.workspace.SurfaceMoving(surfaceSidebar) ||
-		m.workspace.SurfacePosition(surfaceSidebar) != 0
+		m.workspace.SurfacePosition(surfaceSidebar) != 0 ||
+		m.updateNotice.visible()
 }
 
 func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
@@ -500,6 +506,9 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 		return nil, true
 	case modalview.CloseMsg:
 		return m.dismissDialog(), true
+	case modalview.SwitchTabMsg:
+		m.dialogs.SwitchTab(message.ID)
+		return nil, true
 	case clipboardview.OpenExportMsg:
 		m.dialogs.OpenExport()
 		m.status = ""
@@ -513,6 +522,18 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 		return m.showNotice("Copied to clipboard", surfaceNone), true
 	case clipboardview.ErrorMsg:
 		m.setError("copy selection: " + message.Err.Error())
+		return nil, true
+	case updateAvailableMsg:
+		m.updateNotice.show(message)
+		return nil, true
+	case updateInstallFinishedMsg:
+		m.updateNotice.installing = false
+		if message.err != nil {
+			m.setError("install update: " + message.err.Error())
+			return nil, true
+		}
+		m.updateNotice.dismiss()
+		m.status = "Update installed; restart dg to use it"
 		return nil, true
 	default:
 		return nil, false
@@ -612,6 +633,21 @@ func (m *Model) updateMouseWheelMessage(message tea.MouseWheelMsg) tea.Cmd {
 }
 
 func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
+	if m.updateNotice.focused {
+		switch message.Code {
+		case tea.KeyBackspace, tea.KeyDelete:
+			m.updateNotice.dismiss()
+			return nil
+		case tea.KeyEnter:
+			return m.updateNotice.install()
+		case tea.KeyEscape:
+			m.updateNotice.blur()
+			return nil
+		}
+	}
+	if m.dialogs.CapturesKey() {
+		return m.updateDialog(message)
+	}
 	copyKey := m.bindings.MatchesKey(message, commandCopy)
 	if m.dialogs.DismissAnyKey() {
 		returnTo := m.dialogs.notice.ReturnTo()
@@ -1074,7 +1110,8 @@ func (m *Model) completeConnectionTo(destination uint32) {
 }
 
 func (m *Model) deleteActive() {
-	if !m.interaction.idle() {
+	continueLineTool := m.lineToolEdgeEditReady()
+	if !m.interaction.idle() && !continueLineTool {
 		m.setError(finishOperation)
 		return
 	}
@@ -1124,12 +1161,22 @@ func (m *Model) deleteActive() {
 		return
 	}
 	m.interaction.tool = toolNavigate
+	if continueLineTool {
+		m.interaction.tool = toolConnect
+	}
 	m.interaction.session = interactionSession{}
 	m.target = layout.Hit{}
 	m.interaction.resetGesture()
 	m.clearSelection()
 	m.refreshHits()
+	m.restoreToolStatus()
+}
+
+func (m *Model) restoreToolStatus() {
 	m.status = ""
+	if m.interaction.tool == toolConnect {
+		m.status = dragFromSource
+	}
 }
 
 func (m *Model) cancelMode() {

@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // TabID identifies modal content without coupling it to a parent model.
@@ -37,6 +38,7 @@ type Styles struct {
 	Notice          lipgloss.Style
 	NoticeText      lipgloss.Style
 	Body            lipgloss.Style
+	Tabs            lipgloss.Style
 	Tab             lipgloss.Style
 	HoveredTab      lipgloss.Style
 	ActiveTab       lipgloss.Style
@@ -90,10 +92,11 @@ func Close() tea.Cmd {
 
 // Model owns modal styles, geometry, position, pointer interaction, and tabs.
 type Model struct {
-	styles Styles
-	normal geometry
-	notice geometry
-	body   geometry
+	styles    Styles
+	normal    geometry
+	notice    geometry
+	body      geometry
+	tabHeader geometry
 
 	screenWidth  int
 	screenHeight int
@@ -145,6 +148,7 @@ func (m *Model) SetStyles(styles Styles) {
 	m.normal = measure(styles.Container)
 	m.notice = measure(styles.Notice)
 	m.body = measure(styles.Body)
+	m.tabHeader = measure(styles.Tabs)
 }
 
 // Configure supplies parent-owned content and available terminal geometry.
@@ -278,10 +282,8 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 		if message.Button != tea.MouseLeft {
 			return m, nil
 		}
-		if message.Y == m.overlay.ContentTop {
-			if id, ok := m.tabAt(message.X); ok {
-				return m, SwitchTab(id)
-			}
+		if id, ok := m.tabAt(message.X, message.Y); ok {
+			return m, SwitchTab(id)
 		}
 		if !m.fullscreen && (message.Y == m.overlay.Top ||
 			!m.cellOccupied(message.X, message.Y)) {
@@ -292,9 +294,7 @@ func (m Model) Update(message tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseMotionMsg:
 		var hoveredTab TabID
 		tabHovered := false
-		if message.Y == m.overlay.ContentTop {
-			hoveredTab, tabHovered = m.tabAt(message.X)
-		}
+		hoveredTab, tabHovered = m.tabAt(message.X, message.Y)
 		if m.tabHovered != tabHovered || tabHovered && m.hoveredTab != hoveredTab {
 			m.hoveredTab = hoveredTab
 			m.tabHovered = tabHovered
@@ -461,7 +461,8 @@ func resizeAxis(point, fixed int, positive bool, minimum int) (origin, size int)
 
 func (m Model) tabsView() string {
 	rendered := make([]string, 0, len(m.tabs))
-	for _, tab := range m.tabs {
+	widths := m.tabWidths()
+	for i, tab := range m.tabs {
 		style := m.styles.Tab
 		switch {
 		case tab.ID == m.activeTab:
@@ -469,28 +470,47 @@ func (m Model) tabsView() string {
 		case m.tabHovered && tab.ID == m.hoveredTab:
 			style = m.styles.HoveredTab
 		}
-		rendered = append(rendered, style.Render(tab.Label))
+		contentWidth := max(widths[i]-style.GetHorizontalFrameSize(), 0)
+		line := style.Width(contentWidth).Align(lipgloss.Center).Render(tab.Label)
+		line = ansi.Truncate(line, widths[i], "")
+		rendered = append(rendered, line+strings.Repeat(" ", max(widths[i]-ansi.StringWidth(line), 0)))
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
+	width := max(m.width-m.normal.frameWidth, 0)
+	return m.styles.Tabs.
+		Width(width).
+		MaxWidth(width).
+		Render(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
 }
 
-func (m Model) tabAt(x int) (TabID, bool) {
-	x -= m.overlay.ContentLeft
-	for _, tab := range m.tabs {
-		style := m.styles.Tab
-		switch {
-		case tab.ID == m.activeTab:
-			style = m.styles.ActiveTab
-		case m.tabHovered && tab.ID == m.hoveredTab:
-			style = m.styles.HoveredTab
-		}
-		width := lipgloss.Width(style.Render(tab.Label))
+func (m Model) tabAt(x, y int) (TabID, bool) {
+	height := lipgloss.Height(m.tabsView())
+	if y < m.overlay.ContentTop || y >= m.overlay.ContentTop+height {
+		return 0, false
+	}
+	x -= m.overlay.ContentLeft + m.tabHeader.contentLeft
+	widths := m.tabWidths()
+	for i, tab := range m.tabs {
+		width := widths[i]
 		if x >= 0 && x < width {
 			return tab.ID, true
 		}
 		x -= width
 	}
 	return 0, false
+}
+
+func (m Model) tabWidths() []int {
+	widths := make([]int, len(m.tabs))
+	if len(widths) == 0 {
+		return widths
+	}
+	width := max(m.width-m.normal.frameWidth-m.tabHeader.frameWidth, 0)
+	base := width / len(widths)
+	for i := range widths {
+		widths[i] = base
+	}
+	widths[len(widths)-1] += width - base*len(widths)
+	return widths
 }
 
 func (m Model) cellOccupied(x, y int) bool {

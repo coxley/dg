@@ -60,10 +60,9 @@ type devHelp struct {
 }
 
 type devPreferences struct {
-	Baseline      preferenceDialogValue `json:"baseline"`
-	Draft         preferenceDialogValue `json:"draft"`
-	ApplyToFuture bool                  `json:"apply_to_future,omitempty"`
-	FocusedID     chrome.ID             `json:"focused_id,omitempty"`
+	Baseline  preferenceDialogValue `json:"baseline"`
+	Draft     preferenceDialogValue `json:"draft"`
+	FocusedID chrome.ID             `json:"focused_id,omitempty"`
 }
 
 // ConsumeDevSession decodes and removes the handoff at path.
@@ -147,10 +146,9 @@ func (m *Model) captureDevSession() DevSession {
 	}
 	if m.dialogs.ActiveID() == surfacePreferences {
 		session.Preferences = &devPreferences{
-			Baseline:      m.preferences.baseline,
-			Draft:         m.preferences.draft,
-			ApplyToFuture: m.preferences.applyToFuture,
-			FocusedID:     m.dialogs.preferences.model.FocusID(),
+			Baseline:  m.preferences.baseline,
+			Draft:     m.preferences.draft,
+			FocusedID: m.dialogs.preferences.model.FocusID(),
 		}
 	}
 	return session
@@ -239,7 +237,6 @@ func (m *Model) restoreDevSession(session DevSession) {
 		preferences := session.Preferences
 		m.preferences.baseline = preferences.Baseline
 		m.preferences.draft = preferences.Baseline
-		m.preferences.applyToFuture = preferences.ApplyToFuture
 		m.openPreferences()
 		m.dialogs.preferences.Reset(preferences.Draft)
 		m.previewPreferences(preferences.Draft)

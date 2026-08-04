@@ -914,14 +914,17 @@ func TestSidebarFooterUsesShortcutVocabulary(t *testing.T) {
 	t.Parallel()
 
 	model, _ := newTestModel(t)
-	model.preferences.baseline.KeyProfile = chrome.ProfileMac
-	model.bindings.SetProfile(chrome.ProfileMac)
+	value := model.preferences.baseline
+	setPreferenceMappings(&value, scopeGlobal, commandSidebar, "super+b")
+	model.preferences.baseline = value
+	model.bindings.SetBindings(bindingsFromValues(value.Keybinds))
 	model.syncSidebarShortcut()
-	require.Contains(t, model.sidebar.declaration.Footer, "cmd+b")
-	require.NotContains(t, model.sidebar.declaration.Footer, "super+b")
+	displayed := chrome.DisplayChord("super+b", chrome.VocabularyForProfile(chrome.ProfileAuto))
+	require.Contains(t, model.sidebar.declaration.Footer, displayed)
 
-	model.preferences.baseline.KeyProfile = chrome.ProfileStandard
-	model.bindings.SetProfile(chrome.ProfileStandard)
+	setPreferenceMappings(&value, scopeGlobal, commandSidebar, "ctrl+b")
+	model.preferences.baseline = value
+	model.bindings.SetBindings(bindingsFromValues(value.Keybinds))
 	model.syncSidebarShortcut()
 	require.Contains(t, model.sidebar.declaration.Footer, "ctrl+b")
 }

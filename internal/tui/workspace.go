@@ -2,6 +2,7 @@ package tui
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/coxley/dg/internal/tui/chrome"
 	modalview "github.com/coxley/dg/internal/tui/modal"
 )
@@ -10,6 +11,7 @@ const (
 	surfaceCanvas       chrome.SurfaceID = "canvas"
 	surfaceNavigation   chrome.SurfaceID = "navigation"
 	surfaceHelp         chrome.SurfaceID = "help"
+	surfaceUpdate       chrome.SurfaceID = "update"
 	surfaceSidebar      chrome.SurfaceID = "sidebar"
 	surfaceNone         chrome.SurfaceID = ""
 	surfacePreferences  chrome.SurfaceID = "preferences-dialog"
@@ -25,6 +27,7 @@ const (
 	surfacePriorityNavigation = 10
 	surfacePriorityDrawer     = 15
 	surfacePriorityHelp       = 20
+	surfacePriorityUpdate     = 25
 	surfacePriorityModal      = 30
 )
 
@@ -36,7 +39,10 @@ func (m *Model) syncWorkspace() {
 		m.height,
 		m.nav.Bounds().Bottom(),
 	)
-	surfaces := make([]chrome.Surface, 0, 4+len(dialogSpecs))
+	updateView := m.updateNotice.view()
+	updateWidth := lipgloss.Width(updateView)
+	updateHeight := lipgloss.Height(updateView)
+	surfaces := make([]chrome.Surface, 0, 5+len(dialogSpecs))
 	surfaces = append(
 		surfaces,
 		chrome.Surface{
@@ -69,6 +75,18 @@ func (m *Model) syncWorkspace() {
 			Visible:   m.nav.Bounds().Width != 0,
 		},
 		m.helpInspector.declaration(plan.Main),
+		chrome.Surface{
+			ID:       surfaceUpdate,
+			Role:     chrome.SurfaceFloating,
+			Anchor:   chrome.AnchorTerminal,
+			Priority: surfacePriorityUpdate,
+			Requested: chrome.Rect{
+				X:      max(m.width-updateWidth, 0),
+				Width:  updateWidth,
+				Height: updateHeight,
+			},
+			Visible: m.updateNotice.visible(),
+		},
 	)
 	for _, spec := range dialogSpecs {
 		surfaces = append(surfaces, chrome.Surface{
@@ -95,7 +113,7 @@ func (m *Model) syncWorkspace() {
 			help.Rect,
 			m.helpContext(),
 			m.contextualHelpBindings(),
-			chrome.VocabularyForProfile(m.preferenceValue().KeyProfile),
+			chrome.VocabularyForProfile(chrome.ProfileAuto),
 		)
 	}
 }
@@ -140,6 +158,9 @@ func (m *Model) dismissSurface(id chrome.SurfaceID) tea.Cmd {
 }
 
 func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
+	if m.updateNotice.focused {
+		m.updateNotice.blur()
+	}
 	point := chrome.Point{X: message.X, Y: message.Y}
 	if id, ok := m.workspace.DismissAt(point); ok {
 		return m.dismissSurface(id)
@@ -152,6 +173,10 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 		return nil
 	}
 	switch id {
+	case surfaceUpdate:
+		if message.Button == tea.MouseLeft {
+			m.updateNotice.focus()
+		}
 	case surfaceCanvas:
 		if m.sidebar.placement == sidebarDocked {
 			m.sidebar.blur()

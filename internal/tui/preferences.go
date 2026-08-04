@@ -7,13 +7,13 @@ import (
 	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui/chrome"
 	preferencesview "github.com/coxley/dg/internal/tui/preferences"
+	"github.com/coxley/dg/layout"
 )
 
 type preferenceState struct {
-	baseline              preferenceDialogValue
-	draft                 preferenceDialogValue
-	applyToFuture         bool
-	baselineApplyToFuture bool
+	baseline      preferenceDialogValue
+	draft         preferenceDialogValue
+	defaultRouter layout.Router
 }
 
 type preferenceDialogValue = preferencesview.Value
@@ -23,8 +23,7 @@ type preferencePreviewMsg struct {
 }
 
 type preferenceSaveMsg struct {
-	Value        preferenceDialogValue
-	SaveDefaults bool
+	Value preferenceDialogValue
 }
 
 type preferenceCancelMsg struct{}
@@ -51,6 +50,7 @@ func newPreferenceDialogBody(
 			tintOptions(darkTints),
 			tintOptions(lightTints),
 		),
+		preferencesview.WithKeybindActions(keybindActions()),
 	)
 	return body
 }
@@ -82,10 +82,28 @@ func (*preferenceDialogBody) TextEntry() bool {
 	return false
 }
 
+func (b *preferenceDialogBody) CapturesKey() bool {
+	return b.model.CapturesKey()
+}
+
+func (b *preferenceDialogBody) PointerOccupied(point chrome.Point) bool {
+	return b.model.PointerOccupied(point.X, point.Y)
+}
+
+func (b *preferenceDialogBody) ActiveTab() preferencesview.Tab {
+	return b.model.ActiveTab()
+}
+
+func (b *preferenceDialogBody) SetTab(tab preferencesview.Tab) {
+	b.model.SetTab(tab)
+}
+
 func (b *preferenceDialogBody) SetBounds(bounds chrome.Rect) {
+	if b.bounds == bounds {
+		return
+	}
 	b.bounds = bounds
-	b.model.SetWidth(bounds.Width)
-	b.model.SetHeight(bounds.Height)
+	b.model.SetBounds(bounds.Width, bounds.Height)
 }
 
 func (b *preferenceDialogBody) Update(message tea.Msg) dialogBodyResult {
@@ -145,19 +163,10 @@ func (b *preferenceDialogBody) update(
 				command: command,
 				handled: true,
 			}
-		case preferencesview.ActionSaveDefaults:
-			return dialogBodyResult{
-				message: preferenceSaveMsg{
-					Value:        b.model.Value(),
-					SaveDefaults: true,
-				},
-				command: command,
-				handled: true,
-			}
 		case preferencesview.ActionNone:
 		}
 	}
-	if value := b.model.Value(); value != before {
+	if value := b.model.Value(); !preferencesview.Equal(value, before) {
 		return dialogBodyResult{
 			message: preferencePreviewMsg{Value: value},
 			command: command,
@@ -165,6 +174,12 @@ func (b *preferenceDialogBody) update(
 		}
 	}
 	return dialogBodyResult{command: command, handled: true}
+}
+
+func (b *preferenceDialogBody) SubmitSave() dialogBodyResult {
+	before := b.model.Value()
+	b.model.SubmitSave()
+	return b.update(nil, before)
 }
 
 func (b *preferenceDialogBody) View() string {
@@ -177,47 +192,30 @@ func (b *preferenceDialogBody) SetStyles(styles preferencesview.Styles) {
 
 func (m *Model) applySettingsSnapshot(snapshot settings.Snapshot) {
 	darkTint, lightTint := normalizeTintIDs(snapshot.DarkTint, snapshot.LightTint)
+	bindings := configuredBindings(snapshot)
 	m.preferences.baseline = preferenceDialogValue{
 		Router:        m.geo.Router(),
 		SaveDirectory: snapshot.SaveDirectory,
 		CommentPrefix: preferencesview.NormalizeCommentPrefix(
 			snapshot.CommentPrefix,
 		),
-		KeyProfile:       keyProfile(snapshot.ShortcutStyle),
+		Theme:            preferencesview.NormalizeTheme(string(snapshot.Theme)),
+		Keybinds:         keybindValues(bindings),
 		OpaqueBackground: snapshot.OpaqueBackground,
 		DarkTint:         darkTint,
 		LightTint:        lightTint,
 	}
 	m.preferences.draft = m.preferences.baseline
-	m.preferences.applyToFuture = snapshot.ApplyToFuture
-	m.bindings.SetProfile(m.preferences.baseline.KeyProfile)
-	m.theme = themeForTints(true, darkTint, lightTint)
-}
-
-func keyProfile(style settings.ShortcutStyle) chrome.KeyProfile {
-	switch style {
-	case settings.ShortcutMac:
-		return chrome.ProfileMac
-	case settings.ShortcutStandard:
-		return chrome.ProfileStandard
-	case settings.ShortcutAuto, "":
-		return chrome.ProfileAuto
-	default:
-		return chrome.ProfileAuto
+	m.preferences.defaultRouter = snapshot.Router
+	if m.preferences.defaultRouter == (layout.Router{}) {
+		m.preferences.defaultRouter = layout.DefaultRouter()
 	}
-}
-
-func shortcutStyle(profile chrome.KeyProfile) settings.ShortcutStyle {
-	switch profile {
-	case chrome.ProfileMac:
-		return settings.ShortcutMac
-	case chrome.ProfileStandard:
-		return settings.ShortcutStandard
-	case chrome.ProfileAuto:
-		return settings.ShortcutAuto
-	default:
-		return settings.ShortcutAuto
-	}
+	m.bindings.SetBindings(bindings)
+	m.theme = themeForTints(
+		m.preferredDark(m.preferences.baseline.Theme),
+		darkTint,
+		lightTint,
+	)
 }
 
 func (m *Model) openHelp() {
@@ -253,7 +251,6 @@ func (m *Model) beginPreferenceEdit() {
 	m.preferenceEdit = true
 	m.preferences.baseline.Router = m.geo.Router()
 	m.preferences.draft = m.preferences.baseline
-	m.preferences.baselineApplyToFuture = m.preferences.applyToFuture
 	m.beginTransaction(transactionPreferences)
 }
 
@@ -267,10 +264,9 @@ func (m *Model) cancelPreferences() {
 			err = errors.Join(err, m.geo.Build())
 		}
 		m.preferences.draft = m.preferences.baseline
-		m.preferences.applyToFuture = m.preferences.baselineApplyToFuture
-		m.bindings.SetProfile(m.preferences.baseline.KeyProfile)
+		m.bindings.SetBindings(bindingsFromValues(m.preferences.baseline.Keybinds))
 		m.applyTheme(themeForTints(
-			m.theme.Dark,
+			m.preferredDark(m.preferences.baseline.Theme),
 			m.preferences.baseline.DarkTint,
 			m.preferences.baseline.LightTint,
 		))
@@ -291,11 +287,16 @@ func (m *Model) previewPreferences(value preferenceDialogValue) {
 	)
 	previous := m.preferences.draft
 	m.preferences.draft = value
-	m.bindings.SetProfile(value.KeyProfile)
+	m.bindings.SetBindings(bindingsFromValues(value.Keybinds))
 	m.syncSidebarShortcut()
-	if value.DarkTint != previous.DarkTint ||
+	if value.Theme != previous.Theme ||
+		value.DarkTint != previous.DarkTint ||
 		value.LightTint != previous.LightTint {
-		m.applyTheme(themeForTints(m.theme.Dark, value.DarkTint, value.LightTint))
+		m.applyTheme(themeForTints(
+			m.preferredDark(value.Theme),
+			value.DarkTint,
+			value.LightTint,
+		))
 	}
 	if value.Router == previous.Router {
 		return
@@ -311,10 +312,10 @@ func (m *Model) savePreferences(message preferenceSaveMsg) tea.Cmd {
 	draft := m.preferences.draft
 	snapshot := settings.Snapshot{
 		Router:           draft.Router,
-		ApplyToFuture:    message.SaveDefaults,
 		SaveDirectory:    draft.SaveDirectory,
 		CommentPrefix:    draft.CommentPrefix,
-		ShortcutStyle:    shortcutStyle(draft.KeyProfile),
+		Theme:            settings.Theme(draft.Theme),
+		Keybinds:         settingsKeybinds(draft.Keybinds),
 		DarkTint:         draft.DarkTint,
 		LightTint:        draft.LightTint,
 		OpaqueBackground: draft.OpaqueBackground,
@@ -328,8 +329,19 @@ func (m *Model) savePreferences(message preferenceSaveMsg) tea.Cmd {
 		return nil
 	}
 	m.preferences.baseline = draft
-	m.preferences.applyToFuture = message.SaveDefaults
+	m.preferences.defaultRouter = draft.Router
 	m.preferenceEdit = false
 	m.status = ""
 	return m.showNotice("Preferences saved", surfaceNone)
+}
+
+func (m *Model) preferredDark(theme string) bool {
+	switch preferencesview.NormalizeTheme(theme) {
+	case preferencesview.ThemeDark:
+		return true
+	case preferencesview.ThemeLight:
+		return false
+	default:
+		return m.terminalDark
+	}
 }

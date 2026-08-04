@@ -33,6 +33,7 @@ type Theme struct {
 	Help          helpStyles
 	Sidebar       sidebarStyles
 	Status        statusStyles
+	Update        updateStyles
 	Preferences   preferencesview.Styles
 	Save          saveStyles
 	ExportForm    chrome.FormStyles
@@ -119,7 +120,11 @@ func convertTint(theme *tint.Tint) Theme {
 		Border(lipgloss.NormalBorder(), true)
 	modal := commonBox
 	noticeModal := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder())
+		Border(lipgloss.RoundedBorder()).
+		Background(focus).
+		Foreground(theme.Fg).
+		BorderBackground(focus).
+		BorderForeground(focus)
 	modalBody := lipgloss.NewStyle().
 		PaddingTop(1)
 
@@ -195,9 +200,11 @@ func convertTint(theme *tint.Tint) Theme {
 		Border(lipgloss.NormalBorder(), false, false, true, false)
 
 	return Theme{
-		Dark:          theme.Dark,
-		TintID:        theme.ID,
-		Background:    lipgloss.NewStyle().Background(background),
+		Dark:   theme.Dark,
+		TintID: theme.ID,
+		Background: lipgloss.NewStyle().
+			Background(background).
+			Foreground(text),
 		CandidateEdge: lipgloss.NewStyle().Foreground(candidate).Bold(true),
 		Canvas: canvasview.Styles{
 			Selection: lipgloss.NewStyle().
@@ -218,9 +225,10 @@ func convertTint(theme *tint.Tint) Theme {
 			Notice:          noticeModal,
 			NoticeText:      plain,
 			Body:            modalBody,
-			Tab:             tab,
-			HoveredTab:      tab,
-			ActiveTab:       tabActive,
+			Tabs:            sidebarTabHeader,
+			Tab:             plain,
+			HoveredTab:      hoverNav,
+			ActiveTab:       activeNav,
 		},
 		Confirmation: modalview.ConfirmationStyles{
 			Title:   helpKey,
@@ -258,9 +266,38 @@ func convertTint(theme *tint.Tint) Theme {
 			Normal: plain,
 			Error:  plain.Foreground(alert),
 		},
+		Update: updateStyles{
+			Normal: plain.Foreground(candidate).
+				Border(lipgloss.RoundedBorder()).Padding(0, 1),
+			Focused: plain.Foreground(candidate).Bold(true).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(candidate).Padding(0, 1),
+		},
 		Preferences: preferencesview.Styles{
 			Form:   form,
 			Picker: picker,
+			Scope:  helpKey.Underline(false),
+			Action: plain,
+			Mapping: preferencesview.MappingPillStyles{
+				Normal: plain.Border(lipgloss.RoundedBorder()).
+					BorderForeground(theme.BrightBlack).Padding(0, 1),
+				Hovered: plain.Border(lipgloss.RoundedBorder()).
+					BorderForeground(text).Padding(0, 1),
+				Focused: plain.Border(lipgloss.RoundedBorder()).
+					Foreground(text).BorderForeground(text).Bold(true).Padding(0, 1),
+				Active: activeControl.Border(lipgloss.RoundedBorder()).
+					BorderForeground(focus).Padding(0, 1),
+				Empty: plain.Border(lipgloss.RoundedBorder()).
+					BorderForeground(theme.BrightBlack).Padding(0, 1),
+				EmptyHovered: plain.Faint(true).Border(lipgloss.RoundedBorder()).
+					BorderForeground(text).Padding(0, 1),
+				Conflict: plain.Foreground(alert).Border(lipgloss.RoundedBorder()).
+					BorderForeground(alert).Padding(0, 1),
+				ConflictHovered: plain.Foreground(alert).Border(lipgloss.RoundedBorder()).
+					BorderForeground(candidate).Padding(0, 1),
+				ConflictFocused: plain.Foreground(alert).Border(lipgloss.RoundedBorder()).
+					BorderForeground(alert).Bold(true).Padding(0, 1),
+			},
 		},
 		Save: saveStyles{
 			Form:   form,

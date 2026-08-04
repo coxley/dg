@@ -44,6 +44,16 @@ func TestThemeFallsBackToRegisteredDefaultTint(t *testing.T) {
 	require.Equal(t, defaultLightTint.ID, light.TintID)
 }
 
+func TestModalTabsMatchSidebarHeaderAndTabs(t *testing.T) {
+	t.Parallel()
+
+	theme := DefaultTheme(true)
+	require.Equal(t, theme.Sidebar.Header, theme.Modal.Tabs)
+	require.Equal(t, theme.Sidebar.Tab, theme.Modal.Tab)
+	require.Equal(t, theme.Sidebar.HoveredTab, theme.Modal.HoveredTab)
+	require.Equal(t, theme.Sidebar.ActiveTab, theme.Modal.ActiveTab)
+}
+
 func TestThemeTintOptionsComeFromIndependentDefaultLists(t *testing.T) {
 	t.Parallel()
 

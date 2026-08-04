@@ -7,6 +7,7 @@ import (
 	"github.com/coxley/dg/internal/tui/chrome"
 	clipboardview "github.com/coxley/dg/internal/tui/clipboard"
 	modalview "github.com/coxley/dg/internal/tui/modal"
+	preferencesview "github.com/coxley/dg/internal/tui/preferences"
 )
 
 const minimumSettingsModalWidth = 84
@@ -25,6 +26,10 @@ type dialogBody interface {
 	SetBounds(chrome.Rect)
 	Update(tea.Msg) dialogBodyResult
 	View() string
+}
+
+type dialogPointerOccupier interface {
+	PointerOccupied(chrome.Point) bool
 }
 
 type dialogClickMsg struct {
@@ -205,6 +210,12 @@ func (d *dialogController) configure(
 	content string,
 	spec dialogSpec,
 ) {
+	var tabs []modalview.Tab
+	var active modalview.TabID
+	if spec.ID == surfacePreferences {
+		tabs = preferenceTabs()
+		active = modalview.TabID(d.preferences.ActiveTab())
+	}
 	d.shell.Configure(
 		screenWidth,
 		screenHeight,
@@ -212,9 +223,17 @@ func (d *dialogController) configure(
 		width,
 		strings.TrimSuffix(content, "\n"),
 		spec.Variant,
-		nil,
-		0,
+		tabs,
+		active,
 	)
+}
+
+func preferenceTabs() []modalview.Tab {
+	return []modalview.Tab{
+		{ID: modalview.TabID(preferencesview.GeneralTab), Label: "General"},
+		{ID: modalview.TabID(preferencesview.KeybindsTab), Label: "Keybinds"},
+		{ID: modalview.TabID(preferencesview.LinkRoutingTab), Label: "Link Routing"},
+	}
 }
 
 func (d *dialogController) Overlay() modalview.Overlay {
@@ -254,6 +273,18 @@ func (d *dialogController) TextEntry() bool {
 	return false
 }
 
+func (d *dialogController) CapturesKey() bool {
+	return d.active == surfacePreferences && d.preferences.CapturesKey()
+}
+
+func (d *dialogController) SwitchTab(id modalview.TabID) {
+	if d.active != surfacePreferences {
+		return
+	}
+	d.shell, _ = d.shell.Update(modalview.SwitchTabMsg{ID: id})
+	d.preferences.SetTab(preferencesview.Tab(id))
+}
+
 func (d *dialogController) DismissAnyKey() bool {
 	spec, ok := d.activeSpec()
 	return ok && spec.DismissAnyKey
@@ -268,16 +299,24 @@ func (d *dialogController) Update(message tea.Msg) dialogBodyResult {
 }
 
 func (d *dialogController) Click(mouse tea.Mouse) dialogBodyResult {
+	point := chrome.Point{
+		X: mouse.X - d.plan.body.X,
+		Y: mouse.Y - d.plan.body.Y,
+	}
+	if occupier, ok := d.activeBody().(dialogPointerOccupier); ok &&
+		mouse.Button == tea.MouseLeft && occupier.PointerOccupied(point) {
+		return d.Update(dialogClickMsg{
+			Point: point,
+			Mouse: localDialogMouse(mouse, d.plan.body),
+		})
+	}
 	var command tea.Cmd
 	d.shell, command = d.shell.Update(tea.MouseClickMsg(mouse))
 	if command != nil || d.shell.CapturesPointer() || mouse.Button != tea.MouseLeft {
 		return dialogBodyResult{command: command, handled: true}
 	}
 	return d.Update(dialogClickMsg{
-		Point: chrome.Point{
-			X: mouse.X - d.plan.body.X,
-			Y: mouse.Y - d.plan.body.Y,
-		},
+		Point: point,
 		Mouse: localDialogMouse(mouse, d.plan.body),
 	})
 }
@@ -310,6 +349,13 @@ func (d *dialogController) SubmitSave() dialogBodyResult {
 		return dialogBodyResult{}
 	}
 	return d.save.Update(chrome.FormSubmitMsg{ID: saveConfirmAction})
+}
+
+func (d *dialogController) SubmitPreferences() dialogBodyResult {
+	if d.active != surfacePreferences {
+		return dialogBodyResult{}
+	}
+	return d.preferences.SubmitSave()
 }
 
 func (d *dialogController) Close() dialogBodyResult {

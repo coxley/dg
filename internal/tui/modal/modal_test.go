@@ -23,7 +23,7 @@ func TestModelSwitchesTabsThroughCommands(t *testing.T) {
 	)
 	overlay := model.Overlay()
 	next, command := model.Update(tea.MouseClickMsg{
-		X:      overlay.ContentLeft + lipgloss.Width(model.styles.ActiveTab.Render(testTabOne)),
+		X:      overlay.ContentLeft + model.tabWidths()[0] + 1,
 		Y:      overlay.ContentTop,
 		Button: tea.MouseLeft,
 	})
@@ -48,8 +48,7 @@ func TestModelRendersHoveredTabAndActiveContainer(t *testing.T) {
 	)
 	overlay := model.Overlay()
 	model, _ = model.Update(tea.MouseMotionMsg{
-		X: overlay.ContentLeft +
-			lipgloss.Width(styles.ActiveTab.Render(testTabOne)),
+		X: overlay.ContentLeft + model.tabWidths()[0] + 1,
 		Y: overlay.ContentTop,
 	})
 	require.Contains(t, model.View(), styles.HoveredTab.Render("Two"))
@@ -304,6 +303,7 @@ func testStyles() Styles {
 		Notice:          lipgloss.NewStyle().Border(lipgloss.RoundedBorder()),
 		NoticeText:      lipgloss.NewStyle(),
 		Body:            lipgloss.NewStyle().PaddingTop(1),
+		Tabs:            lipgloss.NewStyle(),
 		Tab:             tab,
 		HoveredTab:      tab.Underline(true),
 		ActiveTab:       tab.Bold(true),

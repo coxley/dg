@@ -40,6 +40,16 @@ func (m *Model) selectedCounts() (nodes, edges int) {
 	return m.geo.Selection().Counts()
 }
 
+func (m *Model) lineToolEdgeEditReady() bool {
+	if m.interaction.tool != toolConnect ||
+		m.interaction.session.kind != sessionNone ||
+		m.interaction.gesture.kind != gestureNone {
+		return false
+	}
+	nodes, edges := m.selectedCounts()
+	return nodes == 0 && edges != 0
+}
+
 func (m *Model) selectOnly(hit layout.Hit) {
 	m.geo.Selection().SelectOnly(hit)
 	m.refreshSelectionHighlight()

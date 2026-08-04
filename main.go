@@ -166,9 +166,9 @@ func initialCanvas(
 }
 
 func emptyLayoutWithSettings(snapshot settings.Snapshot) (*layout.Layout, error) {
-	var options []layout.Option
-	if snapshot.ApplyToFuture {
-		options = append(options, layout.WithRouter(snapshot.Router))
+	router := snapshot.Router
+	if router == (layout.Router{}) {
+		router = layout.DefaultRouter()
 	}
-	return layout.New(options...)
+	return layout.New(layout.WithRouter(router))
 }

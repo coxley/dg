@@ -79,12 +79,26 @@ func TestPickerRendersInjectedVisualStates(t *testing.T) {
 	_, _ = picker.Update(tea.MouseMotionMsg{X: 2, Y: 3})
 
 	view := picker.View().Content
-	require.Contains(t, view, styles.Title.Render(testTitle))
+	require.Contains(t, view, styles.Title.Render(
+		ansi.Truncate(displayDirectory(directory), 38, ""),
+	))
 	require.Contains(t, view, styles.SelectedItem.Render("> alpha"))
 	require.Contains(t, view, styles.HoveredItem.Render("  beta"))
 	require.True(t, strings.HasPrefix(ansi.Strip(view), "┌"))
 	require.Equal(t, 40, lipgloss.Width(view))
 	require.Equal(t, 8, lipgloss.Height(view))
+}
+
+func TestPickerTitleShowsCurrentDirectoryRelativeToHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	directory := filepath.Join(home, "diagrams")
+	require.NoError(t, os.Mkdir(directory, 0o700))
+	picker := New(Config{Value: directory}, Styles{})
+	picker.SetBounds(40, 8)
+	picker.Open()
+
+	require.Contains(t, ansi.Strip(picker.View().Content), "~/diagrams")
 }
 
 func TestPickerNavigatesAndSelectsDirectories(t *testing.T) {

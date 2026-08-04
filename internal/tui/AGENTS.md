@@ -49,8 +49,8 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - cursor display is limited to label editing
 - left drag moves objects or creates rectangles and lines
 - the rectangle tool returns to Cursor after creation; the line tool remains
-  active for repeated edges, and q returns it to Cursor before a subsequent q
-  quits
+  active and selects each completed edge for immediate styling or deletion,
+  and q returns it to Cursor before a subsequent q quits
 - the line tool always waits for a fresh source drag; selecting a port or edge
   before activation does not seed a connection or reconnect
 - a line press and release snap to the closest usable port within two Manhattan
@@ -141,14 +141,14 @@ The preferences model reports an editable draft; root previews router, shortcut,
 and semantic tint changes and owns the layout history transaction. Cancel,
 close, outside click, or lost focus restores the session baseline. Settings
 persistence succeeds before root commits the layout-backed preview and promotes
-the draft. Numeric fields change only with Left and Right or `h` and `l`, and
+the draft. Link Routing starts from the active canvas; saving applies it to the
+active canvas and stores it as the default for new canvases. Numeric fields change only with Left and Right or `h` and `l`, and
 briefly highlight the pressed arrow. Independent dark and light tint selectors
 follow the terminal background. Terminal background mode leaves the viewport
 unpainted; opaque mode applies the selected tint's background to every visible
 cell through a retained composition buffer. The directory field opens the
-bounded filesystem adapter. Save applies the current form; Save as Defaults
-also enables the persisted router for new diagrams. Growing form spacers anchor
-actions to the body bottom.
+bounded filesystem adapter. Save applies the current form. Growing form spacers
+anchor actions to the body bottom.
 
 Enter submits the primary action from ordinary form fields: Save in
 Preferences, Copy in Export, and Name Canvas in the naming form. Fields with

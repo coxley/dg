@@ -131,11 +131,15 @@ func (r *backgroundRenderer) render(
 	}
 	r.canvas.Compose(lipgloss.NewLayer(content))
 	background := style.GetBackground()
+	foreground := style.GetForeground()
 	for y := range height {
 		for x := range width {
 			cell := r.canvas.CellAt(x, y)
 			if cell.Width != 0 && cell.Style.Bg == nil {
 				cell.Style.Bg = background
+			}
+			if cell.Width != 0 && cell.Style.Fg == nil {
+				cell.Style.Fg = foreground
 			}
 		}
 	}
@@ -175,10 +179,11 @@ func (m *Model) composeSurfaces(content string) string {
 	help, helpVisible := m.surfacePlan(surfaceHelp)
 	sidebar, sidebarVisible := m.surfacePlan(surfaceSidebar)
 	navigation, navigationVisible := m.surfacePlan(surfaceNavigation)
+	update, updateVisible := m.surfacePlan(surfaceUpdate)
 	navigationVisible = navigationVisible &&
 		!rectWithin(navigation.Rect, m.workspace.Geometry().Canvas)
 	overlay := m.dialogs.Overlay()
-	if !helpVisible && !sidebarVisible && !navigationVisible && overlay.Content == "" {
+	if !helpVisible && !sidebarVisible && !navigationVisible && !updateVisible && overlay.Content == "" {
 		return content
 	}
 	layers := []*lipgloss.Layer{lipgloss.NewLayer(content)}
@@ -204,6 +209,13 @@ func (m *Model) composeSurfaces(content string) string {
 			X(help.Rect.X).
 			Y(help.Rect.Y).
 			Z(surfacePriorityHelp))
+	}
+	if updateVisible {
+		layers = append(layers, lipgloss.NewLayer(m.updateNotice.view()).
+			ID(string(surfaceUpdate)).
+			X(update.Rect.X).
+			Y(update.Rect.Y).
+			Z(surfacePriorityUpdate))
 	}
 	if overlay.Content != "" {
 		dialogRect := overlayRect(overlay)

@@ -166,7 +166,7 @@ func (m *Model) cycleTextAlignment(vertical bool) {
 }
 
 func (m *Model) toggleStroke() {
-	if !m.interaction.idle() {
+	if !m.interaction.idle() && !m.lineToolEdgeEditReady() {
 		m.setError(finishOperation)
 		return
 	}
@@ -202,7 +202,7 @@ func (m *Model) toggleStroke() {
 	}
 	m.refreshHits()
 	m.selectTarget()
-	m.status = ""
+	m.restoreToolStatus()
 }
 
 func (m *Model) toggleHitStroke(hit layout.Hit) error {
@@ -244,7 +244,7 @@ func (m *Model) toggleSelectionStroke() error {
 }
 
 func (m *Model) cycleEdgeArrow(portA bool) {
-	if !m.interaction.idle() {
+	if !m.interaction.idle() && !m.lineToolEdgeEditReady() {
 		m.setError(finishOperation)
 		return
 	}
@@ -299,7 +299,7 @@ func (m *Model) cycleEdgeArrow(portA bool) {
 	}
 	m.refreshHits()
 	m.selectTarget()
-	m.status = ""
+	m.restoreToolStatus()
 }
 
 type styleTargetSet struct {

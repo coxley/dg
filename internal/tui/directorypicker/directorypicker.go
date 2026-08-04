@@ -147,6 +147,7 @@ func (m *Model) startDirectory() string {
 
 func (m *Model) load(directory string) {
 	m.hovered = false
+	m.config.Title = displayDirectory(directory)
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		m.err = err.Error()
@@ -165,6 +166,21 @@ func (m *Model) load(directory string) {
 	}
 	m.selected = min(m.selected, max(len(m.entries)-1, 0))
 	m.reveal()
+}
+
+func displayDirectory(directory string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return directory
+	}
+	if directory == home {
+		return "~"
+	}
+	prefix := home + string(filepath.Separator)
+	if strings.HasPrefix(directory, prefix) {
+		return "~" + strings.TrimPrefix(directory, home)
+	}
+	return directory
 }
 
 func directoryEntry(directory string, entry os.DirEntry) bool {

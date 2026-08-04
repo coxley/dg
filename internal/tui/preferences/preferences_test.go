@@ -13,121 +13,231 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestModelUpdatesRouterCost(t *testing.T) {
+const (
+	testCanvasScope   chrome.ScopeID   = "canvas"
+	testGlobalScope   chrome.ScopeID   = "global"
+	testCanvasLabel                    = "Canvas"
+	testConflictChord chrome.Chord     = "ctrl+x"
+	testControlChord                   = "ctrl+p"
+	testLeftCommand   chrome.CommandID = "left"
+)
+
+func TestGeneralFieldsUseRequestedOrderAndTitleCase(t *testing.T) {
 	t.Parallel()
 
-	router := layout.DefaultRouter()
-	model := New(Value{Router: router}, 64, 10, testStyles())
-	next, command := model.Update(keyPress(tea.KeyRight, ""))
+	model := testModel()
+	view := ansi.Strip(model.View().Content)
+	labels := []string{
+		"Theme",
+		"Dark Theme",
+		"Light Theme",
+		"Background",
+		"Comment Style",
+		"Save Directory…",
+	}
+	previous := -1
+	for _, label := range labels {
+		index := strings.Index(view, label)
+		require.Greater(t, index, previous, label)
+		previous = index
+	}
+	require.NotContains(t, view, "Shortcut style")
+	require.NotContains(t, view, "Step Cost")
+}
 
-	require.Same(t, model, next)
+func TestTabsSwitchInRequestedOrder(t *testing.T) {
+	t.Parallel()
+
+	model := testModel()
+	require.Equal(t, GeneralTab, model.ActiveTab())
+
+	_, _ = model.Update(ctrlTab(false))
+	require.Equal(t, KeybindsTab, model.ActiveTab())
+	keybinds := ansi.Strip(model.View().Content)
+	require.Contains(t, keybinds, "Global")
+	require.Contains(t, keybinds, "Open Preferences")
+	require.LessOrEqual(t, lipgloss.Width(model.View().Content), 72)
+
+	_, _ = model.Update(ctrlTab(false))
+	require.Equal(t, LinkRoutingTab, model.ActiveTab())
+	require.Contains(t, ansi.Strip(model.View().Content), "Step Cost")
+
+	_, _ = model.Update(ctrlTab(false))
+	require.Equal(t, GeneralTab, model.ActiveTab())
+	_, _ = model.Update(ctrlTab(true))
+	require.Equal(t, LinkRoutingTab, model.ActiveTab())
+}
+
+func TestGeneralThemeAndBackgroundUpdateValue(t *testing.T) {
+	t.Parallel()
+
+	model := testModel()
+	require.True(t, model.Focus(fieldTheme))
+	_, _ = model.Update(keyPress(tea.KeyRight, ""))
+	require.Equal(t, ThemeDark, model.Value().Theme)
+
+	require.True(t, model.Focus(fieldBackground))
+	_, _ = model.Update(keyPress(tea.KeyRight, ""))
+	require.True(t, model.Value().OpaqueBackground)
+}
+
+func TestLinkRoutingUpdatesRouterCost(t *testing.T) {
+	t.Parallel()
+
+	model := testModel()
+	router := model.Value().Router
+	require.True(t, model.Focus(fieldStep))
+	require.Equal(t, LinkRoutingTab, model.ActiveTab())
+
+	_, command := model.Update(keyPress(tea.KeyRight, ""))
+
 	require.NotNil(t, command)
 	require.Equal(t, router.Costs.Step+1, model.Value().Router.Costs.Step)
 	require.Equal(t, 1, model.FieldFlash(0))
 }
 
-func TestEnterSubmitsSaveByDefault(t *testing.T) {
+func TestKeybindNavigationRemapCancelAndDelete(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	dispatch(t, model, keyPress(tea.KeyEnter, ""))
+	model := testModel()
+	model.SetTab(KeybindsTab)
+	require.Equal(t, 0, model.keybinds.row)
+	require.Equal(t, 0, model.keybinds.cell)
 
-	action, completed := model.Completed()
-	require.True(t, completed)
-	require.Equal(t, ActionSave, action)
+	_, _ = model.Update(keyPress(tea.KeyTab, ""))
+	require.Equal(t, 1, model.keybinds.cell)
+	_, _ = model.Update(keyPress(tea.KeyDown, ""))
+	require.Equal(t, 1, model.keybinds.row)
+
+	before := model.Value().Keybinds[1].Mappings[1]
+	_, _ = model.Update(keyPress(tea.KeyEnter, ""))
+	require.True(t, model.CapturesKey())
+	require.Contains(t, ansi.Strip(model.View().Content), "...")
+	_, _ = model.Update(keyPress(tea.KeyEscape, ""))
+	require.False(t, model.CapturesKey())
+	require.Equal(t, before, model.Value().Keybinds[1].Mappings[1])
+
+	_, _ = model.Update(keyPress(tea.KeyEnter, ""))
+	_, _ = model.Update(keyPress('z', "z"))
+	require.Equal(t, chrome.Chord("z"), model.Value().Keybinds[1].Mappings[1])
+	_, _ = model.Update(keyPress(tea.KeyBackspace, ""))
+	require.Empty(t, model.Value().Keybinds[1].Mappings[1])
 }
 
-func TestKeyboardTraversalVisitsEveryActionAndWraps(t *testing.T) {
+func TestClickingKeybindStartsRemapping(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	require.True(t, model.Focus(fieldKeyProfile))
+	model := testModel()
+	model.SetTab(KeybindsTab)
+	_ = model.View()
+	plan := model.keybinds.plans[0]
 
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, fieldBackground, model.FocusID())
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, fieldDarkTint, model.FocusID())
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, fieldLightTint, model.FocusID())
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, actionSave, model.FocusID())
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, actionSaveDefaults, model.FocusID())
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, actionCancel, model.FocusID())
-	_, _ = model.Update(keyPress(tea.KeyTab, ""))
-	require.Equal(t, fieldStep, model.FocusID())
-	_, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
-	require.Equal(t, actionCancel, model.FocusID())
-}
-
-func TestConstrainedFormRevealsActions(t *testing.T) {
-	t.Parallel()
-
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 5, testStyles())
-	require.NotContains(t, model.View().Content, "Save as Defaults")
-
-	for range len(preferenceDeclaration(Value{Router: layout.DefaultRouter()}).Fields) + 1 {
-		_, _ = model.Update(ScrollMsg{Delta: 1})
+	point := chrome.Point{
+		X: plan.rect.Right() - 2,
+		Y: plan.rect.Y + plan.rect.Height/2,
 	}
+	require.True(t, model.PointerOccupied(point.X, point.Y))
+	_, _ = model.Update(ClickMsg{X: point.X, Y: point.Y})
 
-	require.Contains(t, model.View().Content, "Save as Defaults")
-	require.False(t, model.DirectoryOpen())
+	require.True(t, model.CapturesKey())
+	require.Equal(t, plan.row, model.keybinds.row)
+	require.Equal(t, plan.cell, model.keybinds.cell)
+	require.Contains(t, ansi.Strip(model.View().Content), "...")
 }
 
-func TestModelImplementsTeaModel(t *testing.T) {
+func TestKeybindMappingPlansMatchRenderedPills(t *testing.T) {
 	t.Parallel()
 
-	var model tea.Model = New(
-		Value{Router: layout.DefaultRouter()},
-		64,
-		10,
-		testStyles(),
-	)
-	require.NotEmpty(t, model.View().Content)
-}
-
-func TestFieldsJustifyLabelsAndValuesAcrossWidth(t *testing.T) {
-	t.Parallel()
-
-	const width = 48
-	model := New(Value{Router: layout.DefaultRouter()}, width, 20, testStyles())
+	model := testModel()
+	model.SetTab(KeybindsTab)
 	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
-
-	requireRow := func(label, suffix string) {
-		t.Helper()
-		for _, line := range lines {
-			if !strings.HasPrefix(line, label) {
-				continue
-			}
-			require.True(t, strings.HasSuffix(line, suffix), line)
-			require.Equal(t, width, ansi.StringWidth(line), line)
-			return
-		}
-		require.Fail(t, "preference row not rendered", label)
+	for _, plan := range model.keybinds.plans[:mappingLimit] {
+		top := []rune(lines[plan.rect.Y])
+		bottom := []rune(lines[plan.rect.Bottom()-1])
+		require.Equal(t, '╭', top[plan.rect.X])
+		require.Equal(t, '╮', top[plan.rect.Right()-1])
+		require.Equal(t, '╰', bottom[plan.rect.X])
+		require.Equal(t, '╯', bottom[plan.rect.Right()-1])
 	}
-	requireRow("Step cost", "⇽ 10 ⇾")
-	requireRow("Shared-step cost", "2  ")
-	requireRow("Default save directory", "[ browse ]")
-	requireRow("Preferred comments", "//  ")
-	requireRow("Shortcut style", "Auto  ")
-	requireRow("Background", "Terminal  ")
 }
 
-func TestFieldsFollowFormWidthChanges(t *testing.T) {
+func TestKeybindConflictsStayWithinScope(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 48, 20, testStyles())
-	model.SetWidth(64)
-
-	for _, line := range strings.Split(ansi.Strip(model.View().Content), "\n") {
-		if strings.HasPrefix(line, "Default save directory") {
-			require.Equal(t, 64, ansi.StringWidth(line))
-			require.True(t, strings.HasSuffix(line, "[ browse ]"))
-			return
-		}
+	actions := []KeybindAction{
+		{Scope: testCanvasScope, ScopeLabel: testCanvasLabel, Command: "a", Label: "Action A"},
+		{Scope: testCanvasScope, ScopeLabel: testCanvasLabel, Command: "b", Label: "Action B"},
+		{Scope: testGlobalScope, ScopeLabel: "Global", Command: "c", Label: "Action C"},
 	}
-	require.Fail(t, "directory row not rendered")
+	values := []Keybind{
+		{Scope: testCanvasScope, Command: "a", Mappings: [3]chrome.Chord{testConflictChord}},
+		{Scope: testCanvasScope, Command: "b", Mappings: [3]chrome.Chord{testConflictChord}},
+		{Scope: testGlobalScope, Command: "c", Mappings: [3]chrome.Chord{testConflictChord}},
+	}
+	model := New(
+		Value{Router: layout.DefaultRouter(), Keybinds: values},
+		72,
+		18,
+		testStyles(),
+		WithKeybindActions(actions),
+	)
+	conflicts := model.keybinds.conflicts()
+
+	require.True(t, conflicts[[2]string{string(testCanvasScope), string(testConflictChord)}])
+	require.False(t, conflicts[[2]string{string(testGlobalScope), string(testConflictChord)}])
+}
+
+func TestKeybindPillsExposeHoverEmptyAndConflictStyles(t *testing.T) {
+	t.Parallel()
+
+	styles := testStyles().Mapping
+	pill := NewMappingPill(string(testConflictChord), styles)
+	pill.SetState(string(testConflictChord), false, false, false, true)
+	require.Equal(t, styles.Hovered, pill.style())
+
+	pill.SetState("", false, false, false, true)
+	require.Equal(t, styles.EmptyHovered, pill.style())
+
+	pill.SetState(string(testConflictChord), false, false, true, true)
+	require.Equal(t, styles.ConflictHovered, pill.style())
+}
+
+func TestMappingPillStatesPreserveRequestedWidth(t *testing.T) {
+	t.Parallel()
+
+	styles := testStyles().Mapping
+	states := []struct {
+		value                              string
+		focused, active, conflict, hovered bool
+	}{
+		{value: testControlChord},
+		{value: testControlChord, hovered: true},
+		{value: testControlChord, focused: true},
+		{value: testControlChord, active: true},
+		{},
+		{hovered: true},
+		{value: testControlChord, conflict: true},
+		{value: testControlChord, conflict: true, hovered: true},
+		{value: testControlChord, focused: true, conflict: true},
+	}
+	for _, state := range states {
+		pill := NewMappingPill(state.value, styles)
+		pill.SetState(
+			state.value,
+			state.focused,
+			state.active,
+			state.conflict,
+			state.hovered,
+		)
+		require.Equal(t, 15, lipgloss.Width(pill.View(15)))
+	}
+}
+
+func TestMappingLabelUsesCmdOnlyOnMacOS(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "cmd+shift+p", mappingLabel("super+shift+p", "darwin"))
+	require.Equal(t, "super+shift+p", mappingLabel("super+shift+p", "linux"))
 }
 
 func TestDirectoryBrowserOpensOnlyOnExplicitActivation(t *testing.T) {
@@ -138,151 +248,35 @@ func TestDirectoryBrowserOpensOnlyOnExplicitActivation(t *testing.T) {
 		{Code: 'l', Text: "l"},
 		{Code: tea.KeyEnter},
 	} {
-		model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
+		model := testModel()
 		require.True(t, model.Focus(fieldDirectory))
 
 		dispatch(t, model, tea.KeyPressMsg(key))
 
 		require.True(t, model.DirectoryOpen())
-		require.NotContains(t, model.View().Content, "Preferred comments")
+		require.NotContains(t, model.View().Content, "Comment Style")
 	}
 }
 
-func TestCollapsedDirectoryUsesFormNavigation(t *testing.T) {
+func TestEnterSubmitsSaveFromGeneralAndRouting(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct {
-		name string
-		key  tea.Key
-		want chrome.ID
-	}{
-		{name: "up", key: tea.Key{Code: tea.KeyUp}, want: fieldComment},
-		{name: "k", key: tea.Key{Code: 'k', Text: "k"}, want: fieldComment},
-		{name: "down", key: tea.Key{Code: tea.KeyDown}, want: fieldKeyProfile},
-		{name: "j", key: tea.Key{Code: 'j', Text: "j"}, want: fieldKeyProfile},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+	for _, tab := range []Tab{GeneralTab, LinkRoutingTab} {
+		model := testModel()
+		model.SetTab(tab)
+		dispatch(t, model, keyPress(tea.KeyEnter, ""))
 
-			model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-			require.True(t, model.Focus(fieldDirectory))
-
-			_, _ = model.Update(tea.KeyPressMsg(test.key))
-
-			require.False(t, model.DirectoryOpen())
-			require.Equal(t, test.want, model.FocusID())
-		})
+		action, completed := model.Completed()
+		require.True(t, completed)
+		require.Equal(t, ActionSave, action)
 	}
-}
-
-func TestQClosesOpenDirectoryAndKeepsFormOpen(t *testing.T) {
-	t.Parallel()
-
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	require.True(t, model.Focus(fieldDirectory))
-	dispatch(t, model, keyPress(tea.KeyEnter, ""))
-	require.True(t, model.DirectoryOpen())
-
-	_, _ = model.Update(keyPress('q', "q"))
-
-	require.False(t, model.DirectoryOpen())
-	require.Equal(t, fieldDirectory, model.FocusID())
-	require.Contains(t, model.View().Content, "Preferred comments")
-}
-
-func TestVimKeysNavigateAndEditForm(t *testing.T) {
-	t.Parallel()
-
-	router := layout.DefaultRouter()
-	model := New(Value{Router: router}, 64, 20, testStyles())
-	_, _ = model.Update(keyPress('l', "l"))
-	require.Equal(t, router.Costs.Step+1, model.Value().Router.Costs.Step)
-
-	_, _ = model.Update(keyPress('j', "j"))
-	_, _ = model.Update(keyPress('h', "h"))
-	require.Equal(t, router.Costs.SharedStep-1, model.Value().Router.Costs.SharedStep)
-
-	_, _ = model.Update(keyPress('k', "k"))
-	_, _ = model.Update(keyPress('h', "h"))
-	require.Equal(t, router.Costs.Step, model.Value().Router.Costs.Step)
-}
-
-func TestKeyProfileSelectorUpdatesValue(t *testing.T) {
-	t.Parallel()
-
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	require.True(t, model.Focus(fieldKeyProfile))
-
-	_, _ = model.Update(keyPress(tea.KeyRight, ""))
-	require.Equal(t, chrome.ProfileMac, model.Value().KeyProfile)
-	_, _ = model.Update(keyPress(tea.KeyRight, ""))
-	require.Equal(t, chrome.ProfileStandard, model.Value().KeyProfile)
-}
-
-func TestTintSelectorsUseIndependentChoices(t *testing.T) {
-	t.Parallel()
-
-	model := New(
-		Value{
-			Router:    layout.DefaultRouter(),
-			DarkTint:  "dark-a",
-			LightTint: "light-a",
-		},
-		64,
-		20,
-		testStyles(),
-		WithTints(
-			[]TintOption{
-				{ID: "dark-a", Label: "Dark A"},
-				{ID: "dark-b", Label: "Dark B"},
-			},
-			[]TintOption{
-				{ID: "light-a", Label: "Light A"},
-				{ID: "light-b", Label: "Light B"},
-				{ID: "light-c", Label: "Light C"},
-			},
-		),
-	)
-
-	require.True(t, model.Focus(fieldDarkTint))
-	_, _ = model.Update(keyPress(tea.KeyRight, ""))
-	require.Equal(t, "dark-b", model.Value().DarkTint)
-	require.Equal(t, "light-a", model.Value().LightTint)
-
-	require.True(t, model.Focus(fieldLightTint))
-	_, _ = model.Update(keyPress(tea.KeyRight, ""))
-	require.Equal(t, "dark-b", model.Value().DarkTint)
-	require.Equal(t, "light-b", model.Value().LightTint)
-}
-
-func TestBackgroundSelectorTogglesOpaqueRendering(t *testing.T) {
-	t.Parallel()
-
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, testStyles())
-	require.True(t, model.Focus(fieldBackground))
-
-	_, _ = model.Update(keyPress(tea.KeyRight, ""))
-	require.True(t, model.Value().OpaqueBackground)
-	_, _ = model.Update(keyPress(tea.KeyRight, ""))
-	require.False(t, model.Value().OpaqueBackground)
-}
-
-func TestInvalidKeyProfileDefaultsToAuto(t *testing.T) {
-	t.Parallel()
-
-	model := New(Value{
-		Router:     layout.DefaultRouter(),
-		KeyProfile: chrome.KeyProfile(255),
-	}, 64, 20, testStyles())
-
-	require.Equal(t, chrome.ProfileAuto, model.Value().KeyProfile)
 }
 
 func TestActionClickSubmitsSelectedAction(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, borderedStyles())
-	action := model.form.Plan().Buttons[1]
+	model := testModelWithStyles(borderedStyles())
+	action := model.general.Plan().Buttons[1]
 
 	next, command := model.Update(ClickMsg{
 		X: action.Rect.X + 1,
@@ -293,56 +287,60 @@ func TestActionClickSubmitsSelectedAction(t *testing.T) {
 	require.Nil(t, command)
 	got, completed := model.Completed()
 	require.True(t, completed)
-	require.Equal(t, ActionSaveDefaults, got)
+	require.Equal(t, ActionCancel, got)
 }
 
-func TestTakeCompletedConsumesSelectedAction(t *testing.T) {
+func TestActionsStayAtBottomOfGeneralAndRouting(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 20, borderedStyles())
-	model.submit(actionSave)
-
-	action, completed := model.TakeCompleted()
-
-	require.True(t, completed)
-	require.Equal(t, ActionSave, action)
-	action, completed = model.TakeCompleted()
-	require.False(t, completed)
-	require.Equal(t, ActionNone, action)
+	model := testModelWithStyles(borderedStyles())
+	for _, form := range []*chrome.Form{model.general, model.routing} {
+		plan := form.Plan()
+		require.Equal(t, preferenceSpacer, plan.SpacerID)
+		require.Equal(t, preferenceActions, plan.ButtonListID)
+		require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
+		require.Positive(t, plan.Spacer.Height)
+	}
 }
 
-func TestActionsUseDeclaredBottomLeftGeometry(t *testing.T) {
+func TestModelImplementsTeaModel(t *testing.T) {
 	t.Parallel()
 
-	model := New(Value{Router: layout.DefaultRouter()}, 64, 24, borderedStyles())
-	plan := model.form.Plan()
-
-	require.Equal(t, preferenceSpacer, plan.SpacerID)
-	require.Equal(t, preferenceActions, plan.ButtonListID)
-	require.Equal(t, plan.Bounds.X, plan.Buttons[0].Rect.X)
-	require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
-	require.Positive(t, plan.Spacer.Height)
+	var model tea.Model = testModel()
+	require.NotEmpty(t, model.View().Content)
 }
 
-func TestRepresentativeFieldRequiresOnlyDeclaration(t *testing.T) {
-	t.Parallel()
+func testModel() *Model {
+	return testModelWithStyles(testStyles())
+}
 
-	declaration := preferenceDeclaration(Value{Router: layout.DefaultRouter()})
-	declaration.Fields = append(declaration.Fields, chrome.FormField{
-		ID:    "representative",
-		Label: "Representative field",
-		Kind:  chrome.SelectField,
-		Options: []chrome.FormOption{
-			{Label: "Off", Value: "off"},
-			{Label: "On", Value: "on"},
+func testModelWithStyles(styles Styles) *Model {
+	actions := []KeybindAction{
+		{Scope: testGlobalScope, ScopeLabel: "Global", Command: "preferences", Label: "Open Preferences"},
+		{Scope: testCanvasScope, ScopeLabel: testCanvasLabel, Command: testLeftCommand, Label: "Navigate Left"},
+	}
+	values := []Keybind{
+		{Scope: testGlobalScope, Command: "preferences", Mappings: [3]chrome.Chord{"ctrl+p", "super+p"}},
+		{Scope: testCanvasScope, Command: testLeftCommand, Mappings: [3]chrome.Chord{chrome.Chord(testLeftCommand)}},
+	}
+	return New(
+		Value{
+			Router:        layout.DefaultRouter(),
+			Theme:         ThemeAuto,
+			DarkTint:      "dark",
+			LightTint:     "light",
+			CommentPrefix: commentSlash,
+			Keybinds:      values,
 		},
-	})
-	form := chrome.NewForm(declaration, testStyles().Form)
-	form.SetBounds(chrome.Rect{Width: 64})
-
-	require.Contains(t, ansi.Strip(form.View().Content), "Representative field")
-	require.Contains(t, form.AccessibleLines(), "Representative field:   Off  ")
-	require.True(t, form.Focus("representative"))
+		72,
+		20,
+		styles,
+		WithTints(
+			[]TintOption{{ID: "dark", Label: "Dark"}},
+			[]TintOption{{ID: "light", Label: "Light"}},
+		),
+		WithKeybindActions(actions),
+	)
 }
 
 func dispatch(t *testing.T, model *Model, message tea.Msg) {
@@ -358,6 +356,14 @@ func keyPress(code rune, text string) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code, Text: text})
 }
 
+func ctrlTab(shift bool) tea.KeyPressMsg {
+	mod := tea.ModCtrl
+	if shift {
+		mod |= tea.ModShift
+	}
+	return tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: mod})
+}
+
 func borderedStyles() Styles {
 	styles := testStyles()
 	styles.Form.Buttons.Button = styles.Form.Buttons.Button.Border(lipgloss.NormalBorder())
@@ -367,28 +373,34 @@ func borderedStyles() Styles {
 }
 
 func testStyles() Styles {
+	plain := lipgloss.NewStyle()
+	mapping := plain.Border(lipgloss.RoundedBorder())
 	return Styles{
 		Picker: directorypicker.Styles{},
+		Scope:  plain.Bold(true),
+		Action: plain,
+		Mapping: MappingPillStyles{
+			Normal:          mapping,
+			Hovered:         mapping.Foreground(lipgloss.Color("1")),
+			Focused:         mapping.Foreground(lipgloss.Color("2")),
+			Active:          mapping.Foreground(lipgloss.Color("3")),
+			Empty:           mapping.Foreground(lipgloss.Color("4")),
+			EmptyHovered:    mapping.Foreground(lipgloss.Color("5")),
+			Conflict:        mapping.Foreground(lipgloss.Color("6")),
+			ConflictHovered: mapping.Foreground(lipgloss.Color("7")),
+			ConflictFocused: mapping.Foreground(lipgloss.Color("8")),
+		},
 		Form: chrome.FormStyles{
-			Label:        lipgloss.NewStyle(),
-			HoveredLabel: lipgloss.NewStyle(),
-			FocusedLabel: lipgloss.NewStyle().Bold(true),
-			Value:        lipgloss.NewStyle(),
-			HoveredValue: lipgloss.NewStyle(),
-			FocusedValue: lipgloss.NewStyle().Bold(true),
+			Label: plain, HoveredLabel: plain, FocusedLabel: plain.Bold(true),
+			Value: plain, HoveredValue: plain, FocusedValue: plain.Bold(true),
 			Number: chrome.NumberFieldStyles{
-				Value:            lipgloss.NewStyle(),
-				HoveredValue:     lipgloss.NewStyle(),
-				FocusedValue:     lipgloss.NewStyle().Bold(true),
-				FocusedDecrement: lipgloss.NewStyle().Bold(true),
-				ActiveDecrement:  lipgloss.NewStyle().Reverse(true),
-				FocusedIncrement: lipgloss.NewStyle().Bold(true),
-				ActiveIncrement:  lipgloss.NewStyle().Reverse(true),
+				Value: plain, HoveredValue: plain, FocusedValue: plain.Bold(true),
+				FocusedDecrement: plain.Bold(true), ActiveDecrement: plain.Reverse(true),
+				FocusedIncrement: plain.Bold(true), ActiveIncrement: plain.Reverse(true),
 			},
 			Buttons: chrome.ButtonListStyles{
-				Button:        lipgloss.NewStyle().Padding(0, 1),
-				HoveredButton: lipgloss.NewStyle().Padding(0, 1),
-				FocusedButton: lipgloss.NewStyle().Bold(true).Padding(0, 1),
+				Button: plain.Padding(0, 1), HoveredButton: plain.Padding(0, 1),
+				FocusedButton: plain.Bold(true).Padding(0, 1),
 			},
 		},
 	}

@@ -25,12 +25,11 @@ func (m *Model) createCanvas() error {
 	if err := m.flushActive(); err != nil {
 		return err
 	}
-	var options []layout.Option
-	if m.preferences.applyToFuture {
-		options = append(options, layout.WithRouter(m.preferences.baseline.Router))
-	}
 	if err := m.history.Reset(func() error {
-		return m.geo.Replace(func(*layout.Layout) error { return nil }, options...)
+		return m.geo.Replace(
+			func(*layout.Layout) error { return nil },
+			layout.WithRouter(m.preferences.defaultRouter),
+		)
 	}); err != nil {
 		return err
 	}

@@ -39,14 +39,13 @@ func TestControlNCreatesTransientBlankAndFlushesPreviousCanvas(t *testing.T) {
 	require.Len(t, entries, 1)
 }
 
-func TestNewCanvasUsesSavedFutureRouter(t *testing.T) {
+func TestNewCanvasUsesSavedDefaultRouter(t *testing.T) {
 	t.Parallel()
 
 	model, _, _ := newStoredTestModel(t, "original")
 	router := layout.DefaultRouter()
 	router.Costs.Step = 41
-	model.preferences.applyToFuture = true
-	model.preferences.baseline.Router = router
+	model.preferences.defaultRouter = router
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'n', Mod: tea.ModCtrl}))
 

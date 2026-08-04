@@ -53,11 +53,13 @@ func TestStoreAtomicallyReplacesSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.json")
 	store := NewStore(path)
 	first := Snapshot{
-		Router:           layout.DefaultRouter(),
-		ApplyToFuture:    true,
-		SaveDirectory:    "/first",
-		CommentPrefix:    "# ",
-		ShortcutStyle:    ShortcutMac,
+		Router:        layout.DefaultRouter(),
+		SaveDirectory: "/first",
+		CommentPrefix: "# ",
+		Theme:         ThemeDark,
+		Keybinds: []Keybind{{
+			Scope: "global", Action: "save", Mappings: []string{"ctrl+s", "super+s"},
+		}},
 		DarkTint:         "dark",
 		LightTint:        "light",
 		OpaqueBackground: true,
@@ -66,7 +68,7 @@ func TestStoreAtomicallyReplacesSnapshot(t *testing.T) {
 
 	second := first
 	second.SaveDirectory = "/second"
-	second.ShortcutStyle = ShortcutStandard
+	second.Theme = ThemeLight
 	require.NoError(t, store.Save(second))
 
 	loaded, err := store.Load()
@@ -79,6 +81,20 @@ func TestStoreAtomicallyReplacesSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "config.json", entries[0].Name())
+}
+
+func TestStoreIgnoresLegacyShortcutStyle(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"shortcut_style":"mac"}`), 0o600))
+
+	snapshot, err := NewStore(path).Load()
+	require.NoError(t, err)
+	require.NoError(t, NewStore(path).Save(snapshot))
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "shortcut_style")
 }
 
 func TestStoreReportsMalformedSnapshot(t *testing.T) {

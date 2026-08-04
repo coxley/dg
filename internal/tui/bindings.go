@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"runtime"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
@@ -101,14 +102,23 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeCanvas, Chords: chrome.Keys("}", "shift+]"), Command: commandLayerFront, Label: "bring to front"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("u", "ctrl+z"), Command: commandUndo, Label: "undo"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+r", "ctrl+y", "ctrl+shift+z"), Command: commandRedo, Label: "redo"},
-	{Scope: scopeCanvas, Chords: []chrome.Chord{chrome.Primary("a")}, Command: commandExpand, Label: "expand selection"},
+	{Scope: scopeCanvas, Chords: primaryKeys("a"), Command: commandExpand, Label: "expand selection"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+c", "super+c"), Command: commandCopy, Label: "copy"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("esc"), Command: commandCancel, Label: "cancel tool"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("q"), Command: commandQuit, Label: "cursor / quit"},
 	{Scope: scopeGlobal, Chords: chrome.Keys("?"), Command: commandHelp, Label: "toggle help"},
-	{Scope: scopeGlobal, Chords: []chrome.Chord{chrome.Primary("p")}, Command: commandPreferences, Label: string(scopePreferences)},
-	{Scope: scopeGlobal, Chords: []chrome.Chord{chrome.Primary("s")}, Command: commandSave, Label: string(commandSave)},
-	{Scope: scopeGlobal, Chords: []chrome.Chord{chrome.Primary("b")}, Command: commandSidebar, Label: "toggle sidebar"},
+	{Scope: scopeGlobal, Chords: primaryKeys("p"), Command: commandPreferences, Label: string(scopePreferences)},
+	{Scope: scopeGlobal, Chords: primaryKeys("s"), Command: commandSave, Label: string(commandSave)},
+	{Scope: scopeGlobal, Chords: primaryKeys("b"), Command: commandSidebar, Label: "toggle sidebar"},
+}
+
+func primaryKeys(key string) []chrome.Chord {
+	control := chrome.NormalizeChord("ctrl+" + key)
+	command := chrome.NormalizeChord("super+" + key)
+	if runtime.GOOS == "darwin" {
+		return []chrome.Chord{command, control}
+	}
+	return []chrome.Chord{control, command}
 }
 
 var (
@@ -375,7 +385,17 @@ func (m *Model) interactionCommandAvailable(command chrome.CommandID) bool {
 			return true
 		}
 		if m.interaction.session.kind != sessionConnection {
-			return false
+			if !m.lineToolEdgeEditReady() {
+				return false
+			}
+			switch command {
+			case commandArrowEnd, commandArrowStart, commandDashed:
+				return m.canvasAppearanceCommandAvailable(command)
+			case commandDelete:
+				return m.canvasEditCommandAvailable(command)
+			default:
+				return false
+			}
 		}
 		switch command {
 		case commandActivate:
@@ -537,6 +557,8 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		switch m.dialogs.ActiveID() {
 		case surfaceSave:
 			return m.handleDialogResult(m.dialogs.SubmitSave())
+		case surfacePreferences:
+			return m.handleDialogResult(m.dialogs.SubmitPreferences())
 		case surfaceNone:
 			m.requestSave()
 		}

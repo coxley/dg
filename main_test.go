@@ -157,8 +157,7 @@ func TestInitialCanvasStartsTransientEmptyWithInjectedRouter(t *testing.T) {
 	canvases := newCanvasStore(t)
 
 	geo, doc, entry, err := initialCanvas(nil, settings.Snapshot{
-		Router:        router,
-		ApplyToFuture: true,
+		Router: router,
 	}, canvases)
 
 	require.NoError(t, err)

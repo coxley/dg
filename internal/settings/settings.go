@@ -16,25 +16,32 @@ const (
 	configName      = "config.json"
 )
 
-// ShortcutStyle selects the platform vocabulary used for shortcuts.
-type ShortcutStyle string
+// Theme selects which color scheme drives semantic tint selection.
+type Theme string
 
 const (
-	// ShortcutAuto selects the local platform convention.
-	ShortcutAuto ShortcutStyle = "auto"
-	// ShortcutMac presents Command-oriented shortcuts.
-	ShortcutMac ShortcutStyle = "mac"
-	// ShortcutStandard presents Control-oriented shortcuts.
-	ShortcutStandard ShortcutStyle = "standard"
+	// ThemeAuto follows the terminal color scheme.
+	ThemeAuto Theme = "auto"
+	// ThemeDark always uses the configured dark theme.
+	ThemeDark Theme = "dark"
+	// ThemeLight always uses the configured light theme.
+	ThemeLight Theme = "light"
 )
+
+// Keybind contains the configured mappings for one action in one scope.
+type Keybind struct {
+	Scope    string   `json:"scope"`
+	Action   string   `json:"action"`
+	Mappings []string `json:"mappings"`
+}
 
 // Snapshot contains one complete settings load.
 type Snapshot struct {
 	Router           layout.Router `json:"router"`
-	ApplyToFuture    bool          `json:"apply_to_future"`
 	SaveDirectory    string        `json:"save_directory,omitempty"`
 	CommentPrefix    string        `json:"comment_prefix,omitempty"`
-	ShortcutStyle    ShortcutStyle `json:"shortcut_style,omitempty"`
+	Theme            Theme         `json:"theme,omitempty"`
+	Keybinds         []Keybind     `json:"keybinds,omitempty"`
 	DarkTint         string        `json:"dark_tint,omitempty"`
 	LightTint        string        `json:"light_tint,omitempty"`
 	OpaqueBackground bool          `json:"opaque_background,omitempty"`

@@ -92,6 +92,16 @@ func Keys(chords ...string) []Chord {
 	return result
 }
 
+// NormalizeChord returns the canonical representation of a logical key chord.
+func NormalizeChord(chord string) Chord {
+	return normalizeChord(chord)
+}
+
+// ChordForKey returns the canonical logical chord for one key press.
+func ChordForKey(message tea.KeyPressMsg) Chord {
+	return keyChord(message)
+}
+
 // Primary returns one profile-aware chord declaration.
 func Primary(key string) Chord {
 	return Chord("primary+" + strings.ToLower(strings.TrimSpace(key)))
@@ -184,6 +194,13 @@ func NewResolver(bindings []Binding) (*Resolver, error) {
 // SetProfile selects profile projection.
 func (r *Resolver) SetProfile(profile KeyProfile) {
 	r.profile = profile
+}
+
+// SetBindings replaces the declarations used for subsequent resolution.
+// Resolution remains deterministic when user-defined mappings conflict: the
+// first declaration in the active scope wins.
+func (r *Resolver) SetBindings(bindings []Binding) {
+	r.bindings = append(r.bindings[:0], bindings...)
 }
 
 // SetKeyDisambiguation controls whether chords that require enhanced key
