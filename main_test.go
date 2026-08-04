@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/coxley/dg/document"
 	"github.com/coxley/dg/internal/settings"
+	"github.com/coxley/dg/internal/tui"
 	"github.com/coxley/dg/layout"
 	canvasstore "github.com/coxley/dg/store"
 	"github.com/stretchr/testify/require"
@@ -41,7 +46,107 @@ func TestInitialLayoutRejectsExtraArguments(t *testing.T) {
 		settings.Snapshot{},
 		newCanvasStore(t),
 	)
-	require.EqualError(t, err, "usage: dg [path]")
+	require.EqualError(t, err, "usage: dg [path] | dg dev [path]")
+}
+
+func TestInitialEditorCanvasRestoresDevelopmentEntry(t *testing.T) {
+	t.Parallel()
+
+	canvases := newCanvasStore(t)
+	doc := document.New(mustLayoutWithLabel(t, "saved"))
+	entry, err := canvases.Create("", "Saved", doc)
+	require.NoError(t, err)
+	doc.Nodes[0].Label = "in memory"
+	session := tui.DevSession{Document: doc, EntryID: entry.ID}
+
+	geo, restored, active, err := initialEditorCanvas(
+		nil,
+		settings.Snapshot{},
+		canvases,
+		&session,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+	require.Equal(t, entry.ID, active.ID)
+	require.Equal(t, doc, restored)
+	require.Equal(t, "in memory", geo.Label(0))
+}
+
+func TestFindModuleRootWalksParents(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "go.mod"),
+		[]byte("module example.com/test\n"),
+		0o600,
+	))
+	nested := filepath.Join(root, "one", "two")
+	require.NoError(t, os.MkdirAll(nested, 0o700))
+
+	got, err := findModuleRoot(nested)
+	require.NoError(t, err)
+	require.Equal(t, root, got)
+}
+
+func TestBuildDevBinaryKeepsLastSuccessfulBuild(t *testing.T) {
+	root := t.TempDir()
+	binaryPath := filepath.Join(t.TempDir(), "dg")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(root, "go.mod"),
+		[]byte("module example.com/devtest\n\ngo 1.26.5\n"),
+		0o600,
+	))
+	mainPath := filepath.Join(root, "main.go")
+	require.NoError(t, os.WriteFile(
+		mainPath,
+		[]byte("package main\nfunc main() {}\n"),
+		0o600,
+	))
+
+	output, err := buildDevBinary(t.Context(), root, binaryPath)
+	require.NoError(t, err, string(output))
+	require.NoError(t, exec.Command(binaryPath).Run())
+	require.NoError(t, os.WriteFile(
+		mainPath,
+		[]byte("package main\nfunc main( {\n"),
+		0o600,
+	))
+
+	output, err = buildDevBinary(t.Context(), root, binaryPath)
+	require.Error(t, err)
+	require.NotEmpty(t, output)
+	require.NoError(t, exec.Command(binaryPath).Run())
+}
+
+func TestWatchDevSourcesDetectsNestedGoFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	nested := filepath.Join(root, "internal", "feature")
+	require.NoError(t, os.MkdirAll(nested, 0o700))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	events, err := watchDevSources(ctx, root)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(nested, "feature.go"),
+		[]byte("package feature\n"),
+		0o600,
+	))
+
+	select {
+	case event := <-events:
+		require.NoError(t, event.err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for development source event")
+	}
+}
+
+func TestRunDevRejectsExtraArguments(t *testing.T) {
+	t.Parallel()
+
+	require.EqualError(t, runDev([]string{"one", "two"}), "usage: dg dev [path]")
 }
 
 func TestInitialCanvasStartsTransientEmptyWithInjectedRouter(t *testing.T) {

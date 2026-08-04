@@ -17,11 +17,25 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		if errors.Is(err, tui.ErrDevReload) && os.Getenv(devChildEnv) == "1" {
+			os.Exit(devReloadExitCode)
+		}
+		var childExit *devChildExitError
+		if errors.As(err, &childExit) {
+			os.Exit(childExit.code)
+		}
 		log.Fatal(err)
 	}
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == "dev" {
+		return runDev(args[1:])
+	}
+	return runEditor(args)
+}
+
+func runEditor(args []string) error {
 	store, err := settings.DefaultStore()
 	if err != nil {
 		return fmt.Errorf("configure settings: %w", err)
@@ -38,7 +52,18 @@ func run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure canvas store: %w", err)
 	}
-	geo, doc, entry, err := initialCanvas(args, snapshot, canvases)
+	devConfig, development := devChildConfigFromEnv()
+	var devSession *tui.DevSession
+	if development {
+		session, found, err := tui.ConsumeDevSession(devConfig.sessionPath)
+		if err != nil {
+			return fmt.Errorf("restore development session: %w", err)
+		}
+		if found {
+			devSession = &session
+		}
+	}
+	geo, doc, entry, err := initialEditorCanvas(args, snapshot, canvases, devSession)
 	if err != nil {
 		return err
 	}
@@ -49,16 +74,50 @@ func run(args []string) error {
 	if _, err := undo.Restore(doc); err != nil {
 		log.Printf("restore undo history: %v", err)
 	}
-	if err := tui.Run(
-		geo,
+	modelOptions := []tui.Option{
 		tui.WithDocument(doc),
 		tui.WithHistory(undo),
 		tui.WithCanvasStore(canvases, entry),
 		tui.WithSettings(snapshot, store),
-	); err != nil {
+	}
+	if devSession != nil {
+		modelOptions = append(modelOptions, tui.WithDevSession(*devSession))
+	}
+	if development {
+		modelOptions = append(modelOptions, tui.WithDevReload(
+			devConfig.markerPath,
+			devConfig.sessionPath,
+		))
+	}
+	if err := tui.Run(geo, modelOptions...); err != nil {
 		return fmt.Errorf("run editor: %w", err)
 	}
 	return nil
+}
+
+func initialEditorCanvas(
+	args []string,
+	snapshot settings.Snapshot,
+	canvases *canvasstore.Store,
+	session *tui.DevSession,
+) (*layout.Layout, document.Document, *canvasstore.Entry, error) {
+	if session == nil {
+		return initialCanvas(args, snapshot, canvases)
+	}
+	geo, err := session.Document.Convert()
+	if err != nil {
+		return nil, document.Document{}, nil, fmt.Errorf("convert development session: %w", err)
+	}
+	entries, err := canvases.List()
+	if err != nil {
+		return nil, document.Document{}, nil, fmt.Errorf("list development canvases: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.ID == session.EntryID {
+			return geo, session.Document, &entry, nil
+		}
+	}
+	return geo, session.Document, nil, nil
 }
 
 func initialCanvas(
@@ -102,7 +161,7 @@ func initialCanvas(
 		}
 		return geo, doc, &entry, nil
 	default:
-		return nil, document.Document{}, nil, errors.New("usage: dg [path]")
+		return nil, document.Document{}, nil, errors.New("usage: dg [path] | dg dev [path]")
 	}
 }
 
