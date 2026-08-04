@@ -72,8 +72,9 @@ func watchDevReload(ctx context.Context, markerPath string) (<-chan devReloadMsg
 					event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename) == 0 {
 					continue
 				}
-				sendDevReload(ctx, events, devReloadMsg{})
-				return
+				if !sendDevReload(ctx, events, devReloadMsg{}) {
+					return
+				}
 			}
 		}
 	}()
@@ -116,7 +117,7 @@ func (m *Model) updateDevReload(message tea.Msg) (tea.Cmd, bool) {
 	}
 	if err := m.writeDevSession(m.devReload.sessionPath); err != nil {
 		m.setError(err.Error())
-		return nil, true
+		return waitDevReload(m.devReload.feed), true
 	}
 	m.devReload.requested = true
 	return tea.Quit, true
