@@ -145,9 +145,18 @@ type modelOptions struct {
 	settingsStore          *settings.Store
 	history                *history.History
 	document               *document.Document
+	devSession             *DevSession
 	canvasStore            *canvasstore.Store
 	entry                  *canvasstore.Entry
 	sidebarInitiallyClosed bool
+}
+
+// WithDevSession restores semantic editor state after replacing a development
+// process.
+func WithDevSession(value DevSession) Option {
+	return func(options *modelOptions) {
+		options.devSession = &value
+	}
 }
 
 // WithDocument preserves value as the persisted identity of geo.
@@ -288,6 +297,9 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 		}
 	}
 	m.history.SetChangeCallback(m.markDocumentDirty)
+	if configured.devSession != nil {
+		m.restoreDevSession(*configured.devSession)
+	}
 	m.syncWorkspace()
 	return m, nil
 }
