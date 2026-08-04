@@ -90,7 +90,7 @@ func runDev(args []string) error {
 		markerPath:  filepath.Join(workspace, "reload"),
 		sessionPath: filepath.Join(workspace, "session.json.gz"),
 	}
-	childDone, err := startDevChild(binaryPath, args, config)
+	childDone, err := startDevChild(ctx, binaryPath, args, config)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func runDev(args []string) error {
 			if err := removeIfExists(config.markerPath); err != nil {
 				return fmt.Errorf("reset development marker: %w", err)
 			}
-			childDone, err = startDevChild(binaryPath, args, config)
+			childDone, err = startDevChild(ctx, binaryPath, args, config)
 			if err != nil {
 				return err
 			}
@@ -195,11 +195,13 @@ func formatDevBuildError(err error, output []byte) error {
 }
 
 func startDevChild(
+	ctx context.Context,
 	binaryPath string,
 	args []string,
 	config devChildConfig,
 ) (<-chan error, error) {
-	command := exec.Command(binaryPath, args...)
+	// The supervisor chooses binaryPath; args remain argv entries without shell expansion.
+	command := exec.CommandContext(ctx, binaryPath, args...) //nolint:gosec
 	command.Env = devChildEnvironment(os.Environ(), config)
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
@@ -276,16 +278,9 @@ func watchDevSources(ctx context.Context, moduleRoot string) (<-chan devSourceEv
 				if !ok {
 					return
 				}
-				addedDirectory := false
-				if event.Op&fsnotify.Create != 0 {
-					if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-						addedDirectory = true
-						if err := addDevSourceTree(watcher, event.Name); err != nil {
-							if !sendDevSourceEvent(ctx, events, devSourceEvent{err: err}) {
-								return
-							}
-						}
-					}
+				addedDirectory, err := addCreatedDevDirectory(watcher, event)
+				if err != nil && !sendDevSourceEvent(ctx, events, devSourceEvent{err: err}) {
+					return
 				}
 				if addedDirectory {
 					if !sendDevSourceEvent(ctx, events, devSourceEvent{}) {
@@ -304,6 +299,20 @@ func watchDevSources(ctx context.Context, moduleRoot string) (<-chan devSourceEv
 		}
 	}()
 	return events, nil
+}
+
+func addCreatedDevDirectory(
+	watcher *fsnotify.Watcher,
+	event fsnotify.Event,
+) (bool, error) {
+	if event.Op&fsnotify.Create == 0 {
+		return false, nil
+	}
+	info, err := os.Stat(event.Name)
+	if err != nil || !info.IsDir() {
+		return false, nil
+	}
+	return true, addDevSourceTree(watcher, event.Name)
 }
 
 func addDevSourceTree(watcher *fsnotify.Watcher, root string) error {
