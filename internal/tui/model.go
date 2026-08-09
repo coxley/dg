@@ -123,8 +123,9 @@ type Model struct {
 	exitErr     error
 	panicValue  any
 
-	clipboard *clipboardview.Model
-	paste     clipboardPasteState
+	clipboard    *clipboardview.Model
+	copyModifier tea.KeyMod
+	paste        clipboardPasteState
 
 	preferences    preferenceState
 	settingsStore  *settings.Store
@@ -404,11 +405,12 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 		))
 	case uv.DarkColorSchemeEvent, uv.LightColorSchemeEvent:
 		return m, requestBackgroundColor()
-	case tea.FocusMsg:
-		return m, tea.Batch(requestBackgroundColor(), reconcileCatalog(m.canvasStore, m.catalog))
+	case tea.FocusMsg, tea.BlurMsg:
+		return m, m.updateTerminalFocus(message)
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
 		m.bindings.SetKeyDisambiguation(message.SupportsKeyDisambiguation())
+		m.clipboard.SetReleaseEvents(message.SupportsEventTypes())
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
 	case tea.WindowSizeMsg:
@@ -421,6 +423,8 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 		return m, m.retargetSidebar()
 	case tea.KeyPressMsg:
 		return m, m.updateKey(message)
+	case tea.KeyReleaseMsg:
+		return m, m.releaseCopy(message)
 	case tea.PasteMsg:
 		return m, m.updatePaste(message)
 	case tea.MouseClickMsg:
@@ -459,6 +463,18 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 		return m, m.updateSidebarMotion(message)
 	}
 	return m, nil
+}
+
+func (m *Model) updateTerminalFocus(message tea.Msg) tea.Cmd {
+	switch message.(type) {
+	case tea.FocusMsg:
+		return tea.Batch(requestBackgroundColor(), reconcileCatalog(m.canvasStore, m.catalog))
+	case tea.BlurMsg:
+		m.clipboard.CancelPending()
+		return nil
+	default:
+		return nil
+	}
 }
 
 func requestBackgroundColor() tea.Cmd {
@@ -649,6 +665,12 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		return m.updateDialog(message)
 	}
 	copyKey := m.bindings.MatchesKey(message, commandCopy)
+	if copyKey && message.IsRepeat {
+		return nil
+	}
+	if copyKey {
+		m.copyModifier = message.Mod & (tea.ModCtrl | tea.ModSuper)
+	}
 	if m.dialogs.DismissAnyKey() {
 		returnTo := m.dialogs.notice.ReturnTo()
 		command := m.dismissDialog()
@@ -663,6 +685,11 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 		m.clipboard.CancelPending()
 	}
 	m.interaction.click.valid = false
+	if m.interaction.session.kind == sessionLabelEdit &&
+		chrome.ResolveTextEditIntent(message) != chrome.TextEditNone {
+		m.updateLabel(message)
+		return nil
+	}
 	if command, ok := m.bindings.ResolveKey(
 		message,
 		m.activeBindingScopes(),

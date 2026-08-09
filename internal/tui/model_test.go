@@ -2861,16 +2861,50 @@ func TestModelEditsLabel(t *testing.T) {
 	require.Equal(t, "nod", model.geo.Label(nodeID))
 	updateModel(t, model, keyPress('X', "X"))
 	require.Equal(t, "nodX", model.geo.Label(nodeID))
-	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyEnter,
+		Mod:  tea.ModShift,
+	}))
 	require.Equal(t, modeEditLabel, model.interaction.mode())
 	require.Equal(t, "nodX\n", model.geo.Label(nodeID))
 	updateModel(t, model, tea.PasteMsg{Content: "two\nlines"})
 	require.Equal(t, "nodX\ntwo\nlines", string(model.editBuffer))
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	require.Equal(t, modeEditLabel, model.interaction.mode())
+	require.Equal(t, "nodX\ntwo\nlines\n", string(model.editBuffer))
 
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
 	require.Equal(t, modeNavigate, model.interaction.mode())
-	require.Equal(t, "nodX\ntwo\nlines", model.geo.Label(nodeID))
+	require.Equal(t, "nodX\ntwo\nlines\n", model.geo.Label(nodeID))
 	require.Empty(t, model.editBuffer)
+}
+
+func TestModelSingleLineEnterCommitsLabelEdit(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	updateModel(t, model, keyPress('e', "e"))
+	updateModel(t, model, keyPress('X', "X"))
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, "nodeX", model.geo.Label(nodeID))
+}
+
+func TestModelSuperEnterCommitsLabelEdit(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, keyPress(tea.KeyTab, ""))
+	updateModel(t, model, keyPress('e', "e"))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{
+		Code: tea.KeyEnter,
+		Mod:  tea.ModSuper,
+	}))
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, "node", model.geo.Label(nodeID))
 }
 
 func TestModelEscapeCommitsLabelEdit(t *testing.T) {
@@ -2992,6 +3026,14 @@ func TestModelEditShortcuts(t *testing.T) {
 			key:       tea.Key{Code: 'b', Mod: tea.ModAlt},
 			wantLabel: "one  two/three",
 			wantCaret: len("one  two/"),
+		},
+		{
+			name:      "ctrl-b moves one grapheme instead of opening sidebar",
+			label:     oneTwo,
+			caret:     len(oneTwo),
+			key:       tea.Key{Code: 'b', Mod: tea.ModCtrl},
+			wantLabel: oneTwo,
+			wantCaret: len(oneTwo) - 1,
 		},
 	}
 

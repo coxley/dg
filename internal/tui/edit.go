@@ -3,46 +3,27 @@ package tui
 import (
 	"errors"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/coxley/dg/layout"
 	"github.com/rivo/uniseg"
 )
 
 func (m *Model) updateLabel(key tea.KeyPressMsg) {
 	event := key.Key()
-	if event.Mod == tea.ModCtrl {
-		switch event.Code {
-		case 'a':
-			m.editCaret = int(m.caretLine().Start)
-			m.moveCursorToCaret()
-			return
-		case 'e':
-			m.editCaret = int(m.caretLine().End)
-			m.moveCursorToCaret()
-			return
-		case 'w':
-			start := previousWordStart(m.editBuffer, m.editCaret)
-			if start != m.editCaret {
-				m.replaceLabelRange(start, m.editCaret, nil)
-			}
-			return
-		case 'u':
-			start := int(m.caretLine().Start)
-			if m.editCaret != start {
-				m.replaceLabelRange(start, m.editCaret, nil)
-			}
-			return
-		case tea.KeyEnter:
+	if event.Code == tea.KeyEnter {
+		switch {
+		case event.Mod.Contains(tea.ModCtrl) || event.Mod.Contains(tea.ModSuper):
 			m.commitLabelEdit()
-			return
+		case event.Mod.Contains(tea.ModShift) || strings.ContainsRune(string(m.editBuffer), '\n'):
+			m.insertLabelText("\n")
+		default:
+			m.commitLabelEdit()
 		}
+		return
 	}
-	if event.Mod.Contains(tea.ModAlt) && (event.Code == 'b' || event.Code == 'B') {
-		m.editCaret = previousWordStart(m.editBuffer, m.editCaret)
-		m.moveCursorToCaret()
+	if m.applyLabelEditIntent(chrome.ResolveTextEditIntent(key)) {
 		return
 	}
 	if event.Mod != 0 {
@@ -52,39 +33,63 @@ func (m *Model) updateLabel(key tea.KeyPressMsg) {
 	switch event.Code {
 	case tea.KeyEscape:
 		m.commitLabelEdit()
-	case tea.KeyEnter:
-		m.insertLabelText("\n")
-	case tea.KeyLeft:
-		m.editCaret = previousGraphemeStart(m.editBuffer, m.editCaret)
-		m.moveCursorToCaret()
-	case tea.KeyRight:
-		m.editCaret = nextGraphemeEnd(m.editBuffer, m.editCaret)
-		m.moveCursorToCaret()
 	case tea.KeyUp:
 		m.moveCaretVertically(-1)
 	case tea.KeyDown:
 		m.moveCaretVertically(1)
-	case tea.KeyHome:
-		line := m.caretLine()
+	default:
+		m.insertLabelText(event.Text)
+	}
+}
+
+func (m *Model) applyLabelEditIntent(intent chrome.TextEditIntent) bool {
+	line := m.caretLine()
+	switch intent {
+	case chrome.TextEditBackward:
+		m.editCaret = previousGraphemeStart(m.editBuffer, m.editCaret)
+	case chrome.TextEditForward:
+		m.editCaret = nextGraphemeEnd(m.editBuffer, m.editCaret)
+	case chrome.TextEditLineStart:
 		m.editCaret = int(line.Start)
-		m.moveCursorToCaret()
-	case tea.KeyEnd:
-		line := m.caretLine()
+	case chrome.TextEditLineEnd:
 		m.editCaret = int(line.End)
-		m.moveCursorToCaret()
-	case tea.KeyBackspace:
+	case chrome.TextEditWordBackward:
+		m.editCaret = previousWordStart(m.editBuffer, m.editCaret)
+	case chrome.TextEditWordForward:
+		m.editCaret = nextWordEnd(m.editBuffer, m.editCaret)
+	case chrome.TextEditDeleteBackward:
 		start := previousGraphemeStart(m.editBuffer, m.editCaret)
 		if start != m.editCaret {
 			m.replaceLabelRange(start, m.editCaret, nil)
 		}
-	case tea.KeyDelete:
+		return true
+	case chrome.TextEditDeleteForward:
 		end := nextGraphemeEnd(m.editBuffer, m.editCaret)
 		if end != m.editCaret {
 			m.replaceLabelRange(m.editCaret, end, nil)
 		}
-	default:
-		m.insertLabelText(event.Text)
+		return true
+	case chrome.TextEditDeleteWordBackward:
+		start := previousWordStart(m.editBuffer, m.editCaret)
+		if start != m.editCaret {
+			m.replaceLabelRange(start, m.editCaret, nil)
+		}
+		return true
+	case chrome.TextEditDeleteToLineStart:
+		if start := int(line.Start); start != m.editCaret {
+			m.replaceLabelRange(start, m.editCaret, nil)
+		}
+		return true
+	case chrome.TextEditDeleteToLineEnd:
+		if end := int(line.End); end != m.editCaret {
+			m.replaceLabelRange(m.editCaret, end, nil)
+		}
+		return true
+	case chrome.TextEditNone:
+		return false
 	}
+	m.moveCursorToCaret()
+	return true
 }
 
 func (m *Model) insertLabelText(text string) {
@@ -295,14 +300,14 @@ func nextGraphemeEnd(text []byte, offset int) int {
 func previousWordStart(text []byte, offset int) int {
 	for offset > 0 {
 		start := previousGraphemeStart(text, offset)
-		if !graphemeIsWordBoundary(text[start:offset]) {
+		if !chrome.IsTextWordBoundary(text[start:offset]) {
 			break
 		}
 		offset = start
 	}
 	for offset > 0 {
 		start := previousGraphemeStart(text, offset)
-		if graphemeIsWordBoundary(text[start:offset]) {
+		if chrome.IsTextWordBoundary(text[start:offset]) {
 			break
 		}
 		offset = start
@@ -310,19 +315,22 @@ func previousWordStart(text []byte, offset int) int {
 	return offset
 }
 
-// graphemeIsWordBoundary follows Readline's filename-word behavior.
-func graphemeIsWordBoundary(cluster []byte) bool {
-	if len(cluster) == 0 {
-		return false
-	}
-	for len(cluster) != 0 {
-		r, size := utf8.DecodeRune(cluster)
-		if !unicode.IsSpace(r) && r != '/' {
-			return false
+func nextWordEnd(text []byte, offset int) int {
+	for offset < len(text) {
+		end := nextGraphemeEnd(text, offset)
+		if !chrome.IsTextWordBoundary(text[offset:end]) {
+			break
 		}
-		cluster = cluster[size:]
+		offset = end
 	}
-	return true
+	for offset < len(text) {
+		end := nextGraphemeEnd(text, offset)
+		if chrome.IsTextWordBoundary(text[offset:end]) {
+			break
+		}
+		offset = end
+	}
+	return offset
 }
 
 func graphemeOffsetAtWidth(text []byte, target int) int {

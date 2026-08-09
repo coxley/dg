@@ -442,7 +442,7 @@ func (f *Form) updateTextField(message tea.KeyPressMsg, intent ControlIntent) te
 	case FocusNext, Activate:
 		f.MoveFocus(1)
 	default:
-		f.updateTextInputKey(message, intent)
+		f.updateTextInputKey(message)
 	}
 	return nil
 }
@@ -461,7 +461,7 @@ func (f *Form) updateTextInput(message tea.Msg) {
 	f.invalidate()
 }
 
-func (f *Form) updateTextInputKey(message tea.KeyPressMsg, intent ControlIntent) {
+func (f *Form) updateTextInputKey(message tea.KeyPressMsg) {
 	if f.focus < 0 || f.focus >= len(f.declaration.Fields) {
 		return
 	}
@@ -470,7 +470,7 @@ func (f *Form) updateTextInputKey(message tea.KeyPressMsg, intent ControlIntent)
 	if field.Kind != TextField || input == nil {
 		return
 	}
-	input.updateKey(message, intent)
+	input.updateKey(message)
 	field.Text = input.Value()
 	f.invalidate()
 }

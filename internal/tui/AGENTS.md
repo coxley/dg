@@ -207,10 +207,17 @@ text-only because portable fragments require at least one node. Repeated paste
 of the same fragment advances by the fragment width and the duplication gap.
 Export changes the plain-text wrapper without discarding the fragment.
 
-Copy uses Super-C or Ctrl-C. The first copy waits 175 ms. A second copy in that
-window cancels the provisional write and opens Export. Passive all-motion
-mouse events and standalone modifier-key events do not cancel this window.
-Stale timers must never write after another interaction.
+Copy uses Super-C or Ctrl-C. Terminals with key-release reporting arm the first
+copy until Super or Ctrl is released. Pressing C a second time while the
+modifier remains held opens Export without writing. Key repeats do not count as
+a second press. Terminals without release reporting use a 175 ms fallback.
+Passive all-motion mouse events and standalone modifier-key events do not
+cancel an armed copy. Stale fallback timers must never write after another
+interaction.
+
+Plain Enter commits a single-line label. Shift-Enter inserts its first newline;
+plain Enter then inserts subsequent newlines. Ctrl-Enter, Super-Enter, Escape,
+and interaction changes commit labels of any size.
 
 The first actual clipboard write prefers the internal native backend. It
 publishes plain text and `application/vnd.dg.fragment` in one clipboard

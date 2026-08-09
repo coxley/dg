@@ -4,8 +4,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"testing/synctest"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -33,7 +31,7 @@ func TestSelectionTextRendersOnlySelectedObjects(t *testing.T) {
 	}, "\n"), text)
 }
 
-func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
+func TestCopySelectionWritesOnControlRelease(t *testing.T) {
 	t.Parallel()
 
 	model, nodeID := newTestModel(t)
@@ -45,13 +43,24 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 		payload = append([]byte(nil), data...)
 		return nil
 	})
+	updateModel(t, model, tea.KeyboardEnhancementsMsg{
+		Flags: ansi.KittyReportEventTypes,
+	})
 
 	command := updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
 		Code: 'c',
 		Mod:  tea.ModCtrl,
 	}))
-	require.NotNil(t, command)
-	command = updateModelCommand(t, model, command())
+	require.Nil(t, command)
+	require.Empty(t, copied)
+	require.Nil(t, updateModelCommand(t, model, tea.KeyReleaseMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	})))
+	command = updateModelCommand(t, model, tea.KeyReleaseMsg(tea.Key{
+		Code: tea.KeyLeftCtrl,
+		Mod:  tea.ModCtrl,
+	}))
 	require.NotNil(t, command)
 	command = updateModelCommand(t, model, command())
 	require.NotNil(t, command)
@@ -68,79 +77,67 @@ func TestCopySelectionUsesControlCAndFallback(t *testing.T) {
 	require.Equal(t, "Copied to clipboard", model.dialogs.notice.text)
 }
 
-func TestSecondCopyBeforeDebounceOpensExportPrompt(t *testing.T) {
-	keys := []struct {
-		name string
-		key  tea.KeyPressMsg
-	}{
-		{"control", tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}},
-		{"super", tea.KeyPressMsg{Code: 'c', Text: "c", Mod: tea.ModSuper}},
-	}
-	for _, first := range keys {
-		for _, second := range keys {
-			t.Run(first.name+" then "+second.name, func(t *testing.T) {
-				synctest.Test(t, func(t *testing.T) {
-					model, nodeID := newTestModel(t)
-					updateModel(t, model, tea.WindowSizeMsg{
-						Width:  80,
-						Height: 24,
-					})
-					model.geo.Selection().SelectOnly(layout.Hit{
-						ID:   nodeID,
-						Kind: layout.HitNode,
-					})
-					model.clipboard.UseNative(func(string, []byte) error {
-						require.Fail(t, "second copy must not write")
-						return nil
-					})
+func TestSecondControlCBeforeReleaseOpensExportPrompt(t *testing.T) {
+	t.Parallel()
 
-					firstCommand := updateModelCommand(t, model, first.key)
-					require.NotNil(t, firstCommand)
-					messages := make(chan tea.Msg, 1)
-					go func() {
-						messages <- firstCommand()
-					}()
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	updateModel(t, model, tea.KeyboardEnhancementsMsg{
+		Flags: ansi.KittyReportEventTypes,
+	})
+	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	model.clipboard.UseNative(func(string, []byte) error {
+		require.Fail(t, "export gesture must not write")
+		return nil
+	})
+	copyKey := tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl})
+	require.Nil(t, updateModelCommand(t, model, copyKey))
+	require.Nil(t, updateModelCommand(t, model, tea.KeyReleaseMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	})))
+	require.Nil(t, updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code:     'c',
+		Mod:      tea.ModCtrl,
+		IsRepeat: true,
+	})))
+	require.Equal(t, surfaceNone, model.dialogs.ActiveID())
 
-					time.Sleep(
-						clipboardview.DebounceDuration -
-							time.Millisecond,
-					)
-					require.Empty(t, messages)
-					updateModel(t, model, tea.MouseMotionMsg{
-						X: 10,
-						Y: 10,
-					})
-					updateModel(t, model, tea.KeyPressMsg{
-						Code: tea.KeyLeftCtrl,
-					})
+	command := updateModelCommand(t, model, copyKey)
+	require.NotNil(t, command)
+	updateModel(t, model, command())
 
-					command := updateModelCommand(t, model, second.key)
-					require.NotNil(t, command)
-					updateModel(t, model, command())
+	require.Equal(t, surfaceExport, model.dialogs.ActiveID())
+	require.Equal(t, clipboardview.LineSlash, model.clipboard.Style())
+	require.Contains(t, ansi.Strip(model.View().Content), "Line comments")
+	require.Nil(t, updateModelCommand(t, model, tea.KeyReleaseMsg(tea.Key{
+		Code: tea.KeyLeftCtrl,
+		Mod:  tea.ModCtrl,
+	})))
+}
 
-					require.Equal(t, surfaceExport, model.dialogs.ActiveID())
-					require.Equal(
-						t,
-						clipboardview.LineSlash,
-						model.clipboard.Style(),
-					)
-					require.Contains(
-						t,
-						ansi.Strip(model.View().Content),
-						"Line comments",
-					)
+func TestCopyGestureCancelsOnBlur(t *testing.T) {
+	t.Parallel()
 
-					time.Sleep(time.Millisecond)
-					stale := <-messages
-					require.Nil(
-						t,
-						updateModelCommand(t, model, stale),
-					)
-					require.Equal(t, surfaceExport, model.dialogs.ActiveID())
-				})
-			})
-		}
-	}
+	model, nodeID := newTestModel(t)
+	updateModel(t, model, tea.KeyboardEnhancementsMsg{
+		Flags: ansi.KittyReportEventTypes,
+	})
+	model.geo.Selection().SelectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	model.clipboard.UseNative(func(string, []byte) error {
+		require.Fail(t, "canceled copy must not write")
+		return nil
+	})
+	require.Nil(t, updateModelCommand(t, model, tea.KeyPressMsg(tea.Key{
+		Code: 'c',
+		Mod:  tea.ModCtrl,
+	})))
+	updateModel(t, model, tea.BlurMsg{})
+
+	require.Nil(t, updateModelCommand(t, model, tea.KeyReleaseMsg(tea.Key{
+		Code: tea.KeyLeftCtrl,
+		Mod:  tea.ModCtrl,
+	})))
 }
 
 func TestCopySelectionReportsClipboardFailure(t *testing.T) {

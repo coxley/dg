@@ -66,6 +66,11 @@ type requestCopyMsg struct {
 	text            string
 	preferredPrefix string
 	payload         []byte
+	modifier        tea.KeyMod
+}
+
+type releaseCopyMsg struct {
+	modifier tea.KeyMod
 }
 
 type probeExpiredMsg struct {
@@ -131,22 +136,24 @@ func readNative() []byte {
 	return native.Read(payloadFormat)
 }
 
-// Model owns clipboard capability, debounce, and export-form state.
+// Model owns clipboard capability, copy gestures, and export-form state.
 type Model struct {
-	mode        mode
-	nativeWrite func(string, []byte) error
-	nativeRead  func() []byte
-	pending     requestCopyMsg
-	nativeErr   error
-	probe       uint64
-	armed       bool
-	copy        requestCopyMsg
-	generation  uint64
-	form        *chrome.Form
-	exportText  string
-	exportData  []byte
-	style       Style
-	styles      chrome.FormStyles
+	mode          mode
+	nativeWrite   func(string, []byte) error
+	nativeRead    func() []byte
+	pending       requestCopyMsg
+	nativeErr     error
+	probe         uint64
+	armed         bool
+	releaseEvents bool
+	releaseArmed  bool
+	copy          requestCopyMsg
+	generation    uint64
+	form          *chrome.Form
+	exportText    string
+	exportData    []byte
+	style         Style
+	styles        chrome.FormStyles
 }
 
 // New returns a clipboard model.
@@ -159,12 +166,22 @@ func New(styles chrome.FormStyles) *Model {
 }
 
 // RequestCopy returns a message that begins or advances a copy interaction.
-func RequestCopy(text, preferredPrefix string, payload []byte) tea.Msg {
+func RequestCopy(
+	text, preferredPrefix string,
+	payload []byte,
+	modifier tea.KeyMod,
+) tea.Msg {
 	return requestCopyMsg{
 		text:            text,
 		preferredPrefix: preferredPrefix,
 		payload:         append([]byte(nil), payload...),
+		modifier:        modifier,
 	}
+}
+
+// ReleaseCopy returns a message that completes an armed copy on modifier release.
+func ReleaseCopy(modifier tea.KeyMod) tea.Msg {
+	return releaseCopyMsg{modifier: modifier}
 }
 
 // ReadPaste reads structural data when it matches the terminal's pasted text.
@@ -187,6 +204,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case requestCopyMsg:
 		return m, m.request(message)
+	case releaseCopyMsg:
+		return m, m.release(message)
 	case debounceExpiredMsg:
 		return m, m.handleDebounce(message)
 	case tea.ClipboardMsg:
@@ -261,6 +280,7 @@ func (m *Model) CancelPending() {
 		return
 	}
 	m.armed = false
+	m.releaseArmed = false
 	m.copy = requestCopyMsg{}
 	m.generation++
 }
@@ -283,6 +303,11 @@ func (m *Model) UseNativeReader(read func() []byte) {
 	m.nativeRead = read
 }
 
+// SetReleaseEvents selects modifier-release copy completion when supported.
+func (m *Model) SetReleaseEvents(supported bool) {
+	m.releaseEvents = supported
+}
+
 // CopyGeneration returns the active debounce generation.
 func (m *Model) CopyGeneration() uint64 {
 	return m.generation
@@ -300,8 +325,12 @@ func (m *Model) request(message requestCopyMsg) tea.Cmd {
 		return func() tea.Msg { return OpenExportMsg{} }
 	}
 	m.armed = true
+	m.releaseArmed = m.releaseEvents && message.modifier != 0
 	m.copy = message
 	m.generation++
+	if m.releaseArmed {
+		return nil
+	}
 	generation := m.generation
 	return tea.Tick(DebounceDuration, func(time.Time) tea.Msg {
 		return UpdateMsg{
@@ -310,12 +339,24 @@ func (m *Model) request(message requestCopyMsg) tea.Cmd {
 	})
 }
 
+func (m *Model) release(message releaseCopyMsg) tea.Cmd {
+	if !m.releaseArmed || !m.armed || message.modifier != m.copy.modifier {
+		return nil
+	}
+	copy := m.copy
+	m.armed = false
+	m.releaseArmed = false
+	m.copy = requestCopyMsg{}
+	return m.write(copy)
+}
+
 func (m *Model) handleDebounce(message debounceExpiredMsg) tea.Cmd {
 	if !m.armed || m.copy.text == "" || message.generation != m.generation {
 		return nil
 	}
 	copy := m.copy
 	m.armed = false
+	m.releaseArmed = false
 	m.copy = requestCopyMsg{}
 	return m.write(copy)
 }

@@ -61,6 +61,64 @@ func TestTextInputDeletesWholeGraphemeClusters(t *testing.T) {
 	require.Equal(t, "x", input.Value())
 }
 
+func TestTextInputUsesSharedEditingShortcuts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		keys []tea.Key
+		want string
+	}{
+		{
+			name: "control-u deletes to line start",
+			keys: []tea.Key{{Code: 'u', Mod: tea.ModCtrl}},
+			want: "",
+		},
+		{
+			name: "control-w deletes previous word",
+			keys: []tea.Key{{Code: 'w', Mod: tea.ModCtrl}},
+			want: "one two/",
+		},
+		{
+			name: "alt-b moves to previous word",
+			keys: []tea.Key{
+				{Code: 'b', Mod: tea.ModAlt},
+				{Code: 'X', Text: "X"},
+			},
+			want: "one two/Xthree",
+		},
+		{
+			name: "control-a and alt-f move forward by word",
+			keys: []tea.Key{
+				{Code: 'a', Mod: tea.ModCtrl},
+				{Code: 'f', Mod: tea.ModAlt},
+				{Code: 'X', Text: "X"},
+			},
+			want: "oneX two/three",
+		},
+		{
+			name: "control-k deletes to line end",
+			keys: []tea.Key{
+				{Code: 'b', Mod: tea.ModAlt},
+				{Code: 'k', Mod: tea.ModCtrl},
+			},
+			want: "one two/",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := NewTextInput("one two/three", "", testTextInputStyles())
+			input.Focus()
+			for _, key := range test.keys {
+				input.Update(tea.KeyPressMsg(key))
+			}
+			require.Equal(t, test.want, input.Value())
+		})
+	}
+}
+
 func TestTextInputRendersHoverAndSelectionStates(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +133,7 @@ func TestTextInputRendersHoverAndSelectionStates(t *testing.T) {
 	require.Contains(t, input.View(), styles.HoveredText.Render("value"))
 
 	input.Focus()
-	input.Update(tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModCtrl}))
+	input.Update(tea.KeyPressMsg(tea.Key{Code: 'a', Mod: tea.ModSuper}))
 	require.Contains(t, input.View(), styles.SelectedText.Render("value"))
 }
 

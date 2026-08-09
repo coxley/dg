@@ -51,7 +51,7 @@ func (i *TextInput) Update(message tea.Msg) {
 	case tea.PasteMsg:
 		i.insert(sanitizeSingleLine(message.Content))
 	case tea.KeyPressMsg:
-		i.updateKey(message, ResolveControlIntent(message, true))
+		i.updateKey(message)
 	}
 }
 
@@ -155,43 +155,91 @@ func (i *TextInput) View() string {
 	return padLine(ansi.Truncate(before+cursor+after, i.width, ""), i.width)
 }
 
-func (i *TextInput) updateKey(message tea.KeyPressMsg, intent ControlIntent) {
-	switch {
-	case intent == NavigateLeft:
-		i.selectAll = false
-		i.cursor = max(i.cursor-1, 0)
-	case intent == NavigateRight:
-		i.selectAll = false
-		i.cursor = min(i.cursor+1, len(i.value))
-	case message.Code == 'a' && message.Mod == tea.ModCtrl:
+func (i *TextInput) updateKey(message tea.KeyPressMsg) {
+	if message.Code == 'a' && message.Mod == tea.ModSuper {
 		i.selectAll = true
 		i.cursor = len(i.value)
-	case message.Code == tea.KeyHome:
+		return
+	}
+	edit := ResolveTextEditIntent(message)
+	switch {
+	case edit == TextEditBackward:
+		i.selectAll = false
+		i.cursor = max(i.cursor-1, 0)
+	case edit == TextEditForward:
+		i.selectAll = false
+		i.cursor = min(i.cursor+1, len(i.value))
+	case edit == TextEditLineStart:
 		i.selectAll = false
 		i.cursor = 0
-	case message.Code == tea.KeyEnd || message.Code == 'e' && message.Mod == tea.ModCtrl:
+	case edit == TextEditLineEnd:
 		i.selectAll = false
 		i.cursor = len(i.value)
-	case message.Code == tea.KeyBackspace:
-		if i.selectAll {
-			i.value = i.value[:0]
-			i.cursor = 0
-			i.selectAll = false
-		} else if i.cursor != 0 {
+	case edit == TextEditWordBackward:
+		i.selectAll = false
+		i.cursor = i.previousWordStart()
+	case edit == TextEditWordForward:
+		i.selectAll = false
+		i.cursor = i.nextWordEnd()
+	case edit == TextEditDeleteBackward:
+		if !i.deleteSelection() && i.cursor != 0 {
 			i.value = append(i.value[:i.cursor-1], i.value[i.cursor:]...)
 			i.cursor--
 		}
-	case message.Code == tea.KeyDelete:
-		if i.selectAll {
-			i.value = i.value[:0]
-			i.cursor = 0
-			i.selectAll = false
-		} else if i.cursor < len(i.value) {
+	case edit == TextEditDeleteForward:
+		if !i.deleteSelection() && i.cursor < len(i.value) {
 			i.value = append(i.value[:i.cursor], i.value[i.cursor+1:]...)
+		}
+	case edit == TextEditDeleteWordBackward:
+		if !i.deleteSelection() {
+			start := i.previousWordStart()
+			i.value = append(i.value[:start], i.value[i.cursor:]...)
+			i.cursor = start
+		}
+	case edit == TextEditDeleteToLineStart:
+		if !i.deleteSelection() {
+			i.value = append(i.value[:0], i.value[i.cursor:]...)
+			i.cursor = 0
+		}
+	case edit == TextEditDeleteToLineEnd:
+		if !i.deleteSelection() {
+			i.value = i.value[:i.cursor]
 		}
 	case message.Text != "" && message.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0:
 		i.insert(message.Text)
 	}
+}
+
+func (i *TextInput) deleteSelection() bool {
+	if !i.selectAll {
+		return false
+	}
+	i.value = i.value[:0]
+	i.cursor = 0
+	i.selectAll = false
+	return true
+}
+
+func (i *TextInput) previousWordStart() int {
+	cursor := i.cursor
+	for cursor > 0 && IsTextWordBoundary([]byte(i.value[cursor-1])) {
+		cursor--
+	}
+	for cursor > 0 && !IsTextWordBoundary([]byte(i.value[cursor-1])) {
+		cursor--
+	}
+	return cursor
+}
+
+func (i *TextInput) nextWordEnd() int {
+	cursor := i.cursor
+	for cursor < len(i.value) && IsTextWordBoundary([]byte(i.value[cursor])) {
+		cursor++
+	}
+	for cursor < len(i.value) && !IsTextWordBoundary([]byte(i.value[cursor])) {
+		cursor++
+	}
+	return cursor
 }
 
 func (i *TextInput) insert(text string) {

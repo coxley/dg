@@ -74,7 +74,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
 	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
-	{Scope: scopeLabel, Chords: chrome.Keys("esc", "ctrl+enter"), Command: commandCancel, Label: "finish label"},
+	{Scope: scopeLabel, Chords: chrome.Keys("esc", "ctrl+enter", "super+enter"), Command: commandCancel, Label: "finish label"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("up"), Command: commandMoveUp, Label: "move up"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("right"), Command: commandMoveRight, Label: "move right"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("down"), Command: commandMoveDown, Label: "move down"},

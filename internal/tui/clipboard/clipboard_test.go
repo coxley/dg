@@ -17,19 +17,49 @@ func TestSecondCopyOpensExportWithoutWriting(t *testing.T) {
 	t.Parallel()
 
 	model := newTestModel()
+	model.SetReleaseEvents(true)
 	copies := 0
 	model.UseNative(func(string, []byte) error {
 		copies++
 		return nil
 	})
-	_, first := model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
-	_, second := model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
+	_, first := model.Update(RequestCopy("diagram", "// ", []byte("fragment"), tea.ModCtrl))
+	_, second := model.Update(RequestCopy("diagram", "// ", []byte("fragment"), tea.ModCtrl))
 
-	require.NotNil(t, first)
+	require.Nil(t, first)
 	require.IsType(t, OpenExportMsg{}, second())
 	require.Zero(t, copies)
 	require.Equal(t, LineSlash, model.Style())
 	require.Contains(t, model.View().Content, "Line comments")
+}
+
+func TestCopyWritesOnMatchingModifierRelease(t *testing.T) {
+	t.Parallel()
+
+	model := newTestModel()
+	model.SetReleaseEvents(true)
+	var copied string
+	model.UseNative(func(text string, payload []byte) error {
+		copied = text
+		require.Equal(t, []byte("fragment"), payload)
+		return nil
+	})
+	_, command := model.Update(RequestCopy(
+		"diagram",
+		"// ",
+		[]byte("fragment"),
+		tea.ModCtrl,
+	))
+	require.Nil(t, command)
+	_, command = model.Update(ReleaseCopy(tea.ModSuper))
+	require.Nil(t, command)
+	_, command = model.Update(ReleaseCopy(tea.ModCtrl))
+	require.NotNil(t, command)
+
+	result := command().(UpdateMsg)
+	_, command = model.Update(result)
+	require.IsType(t, CopiedMsg{}, command())
+	require.Equal(t, "diagram", copied)
 }
 
 func TestNativeWriteReportsSuccess(t *testing.T) {
@@ -37,7 +67,7 @@ func TestNativeWriteReportsSuccess(t *testing.T) {
 
 	model := newTestModel()
 	model.UseNative(func(string, []byte) error { return nil })
-	_, _ = model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
+	_, _ = model.Update(RequestCopy("diagram", "// ", []byte("fragment"), tea.ModCtrl))
 	_, command := model.Update(UpdateMsg{
 		message: debounceExpiredMsg{generation: model.generation},
 	})
@@ -55,7 +85,7 @@ func TestCopyDebounceWaitsForInactivity(t *testing.T) {
 			require.Equal(t, []byte("fragment"), payload)
 			return nil
 		})
-		_, command := model.Update(RequestCopy("diagram", "// ", []byte("fragment")))
+		_, command := model.Update(RequestCopy("diagram", "// ", []byte("fragment"), tea.ModCtrl))
 		messages := make(chan tea.Msg, 1)
 		go func() {
 			messages <- command()
@@ -83,7 +113,7 @@ func TestCopyDebounceIgnoresStaleGeneration(t *testing.T) {
 		require.Fail(t, "stale copy must not write")
 		return nil
 	})
-	_, _ = model.Update(RequestCopy("diagram", "// ", nil))
+	_, _ = model.Update(RequestCopy("diagram", "// ", nil, tea.ModCtrl))
 	generation := model.generation
 	model.CancelPending()
 

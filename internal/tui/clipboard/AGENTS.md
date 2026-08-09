@@ -2,10 +2,10 @@
 
 ## Responsibility
 
-`clipboard` owns copy debouncing, native multi-format clipboard access,
-terminal fallback probing, export formatting, and the declarative chrome
-export form. `native` is an internalized MIT-licensed clipboard backend with
-atomic multi-format writes.
+`clipboard` owns copy gesture state, legacy-terminal debouncing, native
+multi-format clipboard access, terminal fallback probing, export formatting,
+and the declarative chrome export form. `native` is an internalized
+MIT-licensed clipboard backend with atomic multi-format writes.
 `Model` implements `tea.Model`.
 
 ## Boundaries

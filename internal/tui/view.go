@@ -97,6 +97,7 @@ func (m *Model) View() tea.View {
 	view.WindowTitle = m.windowTitle
 	view.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
 	view.KeyboardEnhancements.ReportAlternateKeys = true
+	view.KeyboardEnhancements.ReportEventTypes = true
 	switch {
 	case m.dialogs.ActiveID() != surfaceNone:
 	case m.interaction.session.kind == sessionLabelEdit:

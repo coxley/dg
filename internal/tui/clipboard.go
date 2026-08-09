@@ -49,7 +49,21 @@ func (m *Model) copySelection() tea.Cmd {
 		text,
 		m.preferenceValue().CommentPrefix,
 		payload,
+		m.copyModifier,
 	))
+}
+
+func (m *Model) releaseCopy(message tea.KeyReleaseMsg) tea.Cmd {
+	var modifier tea.KeyMod
+	switch message.Code {
+	case tea.KeyLeftCtrl, tea.KeyRightCtrl:
+		modifier = tea.ModCtrl
+	case tea.KeyLeftSuper, tea.KeyRightSuper:
+		modifier = tea.ModSuper
+	default:
+		return nil
+	}
+	return m.updateClipboard(clipboardview.ReleaseCopy(modifier))
 }
 
 func (m *Model) copySelectionPayload() ([]byte, error) {
