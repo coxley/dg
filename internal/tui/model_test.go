@@ -558,6 +558,26 @@ func TestModelCyclesStylesAcrossSelection(t *testing.T) {
 	}, mustEdgeStyle(t, model, edgeB))
 }
 
+func TestModelCyclesEndpointMarkers(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	edgeID := model.geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, model.rebuild())
+	model.selectOnly(layout.Hit{ID: edgeID, Kind: layout.HitEdge})
+
+	for _, want := range []layout.ArrowStyle{
+		layout.ArrowFilled,
+		layout.ArrowOpen,
+		layout.ArrowCircle,
+		layout.ArrowCircleBullet,
+		layout.ArrowNone,
+	} {
+		updateModel(t, model, keyPress('a', "a"))
+		require.Equal(t, want, mustEdgeStyle(t, model, edgeID).PortBArrow)
+	}
+}
+
 func TestModelCyclesTextAlignmentAcrossSelection(t *testing.T) {
 	t.Parallel()
 
@@ -1128,7 +1148,7 @@ func TestLabelHelpOnlyShowsExecutableChords(t *testing.T) {
 	}
 
 	require.True(t, hasBinding("esc", commandCancel))
-	require.False(t, hasBinding("ctrl+enter", commandCancel))
+	require.False(t, hasBinding(labelCommitControlChord, commandCancel))
 	require.False(t, hasBinding("?", commandHelp))
 	before := string(model.editBuffer)
 	updateModel(t, model, keyPress('?', "?"))
@@ -1137,7 +1157,7 @@ func TestLabelHelpOnlyShowsExecutableChords(t *testing.T) {
 	updateModel(t, model, tea.KeyboardEnhancementsMsg{
 		Flags: ansi.KittyDisambiguateEscapeCodes,
 	})
-	require.True(t, hasBinding("ctrl+enter", commandCancel))
+	require.True(t, hasBinding(labelCommitControlChord, commandCommitLabel))
 	require.False(t, hasBinding("?", commandHelp))
 }
 
@@ -1253,7 +1273,7 @@ func setHelpKeyboardEnhancements(t testing.TB, model *Model, enhanced bool) {
 func helpChordRequiresDisambiguation(chord chrome.Chord) bool {
 	value := string(chord)
 	return strings.HasPrefix(value, "super+") ||
-		value == "ctrl+enter" ||
+		value == labelCommitControlChord ||
 		strings.Contains(value, "ctrl+shift+")
 }
 
@@ -1321,10 +1341,13 @@ func helpCommandPerformed(
 		commandTextVertical:
 		return helpAppearanceCommandPerformed(commandID, before, after)
 	case commandCopy,
+		commandArrange,
+		commandCommitLabel,
 		commandDelete,
 		commandDuplicate,
 		commandEditLabel,
 		commandExpand,
+		commandGroup,
 		commandRedo,
 		commandUndo:
 		return helpEditCommandPerformed(commandID, command, before, after)
@@ -1426,8 +1449,12 @@ func helpEditCommandPerformed(
 	before, after helpCommandSnapshot,
 ) bool {
 	switch commandID {
+	case commandArrange:
+		return after.arrangeOpen != before.arrangeOpen
 	case commandCopy:
 		return command != nil
+	case commandCommitLabel:
+		return after.session.kind == sessionNone && after.transaction == transactionNone
 	case commandDelete:
 		return after.nodeCount+after.edgeCount < before.nodeCount+before.edgeCount
 	case commandDuplicate:
@@ -1437,6 +1464,8 @@ func helpEditCommandPerformed(
 			after.target.Kind == layout.HitNode
 	case commandExpand:
 		return len(after.selection) > len(before.selection)
+	case commandGroup:
+		return len(after.document.Groups) != len(before.document.Groups)
 	case commandRedo:
 		return !reflect.DeepEqual(before.document, after.document) && after.canUndo
 	case commandUndo:
@@ -1828,6 +1857,7 @@ type helpCommandSnapshot struct {
 	sidebarOpen    bool
 	sidebarFocused bool
 	preferenceEdit bool
+	arrangeOpen    bool
 }
 
 func snapshotHelpCommand(model *Model) helpCommandSnapshot {
@@ -1849,7 +1879,7 @@ func snapshotHelpCommand(model *Model) helpCommandSnapshot {
 		case layout.HitEdge:
 			edgeCount++
 			edgeStyles[hit.ID], _ = model.geo.EdgeStyle(hit.ID)
-		case layout.HitPort:
+		case layout.HitPort, layout.HitGroup:
 		}
 	}
 	doc := document.New(model.geo)
@@ -1879,6 +1909,7 @@ func snapshotHelpCommand(model *Model) helpCommandSnapshot {
 		sidebarOpen:    model.sidebar.open,
 		sidebarFocused: model.sidebar.focused,
 		preferenceEdit: model.preferenceEdit,
+		arrangeOpen:    model.arrangeOpen,
 	}
 }
 
@@ -2125,8 +2156,8 @@ func TestPreferenceStepperUsesOnlyArrowKeys(t *testing.T) {
 	model.openPreferences()
 	model.dialogs.preferences.model.SetTab(preferencesview.LinkRoutingTab)
 	before := model.geo.Router().Costs.Step
-	require.Contains(t, ansi.Strip(model.View().Content), "⇽")
-	require.Contains(t, ansi.Strip(model.View().Content), "⇾")
+	require.Contains(t, ansi.Strip(model.View().Content), "❮")
+	require.Contains(t, ansi.Strip(model.View().Content), "❯")
 
 	updateModel(t, model, keyPress('9', "9"))
 	require.Equal(t, before, model.geo.Router().Costs.Step)
@@ -2834,6 +2865,109 @@ func TestModelReordersLayersWithUndo(t *testing.T) {
 	)
 }
 
+func TestModelGroupsAndUngroupsOneLevelWithUndo(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	model.geo.Selection().SelectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{ID: right, Kind: layout.HitNode}))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'g', Mod: tea.ModCtrl}))
+
+	_, groups, _ := model.geo.Selection().LogicalCounts()
+	require.Equal(t, 1, groups)
+	var groupID uint32
+	for selected := range model.geo.Selection().Groups() {
+		groupID = selected
+	}
+	require.True(t, model.geo.GroupExists(groupID))
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'g', Mod: tea.ModCtrl}))
+	require.False(t, model.geo.GroupExists(groupID))
+	directNodes, groups, _ := model.geo.Selection().LogicalCounts()
+	require.Equal(t, 2, directNodes)
+	require.Zero(t, groups)
+
+	updateModel(t, model, keyPress('u', "u"))
+	require.True(t, model.geo.GroupExists(groupID))
+	updateModel(t, model, keyPress('u', "u"))
+	require.False(t, model.geo.GroupExists(groupID))
+}
+
+func TestModelNodeClicksDescendNestedGroupsAndSuperSelectsLeaf(t *testing.T) {
+	t.Parallel()
+
+	model, left, middle := newTwoNodeModel(t)
+	right, err := model.geo.NewNodeAt("right", layout.NewPoint(40, 2))
+	require.NoError(t, err)
+	inner, err := model.geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: middle, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	outer, err := model.geo.NewGroup([]ir.Member{
+		{ID: inner, Kind: ir.MemberGroup},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	point := model.geo.Nodes[left].LabelPoint
+	mouse := modelMouseAt(model, point, tea.MouseLeft)
+
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: outer, Kind: layout.HitGroup}))
+	updateModel(t, model, tea.MouseReleaseMsg(mouse))
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: inner, Kind: layout.HitGroup}))
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: left, Kind: layout.HitNode}))
+
+	model.clearSelection()
+	mouse.Mod = tea.ModSuper
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: left, Kind: layout.HitNode}))
+}
+
+func TestModelDragAfterGroupDescentDoesNotAutoSizeNode(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	explicit := layout.Size{Width: 12, Height: 5}
+	require.NoError(t, model.geo.SetNodeSize(left, explicit))
+	groupID, err := model.geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	before := model.geo.Nodes[left].Rect.Min
+	mouse := modelMouseAt(model, model.geo.Nodes[left].LabelPoint, tea.MouseLeft)
+
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: groupID, Kind: layout.HitGroup}))
+	updateModel(t, model, tea.MouseReleaseMsg(mouse))
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: left, Kind: layout.HitNode}))
+	updateModel(t, model, tea.MouseReleaseMsg(mouse))
+
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+	require.Equal(t, gestureMove, model.interaction.gesture.kind)
+	size, ok := model.geo.ExplicitNodeSize(left)
+	require.True(t, ok)
+	require.Equal(t, explicit, size)
+
+	drag := mouse
+	drag.X += 3
+	drag.Y += 2
+	updateModel(t, model, tea.MouseMotionMsg(drag))
+	updateModel(t, model, tea.MouseReleaseMsg(drag))
+	require.Equal(t, before.Add(3, 2), model.geo.Nodes[left].Rect.Min)
+	parentID, ok := model.geo.MemberParent(ir.Member{ID: left, Kind: ir.MemberNode})
+	require.True(t, ok)
+	require.Equal(t, groupID, parentID)
+}
+
 func TestModelBlurPreservesLabelEdit(t *testing.T) {
 	t.Parallel()
 
@@ -2890,6 +3024,79 @@ func TestModelSingleLineEnterCommitsLabelEdit(t *testing.T) {
 
 	require.Equal(t, modeNavigate, model.interaction.mode())
 	require.Equal(t, "nodeX", model.geo.Label(nodeID))
+}
+
+func TestModelEditsEmptyLabelOnSoleSelectedNode(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID := newTestModel(t)
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, ""))
+	require.NoError(t, model.rebuild())
+	model.selectOnly(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+
+	updateModel(t, model, keyPress('e', "e"))
+	require.Equal(t, modeEditLabel, model.interaction.mode())
+	require.False(t, model.labelBatch)
+	updateModel(t, model, keyPress('X', "X"))
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, "X", model.geo.Label(nodeID))
+}
+
+func TestModelBatchEditsExistingLabelsInVisualOrder(t *testing.T) {
+	t.Parallel()
+
+	model, top, bottom := newTwoNodeModel(t)
+	require.NoError(t, model.geo.PlaceNode(top, layout.NewPoint(20, 2)))
+	require.NoError(t, model.geo.PlaceNode(bottom, layout.NewPoint(2, 12)))
+	empty, err := model.geo.NewNodeAt("", layout.NewPoint(2, 2))
+	require.NoError(t, err)
+	require.NoError(t, model.rebuild())
+	model.history.Clear()
+	model.geo.Selection().SelectOnly(layout.Hit{ID: bottom, Kind: layout.HitNode})
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{ID: empty, Kind: layout.HitNode}))
+	require.True(t, model.geo.Selection().Toggle(layout.Hit{ID: top, Kind: layout.HitNode}))
+
+	updateModel(t, model, keyPress('e', "e"))
+	require.Equal(t, top, model.target.ID)
+	updateModel(t, model, keyPress('X', "X"))
+	updateModel(t, model, keyPress(tea.KeyEnter, ""))
+	require.Equal(t, bottom, model.target.ID)
+	updateModel(t, model, keyPress('Y', "Y"))
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter, Mod: tea.ModCtrl}))
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.Equal(t, "leftX", model.geo.Label(top))
+	require.Equal(t, "rightY", model.geo.Label(bottom))
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: empty, Kind: layout.HitNode}))
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, "right", model.geo.Label(bottom))
+	require.Equal(t, "leftX", model.geo.Label(top))
+	updateModel(t, model, keyPress('u', "u"))
+	require.Equal(t, "left", model.geo.Label(top))
+}
+
+func TestModelBatchLabelEscapeStopsAndRestoresGroupSelection(t *testing.T) {
+	t.Parallel()
+
+	model, left, right := newTwoNodeModel(t)
+	groupID, err := model.geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	model.geo.Selection().SelectOnly(layout.Hit{ID: groupID, Kind: layout.HitGroup})
+	model.history.Clear()
+
+	updateModel(t, model, keyPress('e', "e"))
+	updateModel(t, model, keyPress('X', "X"))
+	updateModel(t, model, keyPress(tea.KeyEscape, ""))
+
+	require.Equal(t, modeNavigate, model.interaction.mode())
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: groupID, Kind: layout.HitGroup}))
+	require.Equal(t, "leftX", model.geo.Label(left))
+	require.Equal(t, "right", model.geo.Label(right))
 }
 
 func TestModelSuperEnterCommitsLabelEdit(t *testing.T) {
@@ -3183,6 +3390,7 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 	third, err := model.geo.NewNodeAt("third", layout.NewPoint(35, 8))
 	require.NoError(t, err)
 	require.NoError(t, model.rebuild())
+	model.edgeStyle.PortBArrow = layout.ArrowFilled
 	sourceID := portExiting(t, model, left, 1)
 	destinationID := portExiting(t, model, right, -1)
 	source := model.geo.Ports[sourceID]
@@ -3236,8 +3444,15 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 		uint64(destination.Anchor.X),
 		uint64(destination.Anchor.Y),
 	)
+	require.False(t, ok)
+	require.Zero(t, glyph)
+	glyph, ok = previewGlyph(
+		model,
+		uint64(destination.Exit.X),
+		uint64(destination.Exit.Y),
+	)
 	require.True(t, ok)
-	require.Equal(t, '┤', glyph)
+	require.Equal(t, '▶', glyph)
 
 	updateModel(t, model, tea.MouseReleaseMsg{
 		X:      int(drop.X),
@@ -3246,6 +3461,16 @@ func TestModelMouseDragsLineBetweenPorts(t *testing.T) {
 	})
 	require.Equal(t, modeConnect, model.interaction.mode())
 	require.True(t, model.geo.EdgeExists(0))
+	require.Equal(
+		t,
+		'▶',
+		frameRuneAt(t, model.canvas.Frame(canvasview.BaseFrame), destination.Exit),
+	)
+	require.Equal(
+		t,
+		'│',
+		frameRuneAt(t, model.canvas.Frame(canvasview.BaseFrame), destination.Anchor),
+	)
 
 	require.Equal(t, modeConnect, model.interaction.mode())
 	require.Equal(t, sessionNone, model.interaction.session.kind)
@@ -3403,6 +3628,7 @@ func TestModelConnectionPreviewRoutesAroundNodes(t *testing.T) {
 	sourceID := portExiting(t, model, left, 1)
 	source := model.geo.Ports[sourceID]
 	cursor := layout.NewPoint(35, source.Anchor.Y)
+	model.edgeStyle.PortBArrow = layout.ArrowFilled
 
 	updateModel(t, model, keyPress('l', "l"))
 	updateModel(t, model, tea.MouseClickMsg{
@@ -3419,6 +3645,15 @@ func TestModelConnectionPreviewRoutesAroundNodes(t *testing.T) {
 	preview := model.interaction.render.connectionPreview
 	require.Equal(t, source.Anchor, preview[0])
 	require.Equal(t, cursor, preview[len(preview)-1])
+	glyph, ok := previewGlyph(model, uint64(cursor.X), uint64(cursor.Y))
+	require.False(t, ok)
+	require.Zero(t, glyph)
+	marker := stepToward(cursor, preview[len(preview)-2])
+	wantMarker, ok := render.ArrowGlyphAt(preview, model.edgeStyle, marker)
+	require.True(t, ok)
+	glyph, ok = previewGlyph(model, uint64(marker.X), uint64(marker.Y))
+	require.True(t, ok)
+	require.Equal(t, wantMarker, glyph)
 	for i := 1; i < len(preview); i++ {
 		point := preview[i-1]
 		for point != preview[i] {
@@ -3828,7 +4063,7 @@ func TestModelViewShowsSaveForm(t *testing.T) {
 	require.Nil(t, view.Cursor)
 }
 
-func TestModelSaveFormRightJustifiesCompactValues(t *testing.T) {
+func TestModelSaveFormLeftAlignsCompactValues(t *testing.T) {
 	t.Parallel()
 
 	model, _, _ := newStoredTestModel(t, "node")
@@ -3836,7 +4071,10 @@ func TestModelSaveFormRightJustifiesCompactValues(t *testing.T) {
 	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 's', Mod: tea.ModCtrl}))
 	model.dialogs.save.SetValue("Research", "Canvas title")
 
-	width := model.dialogs.save.form.Plan().Bounds.Width
+	plan := model.dialogs.save.form.Plan()
+	width := plan.Bounds.Width
+	valueX := plan.Fields[0].ValueX - plan.Bounds.X
+	require.Equal(t, plan.Fields[0].ValueX, plan.Fields[1].ValueX)
 	lines := strings.Split(ansi.Strip(model.dialogs.save.View()), "\n")
 	for label, value := range map[string]string{
 		"Canvas name":        "Canvas title",
@@ -3849,7 +4087,7 @@ func TestModelSaveFormRightJustifiesCompactValues(t *testing.T) {
 			}
 			found = true
 			require.Equal(t, width, ansi.StringWidth(line))
-			require.Equal(t, width-saveTextWidth, strings.Index(line, value), line)
+			require.Equal(t, valueX, strings.Index(line, value), line)
 		}
 		require.True(t, found, label)
 	}
@@ -5139,6 +5377,8 @@ func selectHit(t testing.TB, model *Model, want layout.Hit) {
 		model.cursor = model.geo.Ports[want.ID].Anchor
 	case layout.HitEdge:
 		model.cursor = model.geo.Edges[want.ID].Points[0]
+	case layout.HitGroup:
+		require.FailNow(t, "groups have no direct hit geometry")
 	}
 	model.refreshHits()
 	for i, hit := range model.hits {

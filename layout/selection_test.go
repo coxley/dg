@@ -2,6 +2,7 @@ package layout
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -107,4 +108,62 @@ func TestSelectionAreaAndReuse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, left, reused)
 	require.False(t, selection.Contains(Hit{ID: reused, Kind: HitNode}))
+}
+
+func TestSelectionGroupIncludesDescendantsAndPreservesAntichain(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	left, err := geo.NewNode("left")
+	require.NoError(t, err)
+	middle, err := geo.NewNode("middle")
+	require.NoError(t, err)
+	right, err := geo.NewNode("right")
+	require.NoError(t, err)
+	inner, err := geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: middle, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	outer, err := geo.NewGroup([]ir.Member{
+		{ID: inner, Kind: ir.MemberGroup},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+
+	selection := geo.Selection()
+	require.True(t, selection.SelectOnly(Hit{ID: outer, Kind: HitGroup}))
+	require.Equal(t, []uint32{left, middle, right}, slices.Collect(selection.Nodes()))
+	require.True(t, selection.Contains(Hit{ID: left, Kind: HitNode}))
+	require.False(t, selection.DirectlyContains(Hit{ID: left, Kind: HitNode}))
+
+	require.True(t, selection.Toggle(Hit{ID: inner, Kind: HitGroup}))
+	require.False(t, selection.DirectlyContains(Hit{ID: outer, Kind: HitGroup}))
+	require.True(t, selection.DirectlyContains(Hit{ID: inner, Kind: HitGroup}))
+	require.Equal(t, []uint32{left, middle}, slices.Collect(selection.Nodes()))
+
+	require.True(t, selection.Toggle(Hit{ID: left, Kind: HitNode}))
+	require.False(t, selection.DirectlyContains(Hit{ID: inner, Kind: HitGroup}))
+	require.True(t, selection.DirectlyContains(Hit{ID: left, Kind: HitNode}))
+}
+
+func TestSelectionAreaSelectsOutermostGroup(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("left", NewPoint(2, 2))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", NewPoint(20, 2))
+	require.NoError(t, err)
+	groupID, err := geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+
+	geo.Selection().SelectArea(NewPoint(0, 0), NewPoint(10, 8))
+	require.True(t, geo.Selection().DirectlyContains(Hit{ID: groupID, Kind: HitGroup}))
+	require.Equal(t, []uint32{left, right}, slices.Collect(geo.Selection().Nodes()))
 }

@@ -67,6 +67,10 @@ document coordinates, occlusion, preview ownership, or its hot-path needs.
 - Ctrl constrains selection moves and Alt-drag duplication to the dominant
   horizontal or vertical axis
 - Ctrl-click toggles non-contiguous selection
+- the first node click selects its outermost group; repeated clicks descend one
+  group level, and Super-click selects the leaf node directly
+- Ctrl-G or Super-G groups selected siblings and ungroups one selected group by
+  exactly one level
 - Ctrl-A expands to connected components, then selects everything
 - edge endpoint dragging begins only after pointer movement
 - selected edges win ambiguous hit priority near their ports
@@ -153,8 +157,9 @@ anchor actions to the body bottom.
 Enter submits the primary action from ordinary form fields: Save in
 Preferences, Copy in Export, and Name Canvas in the naming form. Fields with
 their own Enter action take precedence, including the preferences directory
-picker. Enter on an explicitly focused button submits that button. The naming
-form right-justifies compact text values opposite their field labels.
+picker. Enter on an explicitly focused button submits that button. Form
+controls use a shared left-aligned value column, including compact naming
+fields.
 
 The sidebar uses an application-declared Pane with separate Canvases and Drafts
 tabs. Each tab owns half of the header content width and supports pointer and
@@ -216,8 +221,20 @@ cancel an armed copy. Stale fallback timers must never write after another
 interaction.
 
 Plain Enter commits a single-line label. Shift-Enter inserts its first newline;
-plain Enter then inserts subsequent newlines. Ctrl-Enter, Super-Enter, Escape,
-and interaction changes commit labels of any size.
+plain Enter then inserts subsequent newlines. Ctrl-Enter and Super-Enter commit
+labels of any size. Editing a logical multi-selection visits only existing
+labels in visual order; Enter-based commits advance with one history transaction
+per label, while Escape and interaction changes commit the active label and stop.
+
+Shift-L opens an adjacent floating Arrange form without obscuring the canvas.
+Its horizontal alignment, vertical alignment, and distribution selectors
+preview from the geometry captured on open. Distribution takes precedence on
+its axis. Enter, Shift-L, or an outside click commits one history interaction
+and closes the form; the outside click continues to the underlying surface.
+Escape or focus loss restores the captured geometry. Alignment uses logical
+item bounds; distribution pins the extreme items and shares integer gap
+remainders. Selected groups move rigidly. Arrange remains a TUI helper and does
+not persist live layout relationships.
 
 The first actual clipboard write prefers the internal native backend. It
 publishes plain text and `application/vnd.dg.fragment` in one clipboard
@@ -230,6 +247,7 @@ message.
 
 - `r`: rectangle tool
 - `l`: line tool
+- Shift-L: arrange selection
 - `e`: edit label
 - `b`: cycle borders
 - `p`: cycle node padding
@@ -240,6 +258,7 @@ message.
 - Tab and Shift-Tab: cycle node focus
 - Backspace or Delete: delete selection
 - `d`: duplicate
+- Ctrl-G or Super-G: group or ungroup one level
 - `[` and `]`: move one layer
 - `{` and `}`: send to back or front
 - `u` or Ctrl-Z: undo

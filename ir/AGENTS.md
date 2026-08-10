@@ -7,11 +7,12 @@ styles, layers, history, or terminal glyphs.
 
 ## Core data
 
-- `Graph.Nodes`, `Graph.Ports`, and `Graph.Edges` use their slice indices as
+- `Graph.Nodes`, `Graph.Ports`, `Graph.Edges`, and `Graph.Groups` use their slice indices as
   IDs
 - `Node` stores a label and ordered port IDs
 - `Port` stores its node ID, side, and normalized offset in `[0, 1]`
 - `Edge` stores two port IDs and is undirected
+- `Group` stores ordered immediate node or subgroup members
 - `Components` stores reusable union-find parents and ranks
 
 ## Invariants
@@ -23,6 +24,8 @@ styles, layers, history, or terminal glyphs.
 - a port cannot connect to itself
 - `Node.Empty`, `Port.Empty`, and `Edge.Empty` define tombstone semantics
 - graph mutation must keep every node's ordered port list consistent
+- groups form a strict tree, contain at least two immediate members, and
+  dissolve while lifting their remaining child when deletion leaves a singleton
 
 `NewNode` creates ports at offsets `.5`, `.25`, and `.75` on each side.
 Stored order defines connection preference. Use `NewNodeWithPorts` for custom

@@ -76,8 +76,8 @@ type FormStyles struct {
 	TextInput    TextInputStyles
 }
 
-// NumberFieldStyles defines number text and directional-control states.
-// Directional controls only appear while the field has focus.
+// NumberFieldStyles defines number text and shared directional-control states.
+// Directional controls only appear while a number or select field has focus.
 type NumberFieldStyles struct {
 	Value            lipgloss.Style
 	HoveredValue     lipgloss.Style
@@ -90,9 +90,10 @@ type NumberFieldStyles struct {
 
 // FormControlPlan records one visible field or button hit target.
 type FormControlPlan struct {
-	ID   ID
-	Kind FieldKind
-	Rect Rect
+	ID     ID
+	Kind   FieldKind
+	Rect   Rect
+	ValueX int
 }
 
 // FormPlan is one retained form arrangement.
@@ -485,23 +486,23 @@ func (f *Form) changeField(field *FormField, delta int) tea.Cmd {
 		} else if field.Number != field.Maximum {
 			field.Number++
 		}
-		f.flashID = field.ID
-		f.flash = delta
-		f.generation++
-		generation := f.generation
-		f.invalidate()
-		return tea.Tick(formFlashDuration, func(time.Time) tea.Msg {
-			return FormFlashExpiredMsg{form: f, generation: generation}
-		})
 	case SelectField:
-		if len(field.Options) != 0 {
-			field.Selected = (field.Selected + delta%len(field.Options) + len(field.Options)) %
-				len(field.Options)
-			f.invalidate()
+		if len(field.Options) == 0 {
+			return nil
 		}
+		field.Selected = (field.Selected + delta%len(field.Options) + len(field.Options)) %
+			len(field.Options)
 	case DirectoryField, TextField:
+		return nil
 	}
-	return nil
+	f.flashID = field.ID
+	f.flash = delta
+	f.generation++
+	generation := f.generation
+	f.invalidate()
+	return tea.Tick(formFlashDuration, func(time.Time) tea.Msg {
+		return FormFlashExpiredMsg{form: f, generation: generation}
+	})
 }
 
 func (f *Form) field(id ID, kind FieldKind) (FormField, bool) {
@@ -551,6 +552,7 @@ func (f *Form) arrange() {
 	maxOffset := max(contentHeight-bounds.Height, 0)
 	f.offset = min(max(f.offset, 0), maxOffset)
 	buttonY := len(f.declaration.Fields) + spacerHeight
+	valueColumn := f.valueColumn(bounds.Width)
 
 	plan := FormPlan{
 		Version:      f.version,
@@ -583,9 +585,15 @@ func (f *Form) arrange() {
 		)
 		plan.Fields = append(plan.Fields, FormControlPlan{
 			ID: field.ID, Kind: field.Kind, Rect: rect,
+			ValueX: bounds.X + valueColumn,
 		})
 		if rect.Width != 0 && rect.Height != 0 {
-			lines[screenY-bounds.Y] = f.renderField(field, i == f.focus, bounds.Width)
+			lines[screenY-bounds.Y] = f.renderField(
+				field,
+				i == f.focus,
+				bounds.Width,
+				valueColumn,
+			)
 		}
 	}
 	buttonScreenY := bounds.Y + buttonY - f.offset
@@ -644,7 +652,7 @@ func (f *Form) buttonFocus() int {
 	return 0
 }
 
-func (f *Form) renderField(field FormField, focused bool, width int) string {
+func (f *Form) renderField(field FormField, focused bool, width, valueColumn int) string {
 	labelStyle, valueStyle := f.styles.Label, f.styles.Value
 	hovered := f.hovered && f.declaration.Fields[f.hover].ID == field.ID
 	switch {
@@ -656,17 +664,17 @@ func (f *Form) renderField(field FormField, focused bool, width int) string {
 	label := labelStyle.Render(field.Label)
 	if field.Kind == TextField {
 		input := f.inputs[field.ID]
-		input.SetWidth(textFieldWidth(field, label, width))
+		input.SetWidth(textFieldWidth(field, valueColumn, width))
 		input.SetHovered(hovered)
 		if focused {
 			input.Focus()
 		} else {
 			input.Blur()
 		}
-		return renderFormRow(width, label, input.View())
+		return renderFormRow(width, valueColumn, label, input.View())
 	}
 	value := f.renderFieldValue(field, focused, hovered, valueStyle)
-	return renderFormRow(width, label, value)
+	return renderFormRow(width, valueColumn, label, value)
 }
 
 func (f *Form) renderFieldValue(
@@ -674,12 +682,20 @@ func (f *Form) renderFieldValue(
 	focused, hovered bool,
 	style lipgloss.Style,
 ) string {
-	if field.Kind != NumberField {
+	if field.Kind != NumberField && field.Kind != SelectField {
 		return style.Render(f.fieldText(field, focused))
 	}
 
-	value := strconv.FormatUint(field.Number, 10)
+	var value string
+	if field.Kind == NumberField {
+		value = strconv.FormatUint(field.Number, 10)
+	} else if len(field.Options) != 0 {
+		value = field.Options[field.Selected].Label
+	}
 	if !focused {
+		if field.Kind == SelectField {
+			return style.Render("  " + value + "  ")
+		}
 		numberStyle := f.styles.Number.Value
 		if hovered {
 			numberStyle = f.styles.Number.HoveredValue
@@ -695,9 +711,13 @@ func (f *Form) renderFieldValue(
 			increment = f.styles.Number.ActiveIncrement
 		}
 	}
-	return decrement.Render("⇽") +
-		f.styles.Number.FocusedValue.Render(" "+value+" ") +
-		increment.Render("⇾")
+	valueStyle := f.styles.Number.FocusedValue
+	if field.Kind == SelectField {
+		valueStyle = style
+	}
+	return decrement.Render("❮") +
+		valueStyle.Render(" "+value+" ") +
+		increment.Render("❯")
 }
 
 func (f *Form) hoverAt(point Point) {
@@ -747,7 +767,7 @@ func (f *Form) fieldText(field FormField, focused bool) string {
 	if !focused {
 		return "  " + value + "  "
 	}
-	return "⇽ " + value + " ⇾"
+	return "❮ " + value + " ❯"
 }
 
 func (f *Form) syncInputs() {
@@ -773,15 +793,15 @@ func (f *Form) clickTextInput(index, x int) {
 		return
 	}
 	rect := f.plan.Fields[index].Rect
-	label := f.styles.FocusedLabel.Render(field.Label)
-	inputWidth := textFieldWidth(field, label, rect.Width)
+	valueX := f.plan.Fields[index].ValueX
+	inputWidth := textFieldWidth(field, valueX-rect.X, rect.Width)
 	input.SetWidth(inputWidth)
 	input.Focus()
-	input.Click(x - (rect.Right() - inputWidth))
+	input.Click(x - valueX)
 }
 
-func textFieldWidth(field FormField, label string, width int) int {
-	width = max(width-ansi.StringWidth(label)-1, 0)
+func textFieldWidth(field FormField, valueColumn, width int) int {
+	width = max(width-valueColumn, 0)
 	if field.TextWidth > 0 {
 		width = min(width, field.TextWidth)
 	}
@@ -798,10 +818,25 @@ func cloneFormDeclaration(declaration FormDeclaration) FormDeclaration {
 	return clone
 }
 
-func renderFormRow(width int, label, value string) string {
-	valueWidth := ansi.StringWidth(value)
-	label = ansi.Truncate(label, max(width-valueWidth, 0), "")
-	gap := max(width-ansi.StringWidth(label)-valueWidth, 0)
+func (f *Form) valueColumn(width int) int {
+	labelWidth := 0
+	for _, field := range f.declaration.Fields {
+		for _, style := range [...]lipgloss.Style{
+			f.styles.Label,
+			f.styles.HoveredLabel,
+			f.styles.FocusedLabel,
+		} {
+			labelWidth = max(labelWidth, ansi.StringWidth(style.Render(field.Label)))
+		}
+	}
+	return min(labelWidth+1, width)
+}
+
+func renderFormRow(width, valueColumn int, label, value string) string {
+	valueColumn = min(max(valueColumn, 0), width)
+	label = ansi.Truncate(label, max(valueColumn-1, 0), "")
+	gap := max(valueColumn-ansi.StringWidth(label), 0)
+	value = ansi.Truncate(value, max(width-valueColumn, 0), "")
 	return padLine(label+strings.Repeat(" ", gap)+value, width)
 }
 

@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/coxley/dg/ir"
@@ -78,6 +79,65 @@ func TestDuplicateSelectionReusesTombstones(t *testing.T) {
 	nodes, edges := geo.Selection().Counts()
 	require.Equal(t, benchmarkClusterNodes, nodes)
 	require.Equal(t, 2, edges)
+}
+
+func TestDuplicateSelectionPreservesSelectedGroupHierarchy(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	left, err := geo.NewNode("left")
+	require.NoError(t, err)
+	middle, err := geo.NewNode("middle")
+	require.NoError(t, err)
+	right, err := geo.NewNode("right")
+	require.NoError(t, err)
+	inner, err := geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: middle, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	outer, err := geo.NewGroup([]ir.Member{
+		{ID: inner, Kind: ir.MemberGroup},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	require.True(t, geo.Selection().SelectOnly(Hit{ID: outer, Kind: HitGroup}))
+	require.NoError(t, geo.DuplicateSelection(20, 0))
+
+	_, groups, _ := geo.Selection().LogicalCounts()
+	require.Equal(t, 1, groups)
+	var duplicate uint32
+	for groupID := range geo.Selection().Groups() {
+		duplicate = groupID
+	}
+	members, ok := geo.GroupMembers(duplicate)
+	require.True(t, ok)
+	require.Equal(t, ir.MemberGroup, members[0].Kind)
+	require.NotEqual(t, inner, members[0].ID)
+	require.Equal(t, 3, len(slices.Collect(geo.GroupNodes(duplicate))))
+}
+
+func TestDuplicateDrilledNodesOmitsParentGroup(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	left, err := geo.NewNode("left")
+	require.NoError(t, err)
+	right, err := geo.NewNode("right")
+	require.NoError(t, err)
+	_, err = geo.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	require.True(t, geo.Selection().SelectOnly(Hit{ID: left, Kind: HitNode}))
+	require.True(t, geo.Selection().Toggle(Hit{ID: right, Kind: HitNode}))
+	require.NoError(t, geo.DuplicateSelection(20, 0))
+
+	_, groups, _ := geo.Selection().LogicalCounts()
+	require.Zero(t, groups)
 }
 
 func TestCloneIsIndependentAndPreservesSelection(t *testing.T) {

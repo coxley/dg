@@ -37,10 +37,12 @@ var keybindActionLabels = map[chrome.CommandID]string{
 	commandActivate:        "Complete Connection",
 	commandArrowEnd:        "Cycle End Arrow",
 	commandArrowStart:      "Cycle Start Arrow",
+	commandArrange:         "Arrange Selection",
 	commandBack:            "Go Back",
 	commandBorder:          "Cycle Border",
 	commandCancel:          "Cancel Tool",
 	commandCopy:            "Copy Selection",
+	commandCommitLabel:     "Commit Label",
 	commandDashed:          "Toggle Dashed Stroke",
 	commandDelete:          "Delete Selection",
 	commandDuplicate:       "Duplicate Selection",
@@ -148,7 +150,40 @@ func configuredBindings(snapshot settings.Snapshot) []chrome.Binding {
 		}
 		values = append(values, value)
 	}
+	values = migrateLabelCommitBinding(values)
 	return bindingsFromValues(values)
+}
+
+func migrateLabelCommitBinding(values []preferencesview.Keybind) []preferencesview.Keybind {
+	commitConfigured := false
+	for i := range values {
+		value := &values[i]
+		if value.Scope == scopeLabel && value.Command == commandCommitLabel {
+			commitConfigured = true
+		}
+		if value.Scope != scopeLabel || value.Command != commandCancel {
+			continue
+		}
+		var retained [3]chrome.Chord
+		next := 0
+		for _, mapping := range value.Mappings {
+			if mapping == labelCommitControlChord || mapping == labelCommitSuperChord {
+				continue
+			}
+			if mapping != "" {
+				retained[next] = mapping
+				next++
+			}
+		}
+		value.Mappings = retained
+	}
+	if !commitConfigured {
+		values = append(values, preferencesview.Keybind{
+			Scope: scopeLabel, Command: commandCommitLabel,
+			Mappings: [3]chrome.Chord{labelCommitControlChord, labelCommitSuperChord},
+		})
+	}
+	return values
 }
 
 func cloneBindings(bindings []chrome.Binding) []chrome.Binding {

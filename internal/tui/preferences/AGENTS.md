@@ -16,8 +16,8 @@ form geometry and traversal, and `directorypicker` owns filesystem navigation.
 - `Completed` reports Save or Cancel.
 - A zero height hugs declared content. Positive heights constrain the form and
   let its retained plan reveal the focused control.
-- Preference rows justify titles against the left edge and controls against
-  the right edge of the current modal body width.
+- Preference rows align titles against the left edge and controls against one
+  shared value-column edge.
 - The application supplies independent dark and light semantic tint options;
   the form stores only their selected IDs.
 - The background selector stores whether the parent should leave the terminal

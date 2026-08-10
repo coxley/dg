@@ -147,13 +147,15 @@ func (p Port) Empty() bool {
 
 // Graph is an undirected representation of diagram nodes connected by edges and ports.
 type Graph struct {
-	Nodes []Node
-	Edges []Edge
-	Ports []Port
+	Nodes  []Node
+	Edges  []Edge
+	Ports  []Port
+	Groups []Group
 
-	freeNodes []uint32
-	freeEdges []uint32
-	freePorts []uint32
+	freeNodes  []uint32
+	freeEdges  []uint32
+	freePorts  []uint32
+	freeGroups []uint32
 }
 
 func (g *Graph) String() string {
@@ -327,6 +329,7 @@ func (g *Graph) DeleteNode(nodeID uint32) error {
 		return fmt.Errorf("%w: %d", ErrNodeNotFound, nodeID)
 	}
 
+	g.removeFromParent(Member{ID: nodeID, Kind: MemberNode})
 	for edgeID := range g.Edges {
 		if !g.EdgeExists(uint32(edgeID)) {
 			continue
@@ -419,7 +422,7 @@ func (g *Graph) Validate() error {
 			return fmt.Errorf("edge %d connects port %d to itself", edgeID, edge.PortA)
 		}
 	}
-	return nil
+	return g.validateGroups()
 }
 
 // Clone returns an independent graph with reconstructed free lists.
@@ -432,6 +435,7 @@ func (g Graph) Clone() Graph {
 // CloneInto replaces dst with an independent graph while retaining its capacity.
 func (g Graph) CloneInto(dst *Graph) {
 	previousNodes := len(dst.Nodes)
+	previousGroups := len(dst.Groups)
 	if len(g.Nodes) < previousNodes {
 		clear(dst.Nodes[len(g.Nodes):])
 	}
@@ -448,6 +452,18 @@ func (g Graph) CloneInto(dst *Graph) {
 		ports = slices.Grow(ports[:0], len(g.Nodes[i].Ports))
 		ports = append(ports, g.Nodes[i].Ports...)
 		dst.Nodes[i] = Node{Label: g.Nodes[i].Label, Ports: ports}
+	}
+	if len(g.Groups) < previousGroups {
+		clear(dst.Groups[len(g.Groups):])
+	}
+	dst.Groups = slices.Grow(dst.Groups[:0], len(g.Groups))[:len(g.Groups)]
+	for i := range g.Groups {
+		var members []Member
+		if i < previousGroups {
+			members = dst.Groups[i].Members
+		}
+		members = append(members[:0], g.Groups[i].Members...)
+		dst.Groups[i] = Group{Members: members}
 	}
 	dst.rebuildFreeLists()
 }
@@ -505,6 +521,7 @@ func (g *Graph) rebuildFreeLists() {
 	g.freeNodes = g.freeNodes[:0]
 	g.freeEdges = g.freeEdges[:0]
 	g.freePorts = g.freePorts[:0]
+	g.freeGroups = g.freeGroups[:0]
 	for i := range g.Nodes {
 		if !g.NodeExists(uint32(i)) {
 			g.freeNodes = append(g.freeNodes, uint32(i))
@@ -518,6 +535,11 @@ func (g *Graph) rebuildFreeLists() {
 	for i := range g.Ports {
 		if !g.PortExists(uint32(i)) {
 			g.freePorts = append(g.freePorts, uint32(i))
+		}
+	}
+	for i := range g.Groups {
+		if !g.GroupExists(uint32(i)) {
+			g.freeGroups = append(g.freeGroups, uint32(i))
 		}
 	}
 }

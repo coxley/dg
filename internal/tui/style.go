@@ -217,7 +217,7 @@ func (m *Model) toggleHitStroke(hit layout.Hit) error {
 		style.Stroke = style.Stroke.Toggle()
 		m.edgeStyle = style
 		return m.geo.SetEdgeStyle(hit.ID, style)
-	case layout.HitPort:
+	case layout.HitPort, layout.HitGroup:
 		return nil
 	}
 	return nil

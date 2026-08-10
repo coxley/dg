@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const CurrentVersion uint32 = 3
+const CurrentVersion uint32 = 4
 
 var ErrUnsupportedVersion = errors.New("unsupported document version")
 
@@ -26,10 +26,30 @@ type Document struct {
 	Nodes       []Node       `json:"nodes"`
 	Ports       []Port       `json:"ports"`
 	Edges       []Edge       `json:"edges"`
+	Groups      []Group      `json:"groups,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Layers      []Layer      `json:"layers,omitempty"`
 	Options     Options      `json:"options"`
 }
+
+// Group stores ordered immediate node and subgroup membership.
+type Group struct {
+	Members []GroupMember `json:"members"`
+}
+
+// GroupMember stores one node or subgroup reference.
+type GroupMember struct {
+	Kind GroupMemberKind `json:"kind"`
+	ID   uint32          `json:"id"`
+}
+
+// GroupMemberKind identifies a persisted group member type.
+type GroupMemberKind string
+
+const (
+	GroupMemberNode  GroupMemberKind = "node"
+	GroupMemberGroup GroupMemberKind = "group"
+)
 
 // Node stores label, placement, and ordered port membership.
 type Node struct {
@@ -176,8 +196,10 @@ type EdgeStyle struct {
 type ArrowStyle string
 
 const (
-	ArrowOpen   ArrowStyle = "open"
-	ArrowFilled ArrowStyle = "filled"
+	ArrowOpen         ArrowStyle = "open"
+	ArrowFilled       ArrowStyle = "filled"
+	ArrowCircle       ArrowStyle = "circle"
+	ArrowCircleBullet ArrowStyle = "circle_bullet"
 )
 
 // Layer identifies one node or edge in back-to-front order.
@@ -227,10 +249,12 @@ func (d *Document) Update(geo *layout.Layout) {
 	router := geo.Router()
 	previousNodes := d.Nodes[:cap(d.Nodes)]
 	previousEdges := d.Edges[:cap(d.Edges)]
+	previousGroups := d.Groups[:cap(d.Groups)]
 	d.Version = CurrentVersion
 	d.Nodes = d.Nodes[:0]
 	d.Ports = d.Ports[:0]
 	d.Edges = d.Edges[:0]
+	d.Groups = d.Groups[:0]
 	d.Attachments = d.Attachments[:0]
 	d.Layers = d.Layers[:0]
 	d.Options = Options{
@@ -283,6 +307,33 @@ func (d *Document) Update(geo *layout.Layout) {
 		}
 		d.Nodes = append(d.Nodes, node)
 	}
+	groupIDs := make([]uint32, len(graph.Groups))
+	for groupID := range graph.Groups {
+		if graph.GroupExists(uint32(groupID)) {
+			groupIDs[groupID] = uint32(len(d.Groups))
+			d.Groups = append(d.Groups, Group{})
+		}
+	}
+	for groupID, source := range graph.Groups {
+		if !graph.GroupExists(uint32(groupID)) {
+			continue
+		}
+		compactID := groupIDs[groupID]
+		var members []GroupMember
+		if int(compactID) < len(previousGroups) {
+			members = previousGroups[compactID].Members
+		}
+		members = slices.Grow(members[:0], len(source.Members))
+		for _, member := range source.Members {
+			switch member.Kind {
+			case ir.MemberNode:
+				members = append(members, GroupMember{Kind: GroupMemberNode, ID: nodeIDs[member.ID]})
+			case ir.MemberGroup:
+				members = append(members, GroupMember{Kind: GroupMemberGroup, ID: groupIDs[member.ID]})
+			}
+		}
+		d.Groups[compactID] = Group{Members: members}
+	}
 	edgeIDs := make([]uint32, len(graph.Edges))
 	for edgeID := range graph.Edges {
 		if !graph.EdgeExists(uint32(edgeID)) {
@@ -332,7 +383,7 @@ func (d *Document) Update(geo *layout.Layout) {
 				Kind: LayerEdge,
 				ID:   edgeIDs[hit.ID],
 			})
-		case layout.HitPort:
+		case layout.HitPort, layout.HitGroup:
 			continue
 		}
 	}
@@ -388,7 +439,7 @@ func Migrate(data []byte, dst *Document) (bool, error) {
 		}
 		return false, nil
 	}
-	if sourceVersion != 2 {
+	if sourceVersion != 2 && sourceVersion != 3 {
 		return false, fmt.Errorf("%w: %d", ErrUnsupportedVersion, sourceVersion)
 	}
 	data, err := migrateJSON(data, sourceVersion)
@@ -436,11 +487,17 @@ func (d *Document) resetForDecode() {
 		bends := edges[i].Bends[:0]
 		edges[i] = Edge{Bends: bends}
 	}
+	groups := d.Groups[:cap(d.Groups)]
+	for i := range groups {
+		members := groups[i].Members[:0]
+		groups[i] = Group{Members: members}
+	}
 	d.Version = 0
 	d.ID = uuid.Nil
 	d.Nodes = nodes[:0]
 	d.Ports = d.Ports[:0]
 	d.Edges = edges[:0]
+	d.Groups = groups[:0]
 	d.Attachments = d.Attachments[:0]
 	d.Layers = d.Layers[:0]
 	d.Options = Options{}
@@ -838,6 +895,10 @@ func documentArrowStyle(style layout.ArrowStyle) ArrowStyle {
 		return ArrowOpen
 	case layout.ArrowFilled:
 		return ArrowFilled
+	case layout.ArrowCircle:
+		return ArrowCircle
+	case layout.ArrowCircleBullet:
+		return ArrowCircleBullet
 	default:
 		return ""
 	}
@@ -870,6 +931,10 @@ func (s ArrowStyle) layoutStyle() (layout.ArrowStyle, error) {
 		return layout.ArrowOpen, nil
 	case ArrowFilled:
 		return layout.ArrowFilled, nil
+	case ArrowCircle:
+		return layout.ArrowCircle, nil
+	case ArrowCircleBullet:
+		return layout.ArrowCircleBullet, nil
 	default:
 		return layout.ArrowNone, fmt.Errorf("unknown arrow %q", s)
 	}
@@ -926,14 +991,16 @@ func (d Document) drawOrder() ([]layout.Hit, error) {
 func (d Document) graph() (ir.Graph, error) {
 	if uint64(len(d.Nodes)) > math.MaxUint32 ||
 		uint64(len(d.Ports)) > math.MaxUint32 ||
-		uint64(len(d.Edges)) > math.MaxUint32 {
+		uint64(len(d.Edges)) > math.MaxUint32 ||
+		uint64(len(d.Groups)) > math.MaxUint32 {
 		return ir.Graph{}, errors.New("document contains too many objects")
 	}
 
 	graph := ir.Graph{
-		Nodes: make([]ir.Node, len(d.Nodes)),
-		Ports: make([]ir.Port, len(d.Ports)),
-		Edges: make([]ir.Edge, len(d.Edges)),
+		Nodes:  make([]ir.Node, len(d.Nodes)),
+		Ports:  make([]ir.Port, len(d.Ports)),
+		Edges:  make([]ir.Edge, len(d.Edges)),
+		Groups: make([]ir.Group, len(d.Groups)),
 	}
 	seenPorts := make([]bool, len(d.Ports))
 	for nodeID, node := range d.Nodes {
@@ -970,6 +1037,25 @@ func (d Document) graph() (ir.Graph, error) {
 		if !seen {
 			return ir.Graph{}, fmt.Errorf("port %d has no owning node", portID)
 		}
+	}
+	for groupID, group := range d.Groups {
+		members := make([]ir.Member, len(group.Members))
+		for memberID, member := range group.Members {
+			switch member.Kind {
+			case GroupMemberNode:
+				members[memberID] = ir.Member{Kind: ir.MemberNode, ID: member.ID}
+			case GroupMemberGroup:
+				members[memberID] = ir.Member{Kind: ir.MemberGroup, ID: member.ID}
+			default:
+				return ir.Graph{}, fmt.Errorf(
+					"group %d member %d has unknown kind %q",
+					groupID,
+					memberID,
+					member.Kind,
+				)
+			}
+		}
+		graph.Groups[groupID] = ir.Group{Members: members}
 	}
 
 	seenEdges := make(map[[2]uint32]struct{}, len(d.Edges))

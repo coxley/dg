@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 )
 
 const fragmentVersion = 1
@@ -53,6 +54,7 @@ func (l *Layout) CopySelection() (Fragment, error) {
 	if err := copy.copyNodesFrom(
 		l,
 		selectedNodes,
+		slices.Collect(l.selection.Groups()),
 		-int64(bounds.Min.X),
 		-int64(bounds.Min.Y),
 		false,
@@ -93,6 +95,7 @@ func (l *Layout) Paste(fragment Fragment, origin Point) error {
 	return l.copyNodesFrom(
 		source,
 		selectedNodes,
+		source.rootGroups(),
 		int64(origin.X),
 		int64(origin.Y),
 		false,

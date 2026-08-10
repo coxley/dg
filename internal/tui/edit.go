@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,11 +17,11 @@ func (m *Model) updateLabel(key tea.KeyPressMsg) {
 	if event.Code == tea.KeyEnter {
 		switch {
 		case event.Mod.Contains(tea.ModCtrl) || event.Mod.Contains(tea.ModSuper):
-			m.commitLabelEdit()
+			m.commitAndAdvanceLabelEdit()
 		case event.Mod.Contains(tea.ModShift) || strings.ContainsRune(string(m.editBuffer), '\n'):
 			m.insertLabelText("\n")
 		default:
-			m.commitLabelEdit()
+			m.commitAndAdvanceLabelEdit()
 		}
 		return
 	}
@@ -152,13 +154,78 @@ func (m *Model) commitLabelEdit() {
 	err := m.commitTransaction()
 	m.finishLabelEdit()
 	m.refreshHits()
-	m.target = target
-	m.selectTarget()
+	if m.labelBatch {
+		m.restoreLabelSelection()
+	} else {
+		m.target = target
+		m.selectTarget()
+	}
 	if err != nil {
 		m.setError(err.Error())
 	} else {
 		m.status = ""
 	}
+}
+
+func (m *Model) commitAndAdvanceLabelEdit() {
+	if !m.labelBatch {
+		m.commitLabelEdit()
+		return
+	}
+	err := m.commitTransaction()
+	m.finishLabelEdit()
+	m.refreshHits()
+	if err != nil {
+		m.restoreLabelSelection()
+		m.setError(err.Error())
+		return
+	}
+	m.labelTarget++
+	if m.labelTarget >= len(m.labelTargets) {
+		m.restoreLabelSelection()
+		m.status = ""
+		return
+	}
+	m.beginTransaction(transactionLabelEdit)
+	m.startLabelEdit(layout.Hit{ID: m.labelTargets[m.labelTarget], Kind: layout.HitNode})
+}
+
+func (m *Model) restoreLabelSelection() {
+	m.geo.Selection().Restore(m.labelSelection)
+	m.labelTargets = m.labelTargets[:0]
+	m.labelTarget = 0
+	m.labelBatch = false
+	m.refreshSelectionHighlight()
+}
+
+func (m *Model) beginBatchLabelEdit() bool {
+	targets := m.labelTargets[:0]
+	for nodeID := range m.geo.Selection().Nodes() {
+		if m.geo.Label(nodeID) != "" {
+			targets = append(targets, nodeID)
+		}
+	}
+	if len(targets) == 0 {
+		return false
+	}
+	slices.SortFunc(targets, func(a, b uint32) int {
+		aPoint := m.geo.Nodes[a].Rect.Min
+		bPoint := m.geo.Nodes[b].Rect.Min
+		if order := cmp.Compare(aPoint.Y, bPoint.Y); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(aPoint.X, bPoint.X); order != 0 {
+			return order
+		}
+		return cmp.Compare(a, b)
+	})
+	m.labelTargets = targets
+	m.labelTarget = 0
+	m.labelSelection = m.geo.Selection().Snapshot()
+	m.labelBatch = true
+	m.beginTransaction(transactionLabelEdit)
+	m.startLabelEdit(layout.Hit{ID: targets[0], Kind: layout.HitNode})
+	return true
 }
 
 func (m *Model) finishLabelEdit() {

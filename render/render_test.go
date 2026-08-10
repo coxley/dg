@@ -160,6 +160,65 @@ func TestUnicodeEdgeArrowsDoNotMutateRoute(t *testing.T) {
 	require.Equal(t, route, geo.Edges[edgeID].Points)
 }
 
+func TestUnicodeCircleEndpointMarkersJoinEdgeStroke(t *testing.T) {
+	t.Parallel()
+
+	geo := newLayout(t)
+	source := newNodeAt(t, geo, "source", layout.Point{})
+	sink := newNodeAt(t, geo, "sink", layout.Point{X: 18})
+	edgeID := geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, sink)
+	require.NoError(t, geo.SetEdgeStyle(edgeID, layout.EdgeStyle{
+		PortAArrow: layout.ArrowCircle,
+		PortBArrow: layout.ArrowCircleBullet,
+	}))
+	require.NoError(t, geo.Build())
+
+	got, err := Unicode(geo)
+	require.NoError(t, err)
+	require.Contains(t, got, "│ source │○──────◉│ sink │")
+}
+
+func TestCircleEndpointMarkersIgnoreDirection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		style layout.ArrowStyle
+		glyph rune
+	}{
+		{style: layout.ArrowCircle, glyph: '○'},
+		{style: layout.ArrowCircleBullet, glyph: '◉'},
+	}
+	for _, test := range tests {
+		for _, anchor := range []layout.Point{
+			{X: 4, Y: 3},
+			{X: 5, Y: 4},
+			{X: 4, Y: 5},
+			{X: 3, Y: 4},
+		} {
+			require.Equal(t, test.glyph, arrowGlyph(
+				test.style,
+				layout.Point{X: 4, Y: 4},
+				anchor,
+			))
+		}
+	}
+}
+
+func TestArrowAnchorAt(t *testing.T) {
+	t.Parallel()
+
+	points := []layout.Point{{X: 2, Y: 4}, {X: 8, Y: 4}}
+	style := layout.EdgeStyle{
+		PortAArrow: layout.ArrowCircle,
+		PortBArrow: layout.ArrowFilled,
+	}
+	require.True(t, ArrowAnchorAt(points, style, points[0]))
+	require.True(t, ArrowAnchorAt(points, style, points[1]))
+	require.False(t, ArrowAnchorAt(points, style, layout.Point{X: 3, Y: 4}))
+	require.False(t, ArrowAnchorAt(points, layout.EdgeStyle{}, points[0]))
+	require.False(t, ArrowAnchorAt(points[:1], style, points[0]))
+}
+
 func TestEdgeArrowsPointTowardTheirEndpoint(t *testing.T) {
 	t.Parallel()
 

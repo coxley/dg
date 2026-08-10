@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/coxley/dg/document"
 	undohistory "github.com/coxley/dg/history"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 	"github.com/stretchr/testify/require"
 )
@@ -78,6 +80,46 @@ func TestDevSessionRestoresEditorAndHistory(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "before", model.geo.Label(nodeID))
+}
+
+func TestDecodeDevSessionMigratesDocument(t *testing.T) {
+	t.Parallel()
+
+	geo, err := layout.New()
+	require.NoError(t, err)
+	_, err = geo.NewNode("node")
+	require.NoError(t, err)
+	doc := document.New(geo)
+	doc.Version = 3
+	data, err := encodeDevSession(DevSession{Version: devSessionVersion, Document: doc})
+	require.NoError(t, err)
+
+	session, err := decodeDevSession(data)
+	require.NoError(t, err)
+	require.Equal(t, document.CurrentVersion, session.Document.Version)
+}
+
+func TestDevSessionPreservesLogicalGroupSelection(t *testing.T) {
+	t.Parallel()
+
+	model, first := newTestModel(t)
+	second, err := model.geo.NewNodeAt("second", layout.NewPoint(20, 2))
+	require.NoError(t, err)
+	groupID, err := model.geo.NewGroup([]ir.Member{
+		{ID: first, Kind: ir.MemberNode},
+		{ID: second, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	require.True(t, model.geo.Selection().SelectOnly(layout.Hit{ID: groupID, Kind: layout.HitGroup}))
+
+	session := model.captureDevSession()
+	require.Empty(t, session.Selection.Nodes)
+	require.Equal(t, []uint32{groupID}, session.Selection.Groups)
+
+	model.geo.Selection().Clear()
+	model.restoreDevSession(session)
+	require.True(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: groupID, Kind: layout.HitGroup}))
+	require.False(t, model.geo.Selection().DirectlyContains(layout.Hit{ID: first, Kind: layout.HitNode}))
 }
 
 func TestDevSessionRestoresPreferencesDraft(t *testing.T) {

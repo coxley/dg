@@ -40,8 +40,7 @@ func appendSelectionHighlight(
 		y := int(point.Y - bounds.Min.Y)
 		dst[y*int(bounds.Size.Width)+x] = true
 	}
-	for nodeID := range geo.Selection().Nodes() {
-		rect := geo.Nodes[nodeID].Rect
+	markRect := func(rect layout.Rect) {
 		limit := rect.Max()
 		for x := rect.Min.X; x < limit.X; x++ {
 			mark(layout.NewPoint(x, rect.Min.Y))
@@ -50,6 +49,14 @@ func appendSelectionHighlight(
 		for y := rect.Min.Y; y < limit.Y; y++ {
 			mark(layout.NewPoint(rect.Min.X, y))
 			mark(layout.NewPoint(limit.X-1, y))
+		}
+	}
+	for nodeID := range geo.Selection().DirectNodes() {
+		markRect(geo.Nodes[nodeID].Rect)
+	}
+	for groupID := range geo.Selection().Groups() {
+		if bounds, ok := geo.GroupBounds(groupID); ok {
+			markRect(bounds)
 		}
 	}
 	for edgeID := range geo.Selection().Edges() {

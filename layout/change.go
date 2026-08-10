@@ -110,6 +110,9 @@ func (l *Layout) Replay(changes []Change, direction ReplayDirection) error {
 		err = validateDrawOrder(&l.graph, l.drawOrder)
 	}
 	if err == nil {
+		l.selection.prune()
+	}
+	if err == nil {
 		err = l.Build()
 	}
 	if err == nil {
@@ -238,9 +241,15 @@ func (l *Layout) applyChange(change historyChange, forward bool) error {
 		return l.DeleteNode(change.ID)
 	case historyDeleteNode:
 		if forward {
-			return l.DeleteNode(change.ID)
+			if err := l.DeleteNode(change.ID); err != nil {
+				return err
+			}
+			return l.setGroups(state.Groups)
 		}
-		return l.restoreHistoryNode(state.Node)
+		if err := l.restoreHistoryNode(state.Node); err != nil {
+			return err
+		}
+		return l.setGroups(state.Groups)
 	case historySetLabel:
 		return l.SetNodeLabel(change.ID, state.Label)
 	case historyPlaceNode:
@@ -261,6 +270,8 @@ func (l *Layout) applyChange(change historyChange, forward bool) error {
 	case historySetAttachment:
 		l.setAttachmentState(change.ID, state.Attachment, state.Attached)
 		return l.PlaceNode(change.ID, state.Point)
+	case historySetGroups:
+		return l.setGroups(state.Groups)
 	default:
 		return fmt.Errorf("unknown layout change %d", change.Kind)
 	}

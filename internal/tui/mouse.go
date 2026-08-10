@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	canvasview "github.com/coxley/dg/internal/tui/canvas"
 	"github.com/coxley/dg/internal/tui/chrome"
+	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 )
 
@@ -47,6 +48,9 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 	m.cursor = point
 	m.refreshHits()
 	m.prioritizeSelectedEdge()
+	if repeated && m.descendGroupSelection() {
+		return
+	}
 	if repeated && m.handleRepeatedClick() {
 		return
 	}
@@ -78,27 +82,7 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		}
 		return
 	}
-	if m.interaction.idle() && mouse.Mod.Contains(tea.ModAlt) {
-		m.beginDuplicateDrag(point, hit)
-		return
-	}
-	if m.interaction.idle() && mouse.Mod.Contains(tea.ModCtrl) {
-		m.geo.Selection().Toggle(hit)
-		m.refreshSelectionHighlight()
-		m.interaction.resetGesture()
-		if hit.Kind == layout.HitNode {
-			rect := m.geo.Nodes[hit.ID].Rect
-			m.interaction.controlDrag = controlDrag{
-				target: hit,
-				start:  point,
-				offset: layout.NewPoint(
-					point.X-rect.Min.X,
-					point.Y-rect.Min.Y,
-				),
-				valid: true,
-			}
-		}
-		m.status = ""
+	if m.handleModifiedClick(mouse, point, hit) {
 		return
 	}
 	if m.interaction.idle() &&
@@ -119,7 +103,7 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		return
 	}
 	if !m.hitSelected(hit) {
-		m.selectOnly(hit)
+		m.selectOnly(m.logicalNodeHit(hit.ID))
 	}
 	rect := m.geo.Nodes[hit.ID].Rect
 	m.target = hit
@@ -132,6 +116,109 @@ func (m *Model) updateMouseClick(mouse tea.Mouse) {
 		offset: layout.NewPoint(point.X-rect.Min.X, point.Y-rect.Min.Y),
 		rigid:  m.geo.SelectionMovesRigidly(),
 	}
+}
+
+func (m *Model) handleModifiedClick(mouse tea.Mouse, point layout.Point, hit layout.Hit) bool {
+	if !m.interaction.idle() {
+		return false
+	}
+	switch {
+	case mouse.Mod.Contains(tea.ModAlt):
+		m.beginDuplicateDrag(point, hit)
+	case mouse.Mod.Contains(tea.ModSuper) && hit.Kind == layout.HitNode:
+		m.selectOnly(hit)
+		m.target = hit
+		m.interaction.resetGesture()
+		m.status = ""
+	case mouse.Mod.Contains(tea.ModCtrl):
+		selectedHit := hit
+		if hit.Kind == layout.HitNode {
+			selectedHit = m.logicalNodeHit(hit.ID)
+		}
+		m.geo.Selection().Toggle(selectedHit)
+		m.refreshSelectionHighlight()
+		m.interaction.resetGesture()
+		if hit.Kind == layout.HitNode {
+			rect := m.geo.Nodes[hit.ID].Rect
+			m.interaction.controlDrag = controlDrag{
+				target: hit,
+				start:  point,
+				offset: layout.NewPoint(
+					point.X-rect.Min.X,
+					point.Y-rect.Min.Y,
+				),
+				valid: true,
+			}
+		}
+		m.status = ""
+	default:
+		return false
+	}
+	return true
+}
+
+func (m *Model) descendGroupSelection() bool {
+	if !m.interaction.idle() {
+		return false
+	}
+	_, groups, edges := m.geo.Selection().LogicalCounts()
+	if groups != 1 || edges != 0 {
+		return false
+	}
+	hit, ok := m.activeHit()
+	if !ok || hit.Kind != layout.HitNode {
+		return false
+	}
+	var groupID uint32
+	for selected := range m.geo.Selection().Groups() {
+		groupID = selected
+	}
+	child, ok := m.geo.GroupChildContaining(
+		groupID,
+		ir.Member{ID: hit.ID, Kind: ir.MemberNode},
+	)
+	if !ok {
+		return false
+	}
+	m.selectOnly(memberLayoutHit(child))
+	m.target = hit
+	m.interaction.resetGesture()
+	if child.Kind == ir.MemberNode {
+		m.interaction.click.valid = false
+	}
+	m.status = ""
+	return true
+}
+
+func (m *Model) logicalNodeHit(nodeID uint32) layout.Hit {
+	member := ir.Member{ID: nodeID, Kind: ir.MemberNode}
+	for node := range m.geo.Selection().DirectNodes() {
+		selected := ir.Member{ID: node, Kind: ir.MemberNode}
+		if parentID, ok := m.geo.MemberParent(selected); ok {
+			if child, contains := m.geo.GroupChildContaining(parentID, member); contains {
+				return memberLayoutHit(child)
+			}
+		}
+		break
+	}
+	for group := range m.geo.Selection().Groups() {
+		selected := ir.Member{ID: group, Kind: ir.MemberGroup}
+		if parentID, ok := m.geo.MemberParent(selected); ok {
+			if child, contains := m.geo.GroupChildContaining(parentID, member); contains {
+				return memberLayoutHit(child)
+			}
+		}
+		break
+	}
+	return memberLayoutHit(m.geo.OutermostMember(member))
+}
+
+func memberLayoutHit(member ir.Member) layout.Hit {
+	kind := layout.HitNode
+	if member.Kind == ir.MemberGroup {
+		kind = layout.HitGroup
+	}
+	return layout.Hit{ID: member.ID, Kind: kind}
 }
 
 func (m *Model) handleRepeatedClick() bool {

@@ -38,8 +38,9 @@ type DevSession struct {
 }
 
 type devSelection struct {
-	Nodes []uint32 `json:"nodes,omitempty"`
-	Edges []uint32 `json:"edges,omitempty"`
+	Nodes  []uint32 `json:"nodes,omitempty"`
+	Groups []uint32 `json:"groups,omitempty"`
+	Edges  []uint32 `json:"edges,omitempty"`
 }
 
 type devSidebar struct {
@@ -135,8 +136,11 @@ func (m *Model) captureDevSession() DevSession {
 		session.EntryID = m.entry.ID
 	}
 	_, session.Sidebar.FocusedID = m.sidebar.focus.Current()
-	for nodeID := range m.geo.Selection().Nodes() {
+	for nodeID := range m.geo.Selection().DirectNodes() {
 		session.Selection.Nodes = append(session.Selection.Nodes, nodeID)
+	}
+	for groupID := range m.geo.Selection().Groups() {
+		session.Selection.Groups = append(session.Selection.Groups, groupID)
 	}
 	for edgeID := range m.geo.Selection().Edges() {
 		session.Selection.Edges = append(session.Selection.Edges, edgeID)
@@ -171,6 +175,9 @@ func (m *Model) prepareDevReload(preferencesOpen bool) error {
 		m.cancelPreferences()
 		return nil
 	}
+	if m.arrangeOpen {
+		m.cancelArrange()
+	}
 	if m.interaction.session.kind == sessionLabelEdit {
 		m.commitLabelEdit()
 	} else if err := m.cancelTransaction(); err != nil {
@@ -203,6 +210,9 @@ func (m *Model) restoreDevSession(session DevSession) {
 	m.geo.Selection().Clear()
 	for _, nodeID := range session.Selection.Nodes {
 		m.geo.Selection().Toggle(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+	}
+	for _, groupID := range session.Selection.Groups {
+		m.geo.Selection().Toggle(layout.Hit{ID: groupID, Kind: layout.HitGroup})
 	}
 	for _, edgeID := range session.Selection.Edges {
 		m.geo.Selection().Toggle(layout.Hit{ID: edgeID, Kind: layout.HitEdge})
@@ -290,6 +300,17 @@ func decodeDevSession(data []byte) (DevSession, error) {
 	}
 	if session.Version != devSessionVersion {
 		return DevSession{}, fmt.Errorf("unsupported development session version %d", session.Version)
+	}
+	if session.Document.Version != document.CurrentVersion {
+		encoded, err := json.Marshal(session.Document)
+		if err != nil {
+			return DevSession{}, fmt.Errorf("encode development session document: %w", err)
+		}
+		var migrated document.Document
+		if _, err := document.Migrate(encoded, &migrated); err != nil {
+			return DevSession{}, fmt.Errorf("migrate development session document: %w", err)
+		}
+		session.Document = migrated
 	}
 	return session, nil
 }

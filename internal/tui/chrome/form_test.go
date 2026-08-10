@@ -62,7 +62,9 @@ func TestFormNumberFlashDoesNotExposeANSIMarkup(t *testing.T) {
 			_, _ = form.Update(formKey(test.key, ""))
 
 			line := strings.Split(ansi.Strip(form.View().Content), "\n")[0]
-			require.Equal(t, "Number"+strings.Repeat(" ", 29)+"⇽ "+test.value+" ⇾", line)
+			control := "❮ " + test.value + " ❯"
+			require.Equal(t, form.Plan().Fields[0].ValueX, strings.Index(line, control))
+			require.Equal(t, 40, ansi.StringWidth(line))
 		})
 	}
 }
@@ -82,18 +84,53 @@ func TestFormRendersIndependentNumberControlStates(t *testing.T) {
 
 	form := NewForm(testFormDeclaration(), styles)
 	form.SetBounds(Rect{Width: 40, Height: 8})
-	require.Contains(t, form.View().Content, styles.Number.FocusedDecrement.Render("⇽"))
-	require.Contains(t, form.View().Content, styles.Number.FocusedIncrement.Render("⇾"))
+	require.Contains(t, form.View().Content, styles.Number.FocusedDecrement.Render("❮"))
+	require.Contains(t, form.View().Content, styles.Number.FocusedIncrement.Render("❯"))
 
 	_, _ = form.Update(formKey(tea.KeyLeft, ""))
-	require.Contains(t, form.View().Content, styles.Number.ActiveDecrement.Render("⇽"))
-	require.Contains(t, form.View().Content, styles.Number.FocusedIncrement.Render("⇾"))
+	require.Contains(t, form.View().Content, styles.Number.ActiveDecrement.Render("❮"))
+	require.Contains(t, form.View().Content, styles.Number.FocusedIncrement.Render("❯"))
 
 	form = NewForm(testFormDeclaration(), styles)
 	form.SetBounds(Rect{Width: 40, Height: 8})
 	_, _ = form.Update(formKey(tea.KeyRight, ""))
-	require.Contains(t, form.View().Content, styles.Number.FocusedDecrement.Render("⇽"))
-	require.Contains(t, form.View().Content, styles.Number.ActiveIncrement.Render("⇾"))
+	require.Contains(t, form.View().Content, styles.Number.FocusedDecrement.Render("❮"))
+	require.Contains(t, form.View().Content, styles.Number.ActiveIncrement.Render("❯"))
+}
+
+func TestFormSelectHighlightsChangedDirection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		key    rune
+		active lipgloss.Style
+		glyph  string
+		flash  int
+	}{
+		{
+			name: "previous", key: tea.KeyLeft,
+			active: testFormStyles().Number.ActiveDecrement, glyph: "❮", flash: -1,
+		},
+		{
+			name: "next", key: tea.KeyRight,
+			active: testFormStyles().Number.ActiveIncrement, glyph: "❯", flash: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			form := newTestForm()
+			form.SetBounds(Rect{Width: 40, Height: 8})
+			form.MoveFocus(1)
+			_, command := form.Update(formKey(tt.key, ""))
+
+			require.NotNil(t, command)
+			require.Equal(t, tt.flash, form.Flash("select"))
+			require.Contains(t, form.View().Content, tt.active.Render(tt.glyph))
+		})
+	}
 }
 
 func TestFormRendersPointerHoverStates(t *testing.T) {
@@ -146,6 +183,8 @@ func TestFormPlanRetainsSemanticGeometry(t *testing.T) {
 	require.Len(t, plan.Fields, 3)
 	require.Len(t, plan.Buttons, 2)
 	require.Equal(t, testFormDirectory, plan.Fields[2].ID)
+	require.Equal(t, plan.Fields[0].ValueX, plan.Fields[1].ValueX)
+	require.Equal(t, plan.Fields[0].ValueX, plan.Fields[2].ValueX)
 	require.Equal(t, plan.Bounds.X, plan.Buttons[0].Rect.X)
 	require.Equal(t, plan.Bounds.Bottom(), plan.Buttons[0].Rect.Bottom())
 	require.Positive(t, plan.Spacer.Height)
@@ -294,7 +333,7 @@ func TestFormTextFieldTypesPastesClicksAndStaysAccessible(t *testing.T) {
 	require.Equal(t, 30, ansi.StringWidth(strings.Split(form.View().Content, "\n")[0]))
 }
 
-func TestFormTextFieldCanUseACompactRightJustifiedValue(t *testing.T) {
+func TestFormTextFieldLeftAlignsCompactValue(t *testing.T) {
 	t.Parallel()
 
 	form := NewForm(FormDeclaration{
@@ -308,7 +347,7 @@ func TestFormTextFieldCanUseACompactRightJustifiedValue(t *testing.T) {
 	line := ansi.Strip(form.View().Content)
 	require.Equal(t, 30, ansi.StringWidth(line))
 	require.True(t, strings.HasPrefix(line, "Canvas name"), line)
-	require.True(t, strings.HasSuffix(line, "diagram     "), line)
+	require.Equal(t, form.Plan().Fields[0].ValueX, strings.Index(line, "diagram"))
 }
 
 func TestFormTextFieldTypesNavigationAliasesAndUsesArrowsForCaret(t *testing.T) {

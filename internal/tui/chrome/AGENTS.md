@@ -18,6 +18,10 @@ diagnostics used by the chrome lab.
   geometry.
 - Forms expose semantic field, button, spacer, and button-list IDs through one
   retained plan. Applications own declarations and value mapping.
+- Form controls share one left-aligned value column derived from the widest
+  rendered field label.
+- Number and select fields share directional bracket focus and activation
+  feedback.
 - A form may declare a default action. Enter on a field submits that action
   unless the field owns Enter activation; Enter on a button submits the
   focused button.

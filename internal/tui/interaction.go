@@ -156,6 +156,7 @@ const (
 	transactionLabelEdit
 	transactionConnection
 	transactionPreferences
+	transactionArrange
 )
 
 type interactionTransaction struct {

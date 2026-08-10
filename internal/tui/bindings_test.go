@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui/chrome"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,22 @@ func TestApplicationPrimaryBindingsIncludeControlAndCommand(t *testing.T) {
 		requirePrimaryBinding(t, resolver, scopeGlobal, commandSidebar, prefix+"b")
 		requirePrimaryBinding(t, resolver, scopeCanvas, commandExpand, prefix+"a")
 	}
+}
+
+func TestConfiguredBindingsMigratesLabelCommitChords(t *testing.T) {
+	t.Parallel()
+
+	bindings := configuredBindings(settings.Snapshot{Keybinds: []settings.Keybind{
+		{Scope: string(scopeLabel), Action: string(commandCancel), Mappings: []string{"esc", labelCommitControlChord}},
+	}})
+	resolver, err := chrome.NewResolver(bindings)
+	require.NoError(t, err)
+	commit, ok := resolver.Resolve(labelCommitControlChord, []chrome.ScopeID{scopeLabel}, true)
+	require.True(t, ok)
+	require.Equal(t, commandCommitLabel, commit.Command)
+	cancel, ok := resolver.Resolve("esc", []chrome.ScopeID{scopeLabel}, true)
+	require.True(t, ok)
+	require.Equal(t, commandCancel, cancel.Command)
 }
 
 func TestApplicationBindingsResolveDvorakLogicalKeys(t *testing.T) {

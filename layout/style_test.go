@@ -35,6 +35,22 @@ func TestStyleValidation(t *testing.T) {
 	}))
 }
 
+func TestArrowStyleNext(t *testing.T) {
+	t.Parallel()
+
+	styles := []ArrowStyle{
+		ArrowNone,
+		ArrowFilled,
+		ArrowOpen,
+		ArrowCircle,
+		ArrowCircleBullet,
+		ArrowNone,
+	}
+	for i := 1; i < len(styles); i++ {
+		require.Equal(t, styles[i], styles[i-1].Next())
+	}
+}
+
 func TestSetNodeStyleAppliesPadding(t *testing.T) {
 	t.Parallel()
 

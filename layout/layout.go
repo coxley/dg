@@ -126,6 +126,7 @@ const (
 	HitNode HitKind = iota + 1
 	HitPort
 	HitEdge
+	HitGroup
 )
 
 // Hit identifies geometry by its index in the corresponding Layout slice.
@@ -327,12 +328,14 @@ func (l *Layout) DuplicateSelection(dx, dy int64) error {
 	if len(selectedNodes) == 0 {
 		return errors.New("selection contains no nodes")
 	}
-	return l.copyNodesFrom(l, selectedNodes, dx, dy, true)
+	selectedGroups := slices.Collect(l.selection.Groups())
+	return l.copyNodesFrom(l, selectedNodes, selectedGroups, dx, dy, true)
 }
 
 func (l *Layout) copyNodesFrom(
 	source *Layout,
 	selectedNodes []uint32,
+	selectedGroups []uint32,
 	dx, dy int64,
 	copyRoutes bool,
 ) error {
@@ -437,6 +440,51 @@ func (l *Layout) copyNodesFrom(
 				},
 			})
 		}
+	}
+	return l.copySelectedGroups(source, nodeMap, selectedGroups)
+}
+
+func (l *Layout) copySelectedGroups(
+	source *Layout,
+	nodeMap []uint32,
+	selectedGroups []uint32,
+) error {
+	groupMap := make([]uint32, len(source.graph.Groups))
+	var copyGroup func(uint32) (uint32, error)
+	copyGroup = func(sourceID uint32) (uint32, error) {
+		if groupMap[sourceID] != 0 {
+			return groupMap[sourceID] - 1, nil
+		}
+		members := make([]ir.Member, 0, len(source.graph.Groups[sourceID].Members))
+		for _, member := range source.graph.Groups[sourceID].Members {
+			switch member.Kind {
+			case ir.MemberNode:
+				if nodeMap[member.ID] == 0 {
+					return 0, fmt.Errorf("copy group %d missing node %d", sourceID, member.ID)
+				}
+				members = append(members, ir.Member{ID: nodeMap[member.ID] - 1, Kind: ir.MemberNode})
+			case ir.MemberGroup:
+				groupID, err := copyGroup(member.ID)
+				if err != nil {
+					return 0, err
+				}
+				members = append(members, ir.Member{ID: groupID, Kind: ir.MemberGroup})
+			}
+		}
+		groupID, err := l.NewGroup(members)
+		if err != nil {
+			return 0, fmt.Errorf("copy group %d: %w", sourceID, err)
+		}
+		groupMap[sourceID] = groupID + 1
+		return groupID, nil
+	}
+	for _, sourceID := range selectedGroups {
+		groupID, err := copyGroup(sourceID)
+		if err != nil {
+			return err
+		}
+		l.selection.ensureCapacity()
+		l.selection.Toggle(Hit{ID: groupID, Kind: HitGroup})
 	}
 	return nil
 }
@@ -901,8 +949,10 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		return fmt.Errorf("%w: %d", ir.ErrNodeNotFound, nodeID)
 	}
 	var previous historyNode
+	var previousGroups []ir.Group
 	if l.recordingChanges() {
 		previous = l.historyNode(nodeID)
+		previousGroups = cloneGroups(l.graph.Groups)
 	}
 
 	for edgeID := range l.graph.Edges {
@@ -927,6 +977,7 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 	if err := l.graph.DeleteNode(nodeID); err != nil {
 		return err
 	}
+	l.selection.prune()
 	l.origins[nodeID] = Point{}
 	l.explicitSizes[nodeID] = Size{}
 	l.nodeStyles[nodeID] = NodeStyle{}
@@ -939,7 +990,8 @@ func (l *Layout) DeleteNode(nodeID uint32) error {
 		l.recordChange(historyChange{
 			Kind:   historyDeleteNode,
 			ID:     nodeID,
-			Before: historyChangeState{Node: previous},
+			Before: historyChangeState{Node: previous, Groups: previousGroups},
+			After:  historyChangeState{Groups: cloneGroups(l.graph.Groups)},
 		})
 	}
 	return nil
@@ -1115,8 +1167,11 @@ func (l *Layout) Clone() (*Layout, error) {
 		}
 	}
 	cloned.attachments = slices.Clone(l.attachments)
-	for nodeID := range l.selection.Nodes() {
+	for nodeID := range l.selection.DirectNodes() {
 		cloned.selection.Toggle(Hit{ID: nodeID, Kind: HitNode})
+	}
+	for groupID := range l.selection.Groups() {
+		cloned.selection.Toggle(Hit{ID: groupID, Kind: HitGroup})
 	}
 	for edgeID := range l.selection.Edges() {
 		cloned.selection.Toggle(Hit{ID: edgeID, Kind: HitEdge})
@@ -1254,7 +1309,7 @@ func (l *Layout) visibleObjectAt(point Point) (Hit, bool) {
 				!l.edgeEndpointAt(hit.ID, point) {
 				return hit, true
 			}
-		case HitPort:
+		case HitPort, HitGroup:
 			continue
 		}
 	}

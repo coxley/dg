@@ -127,6 +127,8 @@ const (
 	ArrowNone ArrowStyle = iota
 	ArrowOpen
 	ArrowFilled
+	ArrowCircle
+	ArrowCircleBullet
 	arrowStyleCount
 )
 
@@ -135,13 +137,17 @@ func (s ArrowStyle) Valid() bool {
 	return s < arrowStyleCount
 }
 
-// Next cycles through none, filled, and outline arrows.
+// Next cycles through the endpoint marker styles.
 func (s ArrowStyle) Next() ArrowStyle {
 	switch s {
 	case ArrowNone:
 		return ArrowFilled
 	case ArrowFilled:
 		return ArrowOpen
+	case ArrowOpen:
+		return ArrowCircle
+	case ArrowCircle:
+		return ArrowCircleBullet
 	default:
 		return ArrowNone
 	}

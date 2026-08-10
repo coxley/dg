@@ -180,11 +180,12 @@ func (m *Model) composeSurfaces(content string) string {
 	help, helpVisible := m.surfacePlan(surfaceHelp)
 	sidebar, sidebarVisible := m.surfacePlan(surfaceSidebar)
 	navigation, navigationVisible := m.surfacePlan(surfaceNavigation)
+	arrange, arrangeVisible := m.surfacePlan(surfaceArrange)
 	update, updateVisible := m.surfacePlan(surfaceUpdate)
 	navigationVisible = navigationVisible &&
 		!rectWithin(navigation.Rect, m.workspace.Geometry().Canvas)
 	overlay := m.dialogs.Overlay()
-	if !helpVisible && !sidebarVisible && !navigationVisible && !updateVisible && overlay.Content == "" {
+	if !helpVisible && !sidebarVisible && !navigationVisible && !arrangeVisible && !updateVisible && overlay.Content == "" {
 		return content
 	}
 	layers := []*lipgloss.Layer{lipgloss.NewLayer(content)}
@@ -203,6 +204,13 @@ func (m *Model) composeSurfaces(content string) string {
 			X(navigation.Rect.X).
 			Y(navigation.Rect.Y).
 			Z(surfacePriorityNavigation))
+	}
+	if arrangeVisible {
+		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(m.arrange.Lines())).
+			ID(string(surfaceArrange)).
+			X(arrange.Rect.X).
+			Y(arrange.Rect.Y).
+			Z(surfacePriorityArrange))
 	}
 	if helpVisible {
 		layers = append(layers, lipgloss.NewLayer(renderSurfaceLines(m.helpInspector.lines())).
@@ -689,6 +697,8 @@ func (m *Model) highlightForHit(hit layout.Hit, point layout.Point) bool {
 		}
 		owner, ok := m.canvas.OwnerAt(frame, point)
 		return ok && owner == hit
+	case layout.HitGroup:
+		return false
 	}
 	return false
 }
@@ -986,6 +996,9 @@ func previewGlyph(model *Model, x, y uint64) (rune, bool) {
 	points, raster, style := model.activeEdgePreview()
 	connections, ok := rasterConnections(raster, point)
 	if !ok {
+		return 0, false
+	}
+	if render.ArrowAnchorAt(points, style, point) {
 		return 0, false
 	}
 	if glyph, ok := render.ArrowGlyphAt(

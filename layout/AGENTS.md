@@ -250,10 +250,12 @@ merge. Common-endpoint edges retain joined connectivity.
 `Layout.Hits` returns visible objects in interaction priority order. It checks
 compact edge segments rather than every rendered edge cell.
 
-`Selection` stores node and edge membership. It supports replacement,
-toggle, area intersection, component expansion, and whole-document selection.
-`DuplicateSelection` copies selected nodes and edges whose two endpoint nodes
-are copied.
+`Selection` stores logical node, group, and edge membership as an ancestor-free
+set. Selected groups expose their descendant nodes to movement and routing while
+retaining group identity for drill-down, bounds, copy, and duplication.
+`DuplicateSelection` preserves explicitly selected group hierarchies and copies
+edges whose two endpoint nodes are copied. Copying drilled-in children does not
+infer their omitted parent group.
 
 Rigid selection moves skip routing when static edges cannot be affected.
 `BuildSelection` routes only affected geometry. Add safe no-route cases before

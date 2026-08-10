@@ -264,7 +264,7 @@ func rasterizeInto(
 			if err := grid.AddPath(l.Edges[hit.ID].Points); err != nil {
 				return Grid{}, fmt.Errorf("rasterize edge %d: %w", hit.ID, err)
 			}
-		case HitPort:
+		case HitPort, HitGroup:
 			continue
 		}
 	}

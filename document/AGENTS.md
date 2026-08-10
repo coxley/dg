@@ -11,6 +11,7 @@
 
 - a required UUIDv4 identity
 - live nodes, ordered ports, and edges
+- nested logical groups with ordered immediate membership
 - node origins and optional explicit sizes
 - node border, stroke, and text alignment
 - edge stroke and endpoint arrows
@@ -26,7 +27,7 @@ The zero value of optional style fields represents the runtime default.
 
 `New` exports a Layout with a fresh identity. `Update` preserves identity while
 reusing document capacity. Export compacts runtime tombstones and remaps every
-node, port, edge, and layer reference.
+node, port, edge, group, and layer reference.
 
 `Unmarshal` and `UnmarshalInto` upgrade supported older schemas before
 validating the complete current document. `Migrate` additionally reports
@@ -48,8 +49,8 @@ conversion explicit so schema evolution does not leak into engine types.
 
 ## Compatibility
 
-Version 3 is the write schema. Version 2 decodes through an explicit migration;
-reject every other version with `ErrUnsupportedVersion`.
+Version 4 is the write schema. Versions 2 and 3 decode through explicit
+migrations; reject every other version with `ErrUnsupportedVersion`.
 
 Migrations form a sequential version chain. Each step consumes one frozen wire
 shape and emits the next version. Retain migration code and fixtures once a

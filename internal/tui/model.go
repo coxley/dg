@@ -85,24 +85,31 @@ type Model struct {
 	theme        Theme
 	terminalDark bool
 
-	cursor      layout.Point
-	viewport    layout.Point
-	hits        []layout.Hit
-	active      int
-	target      layout.Hit
-	interaction interactionState
-	nav         nav.Model
-	dialogs     dialogController
-	canvas      canvasview.Model
-	bindings    *chrome.Resolver
-	workspace   chrome.Workspace
-	sidebar     sidebarState
+	cursor         layout.Point
+	viewport       layout.Point
+	hits           []layout.Hit
+	active         int
+	target         layout.Hit
+	interaction    interactionState
+	nav            nav.Model
+	arrange        arrangeForm
+	arrangePreview []arrangeItem
+	arrangeOpen    bool
+	dialogs        dialogController
+	canvas         canvasview.Model
+	bindings       *chrome.Resolver
+	workspace      chrome.Workspace
+	sidebar        sidebarState
 
 	editBuffer       []byte
 	editDraft        []byte
 	editLines        []layout.LabelLine
 	editCaret        int
 	editCaretVisible bool
+	labelTargets     []uint32
+	labelTarget      int
+	labelSelection   layout.SelectionSnapshot
+	labelBatch       bool
 
 	viewBuffer []byte
 	statusText []byte
@@ -285,6 +292,7 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 		{ID: "rectangle", Tool: nav.Rectangle, Label: " Rectangle "},
 		{ID: "line", Tool: nav.Line, Label: " Line "},
 	})
+	m.arrange = newArrangeForm(m.theme.Navigation.Container, m.theme.Preferences.Form)
 	m.canvas = canvasview.New(m.theme.Canvas)
 	m.viewCursor[0] = *tea.NewCursor(0, 0)
 	m.viewCursor[1] = m.viewCursor[0]
@@ -301,7 +309,7 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 			m.nodeStyle, _ = geo.NodeStyle(hit.ID)
 		case layout.HitEdge:
 			m.edgeStyle, _ = geo.EdgeStyle(hit.ID)
-		case layout.HitPort:
+		case layout.HitPort, layout.HitGroup:
 		}
 	}
 	if err := m.rebuild(); err != nil {
@@ -443,7 +451,7 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 	case chrome.FormSubmitMsg:
 		return m, m.updateDialog(message)
 	case chrome.FormFlashExpiredMsg:
-		return m, m.updateDialog(message)
+		return m, m.updateFormFlash(message)
 	case preferencesview.UpdateMsg:
 		return m, m.updateDialog(message)
 	case clipboardview.UpdateMsg:
@@ -465,12 +473,21 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) updateFormFlash(message chrome.FormFlashExpiredMsg) tea.Cmd {
+	command := m.updateDialog(message)
+	if !m.arrangeOpen {
+		return command
+	}
+	return tea.Batch(command, m.arrange.Update(message))
+}
+
 func (m *Model) updateTerminalFocus(message tea.Msg) tea.Cmd {
 	switch message.(type) {
 	case tea.FocusMsg:
 		return tea.Batch(requestBackgroundColor(), reconcileCatalog(m.canvasStore, m.catalog))
 	case tea.BlurMsg:
 		m.clipboard.CancelPending()
+		m.cancelArrange()
 		return nil
 	default:
 		return nil
@@ -484,6 +501,7 @@ func requestBackgroundColor() tea.Cmd {
 func (m *Model) applyTheme(theme Theme) {
 	m.theme = theme
 	m.nav.SetStyles(theme.Navigation)
+	m.arrange.SetStyles(theme.Navigation.Container, theme.Preferences.Form)
 	m.dialogs.SetStyles(theme)
 	m.canvas.SetStyles(theme.Canvas)
 	m.helpInspector.setStyles(theme.Help)
@@ -499,7 +517,8 @@ func (m *Model) syncWorkspaceAfterUpdate(sync bool) {
 }
 
 func (m *Model) workspaceNeedsSync() bool {
-	return m.helpInspector.visible ||
+	return m.arrangeOpen ||
+		m.helpInspector.visible ||
 		m.dialogs.ActiveID() != surfaceNone ||
 		m.sidebar.open ||
 		m.workspace.SurfaceMoving(surfaceSidebar) ||
@@ -663,6 +682,9 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 	}
 	if m.dialogs.CapturesKey() {
 		return m.updateDialog(message)
+	}
+	if m.arrangeOpen {
+		return m.updateArrangeKey(message)
 	}
 	copyKey := m.bindings.MatchesKey(message, commandCopy)
 	if copyKey && message.IsRepeat {
@@ -962,11 +984,29 @@ func (m *Model) beginLabelEdit() {
 		m.setError(finishOperation)
 		return
 	}
+	directNodes, groups, edges := m.geo.Selection().LogicalCounts()
+	if directNodes == 1 && groups == 0 && edges == 0 {
+		for nodeID := range m.geo.Selection().DirectNodes() {
+			m.beginSingleLabelEdit(layout.Hit{ID: nodeID, Kind: layout.HitNode})
+			return
+		}
+	}
+	if m.geo.Selection().HasNodes() {
+		if !m.beginBatchLabelEdit() {
+			m.setError("selection contains no existing labels")
+		}
+		return
+	}
 	hit, ok := m.activeHit()
 	if !ok || hit.Kind != layout.HitNode {
 		m.setError("select a node to edit")
 		return
 	}
+	m.beginSingleLabelEdit(hit)
+}
+
+func (m *Model) beginSingleLabelEdit(hit layout.Hit) {
+	m.labelBatch = false
 	m.beginTransaction(transactionLabelEdit)
 	m.startLabelEdit(hit)
 }
@@ -1156,14 +1196,19 @@ func (m *Model) deleteActive() {
 	}
 	m.beginTransaction(transactionImmediate)
 	var err error
-	for nodeID := range m.geo.Selection().Nodes() {
+	selectedNodes := slices.Collect(m.geo.Selection().Nodes())
+	selectedEdges := slices.Collect(m.geo.Selection().Edges())
+	for _, nodeID := range selectedNodes {
 		err = m.geo.DeleteNode(nodeID)
 		if err != nil {
 			break
 		}
 	}
 	if err == nil {
-		for edgeID := range m.geo.Selection().Edges() {
+		for _, edgeID := range selectedEdges {
+			if !m.geo.EdgeExists(edgeID) {
+				continue
+			}
 			err = m.geo.DeleteEdge(edgeID)
 			if err != nil {
 				break
@@ -1207,6 +1252,10 @@ func (m *Model) restoreToolStatus() {
 }
 
 func (m *Model) cancelMode() {
+	if m.arrangeOpen {
+		m.cancelArrange()
+		return
+	}
 	m.interaction.controlDrag = controlDrag{}
 	if m.interaction.gesture.kind == gestureRectangle {
 		m.interaction.resetGesture()

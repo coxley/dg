@@ -10,6 +10,9 @@ import (
 )
 
 const (
+	labelCommitControlChord = "ctrl+enter"
+	labelCommitSuperChord   = "super+enter"
+
 	scopeCanvas      chrome.ScopeID = "canvas"
 	scopeGlobal      chrome.ScopeID = "global"
 	scopeLabel       chrome.ScopeID = "label"
@@ -21,10 +24,12 @@ const (
 	commandActivate        chrome.CommandID = "activate"
 	commandArrowEnd        chrome.CommandID = "arrow-end"
 	commandArrowStart      chrome.CommandID = "arrow-start"
+	commandArrange         chrome.CommandID = "arrange"
 	commandBack            chrome.CommandID = "back"
 	commandBorder          chrome.CommandID = "border"
 	commandCancel          chrome.CommandID = "cancel"
 	commandCopy            chrome.CommandID = "copy"
+	commandCommitLabel     chrome.CommandID = "commit-label"
 	commandDashed          chrome.CommandID = "dashed"
 	commandDelete          chrome.CommandID = "delete"
 	commandDuplicate       chrome.CommandID = "duplicate"
@@ -32,6 +37,7 @@ const (
 	commandExpand          chrome.CommandID = "expand-selection"
 	commandFocusNext       chrome.CommandID = "focus-next"
 	commandFocusPrevious   chrome.CommandID = "focus-previous"
+	commandGroup           chrome.CommandID = "group"
 	commandHelp            chrome.CommandID = "help"
 	commandLayerBack       chrome.CommandID = "layer-back"
 	commandLayerBackward   chrome.CommandID = "layer-backward"
@@ -74,7 +80,8 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
 	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
 	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
-	{Scope: scopeLabel, Chords: chrome.Keys("esc", "ctrl+enter", "super+enter"), Command: commandCancel, Label: "finish label"},
+	{Scope: scopeLabel, Chords: chrome.Keys("esc"), Command: commandCancel, Label: "finish label"},
+	{Scope: scopeLabel, Chords: chrome.Keys(labelCommitControlChord, labelCommitSuperChord), Command: commandCommitLabel, Label: "commit label"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("up"), Command: commandMoveUp, Label: "move up"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("right"), Command: commandMoveRight, Label: "move right"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("down"), Command: commandMoveDown, Label: "move down"},
@@ -87,6 +94,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+n"), Command: commandNewCanvas, Label: "new canvas"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("r"), Command: commandRectangle, Label: string(commandRectangle)},
 	{Scope: scopeCanvas, Chords: chrome.Keys("l"), Command: commandLine, Label: "line"},
+	{Scope: scopeCanvas, Chords: chrome.Keys("shift+l"), Command: commandArrange, Label: "arrange"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("b"), Command: commandBorder, Label: "border"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("p"), Command: commandPadding, Label: "padding"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("-"), Command: commandDashed, Label: "dashed"},
@@ -103,6 +111,7 @@ var applicationBindings = []chrome.Binding{
 	{Scope: scopeCanvas, Chords: chrome.Keys("u", "ctrl+z"), Command: commandUndo, Label: "undo"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+r", "ctrl+y", "ctrl+shift+z"), Command: commandRedo, Label: "redo"},
 	{Scope: scopeCanvas, Chords: primaryKeys("a"), Command: commandExpand, Label: "expand selection"},
+	{Scope: scopeCanvas, Chords: primaryKeys("g"), Command: commandGroup, Label: "group / ungroup"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+c", "super+c"), Command: commandCopy, Label: "copy"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("esc"), Command: commandCancel, Label: "cancel tool"},
 	{Scope: scopeCanvas, Chords: chrome.Keys("q"), Command: commandQuit, Label: "cursor / quit"},
@@ -167,10 +176,13 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 		commandTextVertical:
 		m.updateAppearanceCommand(message.Command)
 	case commandCopy,
+		commandArrange,
+		commandCommitLabel,
 		commandDelete,
 		commandDuplicate,
 		commandEditLabel,
 		commandExpand,
+		commandGroup,
 		commandRedo,
 		commandUndo:
 		return m.updateEditCommand(message.Command)
@@ -272,10 +284,13 @@ func (m *Model) canvasCommandAvailable(command chrome.CommandID) bool {
 		commandTextVertical:
 		return m.canvasAppearanceCommandAvailable(command)
 	case commandCopy,
+		commandArrange,
+		commandCommitLabel,
 		commandDelete,
 		commandDuplicate,
 		commandEditLabel,
 		commandExpand,
+		commandGroup,
 		commandRedo,
 		commandUndo:
 		return m.canvasEditCommandAvailable(command)
@@ -326,6 +341,10 @@ func (m *Model) canvasEditCommandAvailable(command chrome.CommandID) bool {
 	hasSelection := nodes != 0 || edges != 0
 	hasNode := nodes != 0 || hasHit && hit.Kind == layout.HitNode
 	switch command {
+	case commandArrange:
+		return m.arrangeSelectionAvailable()
+	case commandCommitLabel:
+		return m.interaction.session.kind == sessionLabelEdit
 	case commandDelete:
 		return hasSelection || hasHit && hit.Kind != layout.HitPort
 	case commandDuplicate:
@@ -342,6 +361,9 @@ func (m *Model) canvasEditCommandAvailable(command chrome.CommandID) bool {
 			return nodes+edges < m.liveObjectCount()
 		}
 		return hasHit && hit.Kind != layout.HitPort
+	case commandGroup:
+		directNodes, groups, selectedEdges := m.geo.Selection().LogicalCounts()
+		return selectedEdges == 0 && (directNodes+groups >= 2 || directNodes == 0 && groups == 1)
 	case commandCopy:
 		return hasSelection
 	case commandUndo:
@@ -369,6 +391,8 @@ func (m *Model) nodeHasIncidentEdge(nodeID uint32) bool {
 
 func (m *Model) interactionCommandAvailable(command chrome.CommandID) bool {
 	switch command {
+	case commandCommitLabel:
+		return m.interaction.session.kind == sessionLabelEdit
 	case commandCancel:
 		return m.cancelCommandRelevant()
 	case commandHelp, commandQuit:
@@ -500,10 +524,14 @@ func (m *Model) updateAppearanceCommand(command chrome.CommandID) {
 
 func (m *Model) updateEditCommand(command chrome.CommandID) tea.Cmd {
 	switch command {
+	case commandArrange:
+		m.toggleArrange()
 	case commandCopy:
 		if m.dialogs.ActiveID() == surfaceNone && m.interaction.idle() {
 			return m.copySelection()
 		}
+	case commandCommitLabel:
+		m.commitAndAdvanceLabelEdit()
 	case commandDelete:
 		m.deleteActive()
 	case commandDuplicate:
@@ -512,6 +540,8 @@ func (m *Model) updateEditCommand(command chrome.CommandID) tea.Cmd {
 		m.beginLabelEdit()
 	case commandExpand:
 		m.expandSelection()
+	case commandGroup:
+		m.groupSelection()
 	case commandRedo:
 		m.redo()
 	case commandUndo:

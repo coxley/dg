@@ -15,19 +15,27 @@ type MenuItem struct {
 
 // Menu retains one arranged menu plan.
 type Menu struct {
-	id      ID
-	style   lipgloss.Style
-	items   []MenuItem
-	width   int
-	top     int
-	version uint64
-	plan    Plan
-	err     error
+	id       ID
+	style    lipgloss.Style
+	items    []MenuItem
+	width    int
+	top      int
+	version  uint64
+	plan     Plan
+	err      error
+	vertical bool
 }
 
 // NewMenu returns a retained horizontal menu.
 func NewMenu(id ID, style lipgloss.Style, items []MenuItem) *Menu {
 	m := &Menu{id: id, style: style, top: 1}
+	m.SetItems(items)
+	return m
+}
+
+// NewVerticalMenu returns a retained vertical menu rooted at the local origin.
+func NewVerticalMenu(id ID, style lipgloss.Style, items []MenuItem) *Menu {
+	m := &Menu{id: id, style: style, vertical: true}
 	m.SetItems(items)
 	return m
 }
@@ -97,6 +105,16 @@ func (m *Menu) Lines(renderItem func(MenuItem) string) []string {
 	if m.err != nil || m.plan.Bounds.Width == 0 {
 		return nil
 	}
+	if m.vertical {
+		rows := make([]string, 0, len(m.items))
+		for _, item := range m.items {
+			rect, ok := m.plan.Rect(item.ID)
+			if ok {
+				rows = append(rows, ansi.Truncate(renderItem(item), rect.Width, ""))
+			}
+		}
+		return strings.Split(m.style.Render(strings.Join(rows, "\n")), "\n")
+	}
 	var content strings.Builder
 	x := m.plan.Bounds.X +
 		m.style.GetBorderLeftSize() +
@@ -123,13 +141,20 @@ func (m *Menu) arrange() {
 	for i, item := range m.items {
 		children[i] = Text(item.ID, item.Label)
 	}
-	root := Box(m.id, m.style, Row(m.id+".items", children...))
+	items := Row(m.id+".items", children...)
+	if m.vertical {
+		items = Column(m.id+".items", children...)
+	}
+	root := Box(m.id, m.style, items)
 	metrics := Measure(root, Constraints{Max: Size{Width: m.width, Height: 1 << 20}})
 	if m.width < metrics.Min.Width {
 		m.plan, m.err = Plan{Version: m.version}, nil
 		return
 	}
 	left := (m.width - metrics.Preferred.Width) / 2
+	if m.vertical {
+		left = 0
+	}
 	available := Rect{
 		X:      left,
 		Y:      m.top,

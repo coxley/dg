@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 
@@ -36,6 +37,8 @@ func migrateJSON(data []byte, version uint32) ([]byte, error) {
 		switch version {
 		case 2:
 			data, err = migrateVersion2(data)
+		case 3:
+			data, err = migrateVersion3(data)
 		default:
 			return nil, fmt.Errorf("%w: %d", ErrUnsupportedVersion, version)
 		}
@@ -43,6 +46,27 @@ func migrateJSON(data []byte, version uint32) ([]byte, error) {
 			return nil, fmt.Errorf("migrate document version %d: %w", version, err)
 		}
 		version++
+	}
+	return data, nil
+}
+
+func migrateVersion3(data []byte) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(&fields); err != nil {
+		return nil, fmt.Errorf("decode version 3 document: %w", err)
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err == nil {
+		return nil, errors.New("trailing JSON value")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("decode version 3 trailing data: %w", err)
+	}
+	fields["version"] = json.RawMessage("4")
+	delete(fields, "groups")
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("encode version 4 fields: %w", err)
 	}
 	return data, nil
 }
@@ -61,18 +85,23 @@ func migrateVersion2(data []byte) ([]byte, error) {
 		}
 	}
 	fields["version"] = json.RawMessage("3")
-	fields["attachments"] = json.RawMessage("[]")
+	if len(attachments) == 0 {
+		delete(fields, "attachments")
+	} else {
+		fields["attachments"] = json.RawMessage("[]")
+	}
 	current, err := json.Marshal(fields)
 	if err != nil {
 		return nil, fmt.Errorf("encode version 3 fields: %w", err)
 	}
+	if len(attachments) == 0 {
+		return current, nil
+	}
 	var doc Document
-	if err := UnmarshalInto(current, &doc); err != nil {
+	if err := decodeJSONInto(current, &doc); err != nil {
 		return nil, err
 	}
-	if len(attachments) == 0 {
-		return Marshal(doc)
-	}
+	doc.Version = CurrentVersion
 	geo, err := doc.Convert()
 	if err != nil {
 		return nil, err
@@ -159,6 +188,8 @@ func migrateVersion2(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("restore attachments: %w", err)
 	}
 	doc.Update(geo)
+	doc.Version = 3
+	doc.Groups = nil
 	return Marshal(doc)
 }
 

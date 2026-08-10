@@ -10,6 +10,7 @@ import (
 const (
 	surfaceCanvas       chrome.SurfaceID = "canvas"
 	surfaceNavigation   chrome.SurfaceID = "navigation"
+	surfaceArrange      chrome.SurfaceID = "arrange"
 	surfaceHelp         chrome.SurfaceID = "help"
 	surfaceUpdate       chrome.SurfaceID = "update"
 	surfaceSidebar      chrome.SurfaceID = "sidebar"
@@ -25,6 +26,7 @@ const (
 	surfacePriorityCanvas     = 0
 	surfacePrioritySidebar    = 5
 	surfacePriorityNavigation = 10
+	surfacePriorityArrange    = 11
 	surfacePriorityDrawer     = 15
 	surfacePriorityHelp       = 20
 	surfacePriorityUpdate     = 25
@@ -32,6 +34,9 @@ const (
 )
 
 func (m *Model) syncWorkspace() {
+	if m.arrangeOpen && !m.arrangeSelectionAvailable() {
+		m.cancelArrange()
+	}
 	plan := m.workspace.Plan()
 	m.nav.SetWidth(plan.Main.Width)
 	overlay := m.dialogs.Arrange(
@@ -42,7 +47,9 @@ func (m *Model) syncWorkspace() {
 	updateView := m.updateNotice.view()
 	updateWidth := lipgloss.Width(updateView)
 	updateHeight := lipgloss.Height(updateView)
-	surfaces := make([]chrome.Surface, 0, 5+len(dialogSpecs))
+	arrangeBounds := m.arrange.Bounds()
+	arrangeBounds = placeArrangeForm(arrangeBounds, m.nav.Bounds(), plan.Main)
+	surfaces := make([]chrome.Surface, 0, 6+len(dialogSpecs))
 	surfaces = append(
 		surfaces,
 		chrome.Surface{
@@ -73,6 +80,16 @@ func (m *Model) syncWorkspace() {
 			Requested: m.nav.Bounds(),
 			Priority:  surfacePriorityNavigation,
 			Visible:   m.nav.Bounds().Width != 0,
+		},
+		chrome.Surface{
+			ID:             surfaceArrange,
+			Role:           chrome.SurfaceFloating,
+			Anchor:         chrome.AnchorTerminal,
+			Requested:      arrangeBounds,
+			Priority:       surfacePriorityArrange,
+			Visible:        m.arrangeOpen && arrangeBounds.Width != 0,
+			DismissOutside: true,
+			DismissBack:    true,
 		},
 		m.helpInspector.declaration(plan.Main),
 		chrome.Surface{
@@ -118,6 +135,24 @@ func (m *Model) syncWorkspace() {
 	}
 }
 
+func placeArrangeForm(form, navigation, workspace chrome.Rect) chrome.Rect {
+	form.X = navigation.Right() + 1
+	form.Y = navigation.Y
+	if form.Right() <= workspace.Right() {
+		return form
+	}
+	form.X = navigation.X - form.Width - 1
+	if form.X >= workspace.X {
+		return form
+	}
+	form.X = max(workspace.Right()-form.Width, workspace.X)
+	form.Y = navigation.Bottom() + 1
+	if form.Bottom() > workspace.Bottom() {
+		form.Y = max(navigation.Y-form.Height-1, workspace.Y)
+	}
+	return form
+}
+
 func (m *Model) surfacePlan(id chrome.SurfaceID) (chrome.SurfacePlan, bool) {
 	return m.workspace.Surface(id)
 }
@@ -144,6 +179,9 @@ func (m *Model) textEntryActive() bool {
 
 func (m *Model) dismissSurface(id chrome.SurfaceID) tea.Cmd {
 	switch id {
+	case surfaceArrange:
+		m.commitArrange()
+		return nil
 	case surfaceHelp:
 		m.helpInspector.hide()
 		return nil
@@ -163,7 +201,10 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 	}
 	point := chrome.Point{X: message.X, Y: message.Y}
 	if id, ok := m.workspace.DismissAt(point); ok {
-		return m.dismissSurface(id)
+		command := m.dismissSurface(id)
+		if id != surfaceArrange || m.arrangeOpen {
+			return command
+		}
 	}
 	id, ok := m.workspace.SurfaceAt(point)
 	if !ok {
@@ -200,6 +241,9 @@ func (m *Model) updateSurfaceMouseClick(message tea.MouseClickMsg) tea.Cmd {
 		var command tea.Cmd
 		m.nav, command = m.nav.Update(m.navigationMessage(message))
 		return command
+	case surfaceArrange:
+		local := m.arrangeMessage(message).(tea.MouseClickMsg)
+		return m.arrange.Click(chrome.Point{X: local.X, Y: local.Y})
 	case surfaceHelp:
 		plan, _ := m.surfacePlan(surfaceHelp)
 		m.helpInspector.update(message, plan.Rect)
@@ -231,6 +275,8 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 			m.updateMouseMotion(message.Mouse())
 		case surfaceNavigation:
 			m.nav, _ = m.nav.Update(m.navigationMessage(message))
+		case surfaceArrange:
+			m.arrange.Update(m.arrangeMessage(message))
 		case surfaceHelp:
 			plan, _ := m.surfacePlan(surfaceHelp)
 			m.helpInspector.update(message, plan.Rect)
@@ -246,6 +292,7 @@ func (m *Model) updateSurfaceMouseMotion(message tea.MouseMotionMsg) tea.Cmd {
 	}
 	m.sidebar.clearHover()
 	m.nav, _ = m.nav.Update(message)
+	m.arrange.Update(message)
 	if !m.workspace.PointerBlocked(chrome.Point{X: message.X, Y: message.Y}) {
 		m.updateMouseMotion(message.Mouse())
 	}
@@ -332,6 +379,27 @@ func (m *Model) navigationMessage(message tea.Msg) tea.Msg {
 		mouse := message.Mouse()
 		mouse.X -= surface.Anchor.X
 		mouse.Y -= surface.Anchor.Y
+		return tea.MouseMotionMsg(mouse)
+	default:
+		return message
+	}
+}
+
+func (m *Model) arrangeMessage(message tea.Msg) tea.Msg {
+	surface, ok := m.surfacePlan(surfaceArrange)
+	if !ok {
+		return message
+	}
+	switch message := message.(type) {
+	case tea.MouseClickMsg:
+		mouse := message.Mouse()
+		mouse.X -= surface.Rect.X
+		mouse.Y -= surface.Rect.Y
+		return tea.MouseClickMsg(mouse)
+	case tea.MouseMotionMsg:
+		mouse := message.Mouse()
+		mouse.X -= surface.Rect.X
+		mouse.Y -= surface.Rect.Y
 		return tea.MouseMotionMsg(mouse)
 	default:
 		return message

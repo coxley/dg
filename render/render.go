@@ -368,6 +368,13 @@ func arrowGlyph(
 	style layout.ArrowStyle,
 	point, anchor layout.Point,
 ) rune {
+	switch style {
+	case layout.ArrowCircle:
+		return '○'
+	case layout.ArrowCircleBullet:
+		return '◉'
+	case layout.ArrowNone, layout.ArrowOpen, layout.ArrowFilled:
+	}
 	switch {
 	case anchor.Y < point.Y:
 		if style == layout.ArrowFilled {
@@ -416,6 +423,30 @@ func ArrowGlyphAt(
 	return 0, false
 }
 
+// ArrowAnchorAt reports whether an endpoint marker hides point's route cell.
+func ArrowAnchorAt(
+	points []layout.Point,
+	style layout.EdgeStyle,
+	point layout.Point,
+) bool {
+	for _, endpoint := range [...]struct {
+		style layout.ArrowStyle
+		start bool
+	}{
+		{style: style.PortAArrow, start: true},
+		{style: style.PortBArrow},
+	} {
+		if endpoint.style == layout.ArrowNone {
+			continue
+		}
+		_, anchor, ok := edgeArrowPoint(points, endpoint.start)
+		if ok && anchor == point {
+			return true
+		}
+	}
+	return false
+}
+
 func cellGlyph(
 	l *layout.Layout,
 	grid layout.Grid,
@@ -445,7 +476,7 @@ func cellGlyph(
 			return doubleGlyph(connections)
 		case layout.BorderSolid, layout.BorderNone:
 		}
-	case layout.HitPort:
+	case layout.HitPort, layout.HitGroup:
 	}
 	return Glyph(connections)
 }

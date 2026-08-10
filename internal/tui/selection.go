@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
+	"slices"
 
+	"github.com/coxley/dg/ir"
 	"github.com/coxley/dg/layout"
 )
 
@@ -84,6 +87,92 @@ func (m *Model) expandSelection() {
 	}
 	m.refreshSelectionHighlight()
 	m.status = ""
+}
+
+func (m *Model) groupSelection() {
+	if !m.interaction.idle() {
+		m.setError(finishOperation)
+		return
+	}
+	directNodes, groupCount, edgeCount := m.geo.Selection().LogicalCounts()
+	if edgeCount != 0 {
+		m.setError("groups can contain nodes and groups, not edges")
+		return
+	}
+	if directNodes == 0 && groupCount == 1 {
+		var groupID uint32
+		for selected := range m.geo.Selection().Groups() {
+			groupID = selected
+		}
+		m.beginTransaction(transactionImmediate)
+		if _, err := m.geo.Ungroup(groupID); err != nil {
+			m.setError(errors.Join(err, m.cancelTransaction()).Error())
+			return
+		}
+		if err := m.commitTransaction(); err != nil {
+			m.setError(err.Error())
+			return
+		}
+		m.refreshSelectionHighlight()
+		m.status = "ungrouped one level"
+		return
+	}
+	if directNodes+groupCount < 2 {
+		m.setError("select at least two sibling nodes or groups")
+		return
+	}
+	type item struct {
+		member ir.Member
+		bounds layout.Rect
+	}
+	items := make([]item, 0, directNodes+groupCount)
+	for nodeID := range m.geo.Selection().DirectNodes() {
+		items = append(items, item{
+			member: ir.Member{ID: nodeID, Kind: ir.MemberNode},
+			bounds: m.geo.Nodes[nodeID].Rect,
+		})
+	}
+	for groupID := range m.geo.Selection().Groups() {
+		bounds, _ := m.geo.GroupBounds(groupID)
+		items = append(items, item{
+			member: ir.Member{ID: groupID, Kind: ir.MemberGroup},
+			bounds: bounds,
+		})
+	}
+	slices.SortFunc(items, func(a, b item) int {
+		if order := cmp.Compare(a.bounds.Min.Y, b.bounds.Min.Y); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(a.bounds.Min.X, b.bounds.Min.X); order != 0 {
+			return order
+		}
+		if order := cmp.Compare(a.member.Kind, b.member.Kind); order != 0 {
+			return order
+		}
+		return cmp.Compare(a.member.ID, b.member.ID)
+	})
+	members := make([]ir.Member, len(items))
+	for i, selected := range items {
+		members[i] = selected.member
+	}
+	m.beginTransaction(transactionImmediate)
+	groupID, err := m.geo.NewGroup(members)
+	if err != nil {
+		_ = m.cancelTransaction()
+		if errors.Is(err, ir.ErrMembersNotSiblings) {
+			m.setError("group members must share one parent; drill into the same group first")
+		} else {
+			m.setError(err.Error())
+		}
+		return
+	}
+	m.geo.Selection().SelectOnly(layout.Hit{ID: groupID, Kind: layout.HitGroup})
+	if err := m.commitTransaction(); err != nil {
+		m.setError(err.Error())
+		return
+	}
+	m.refreshSelectionHighlight()
+	m.status = "grouped selection"
 }
 
 func (m *Model) beginAreaSelection(point layout.Point) {

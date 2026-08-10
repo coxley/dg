@@ -3,6 +3,7 @@ package document
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,7 +173,7 @@ func TestMarshalCompactsDeletedSlots(t *testing.T) {
 
 	data, err := Marshal(doc)
 	require.NoError(t, err)
-	require.Contains(t, string(data), `"version": 3`)
+	require.Contains(t, string(data), `"version": 4`)
 	require.NotContains(t, string(data), "points")
 }
 
@@ -243,6 +244,112 @@ func TestMigrateVersion2WithoutAttachments(t *testing.T) {
 	require.True(t, migrated)
 	want.Version = CurrentVersion
 	require.Equal(t, want, got)
+}
+
+func TestMigrateVersion3AddsEmptyGroups(t *testing.T) {
+	t.Parallel()
+
+	want := validDocument()
+	want.Version = 3
+	data, err := Marshal(want)
+	require.NoError(t, err)
+	var got Document
+	migrated, err := Migrate(data, &got)
+	require.NoError(t, err)
+	require.True(t, migrated)
+	want.Version = CurrentVersion
+	require.Equal(t, want, got)
+}
+
+func TestRoundTripNestedGroupsCompactsIDs(t *testing.T) {
+	t.Parallel()
+
+	var graph ir.Graph
+	dummyA := graph.NewNode("dummy a")
+	dummyB := graph.NewNode("dummy b")
+	left := graph.NewNode("left")
+	middle := graph.NewNode("middle")
+	right := graph.NewNode("right")
+	dummy, err := graph.NewGroup([]ir.Member{
+		{ID: dummyA, Kind: ir.MemberNode},
+		{ID: dummyB, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	shape, err := graph.NewGroup([]ir.Member{
+		{ID: left, Kind: ir.MemberNode},
+		{ID: middle, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	_, err = graph.NewGroup([]ir.Member{
+		{ID: shape, Kind: ir.MemberGroup},
+		{ID: right, Kind: ir.MemberNode},
+	})
+	require.NoError(t, err)
+	_, err = graph.Ungroup(dummy)
+	require.NoError(t, err)
+
+	geo, err := layout.New(layout.WithGraph(graph))
+	require.NoError(t, err)
+	doc := New(geo)
+	require.Len(t, doc.Groups, 2)
+	require.Equal(t, []GroupMember{
+		{Kind: GroupMemberNode, ID: left},
+		{Kind: GroupMemberNode, ID: middle},
+	}, doc.Groups[0].Members)
+	require.Equal(t, GroupMember{Kind: GroupMemberGroup, ID: 0}, doc.Groups[1].Members[0])
+
+	data, err := Marshal(doc)
+	require.NoError(t, err)
+	decoded, err := Unmarshal(data)
+	require.NoError(t, err)
+	restored, err := decoded.Convert()
+	require.NoError(t, err)
+	restoredGraph := restored.Graph()
+	require.Len(t, restoredGraph.Groups, 2)
+	require.Equal(t, []uint32{left, middle, right}, slices.Collect(restoredGraph.DescendantNodes(1)))
+}
+
+func TestDocumentRejectsInvalidGroups(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		groups []Group
+		want   string
+	}{
+		{
+			name: "singleton",
+			groups: []Group{{Members: []GroupMember{
+				{Kind: GroupMemberNode, ID: 0},
+			}}},
+			want: "fewer than two members",
+		},
+		{
+			name: "invalid member kind",
+			groups: []Group{{Members: []GroupMember{
+				{Kind: "shape", ID: 0},
+				{Kind: GroupMemberNode, ID: 1},
+			}}},
+			want: "unknown kind",
+		},
+		{
+			name: "missing node member",
+			groups: []Group{{Members: []GroupMember{
+				{Kind: GroupMemberNode, ID: 0},
+				{Kind: GroupMemberNode, ID: 99},
+			}}},
+			want: "references unknown node",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			doc := validDocument()
+			doc.Groups = test.groups
+			_, err := doc.Convert()
+			require.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 func TestMigrateVersion2RejectsEndpointAttachment(t *testing.T) {
@@ -821,7 +928,7 @@ func TestDocumentRejectsUnsupportedVersion(t *testing.T) {
 	_, err := doc.Convert()
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 
-	_, err = Unmarshal([]byte(`{"version":4,"future_field":true}`))
+	_, err = Unmarshal([]byte(`{"version":5,"future_field":true}`))
 	require.ErrorIs(t, err, ErrUnsupportedVersion)
 }
 
@@ -1013,11 +1120,15 @@ func generatedDocument(minNodes int) *rapid.Generator[Document] {
 					"",
 					ArrowOpen,
 					ArrowFilled,
+					ArrowCircle,
+					ArrowCircleBullet,
 				}).Draw(t, "port A arrow"),
 				PortBArrow: rapid.SampledFrom([]ArrowStyle{
 					"",
 					ArrowOpen,
 					ArrowFilled,
+					ArrowCircle,
+					ArrowCircleBullet,
 				}).Draw(t, "port B arrow"),
 				Stroke: rapid.SampledFrom([]StrokeStyle{
 					"",

@@ -25,6 +25,7 @@ const (
 	historySetRouter
 	historySetAttachment
 	historySetPinnedBends
+	historySetGroups
 )
 
 type historyPort struct {
@@ -78,6 +79,7 @@ type historyChangeState struct {
 	Attached    bool         `json:"attached,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Bends       []PinnedBend `json:"bends,omitempty"`
+	Groups      []ir.Group   `json:"groups,omitempty"`
 }
 
 type layoutHistoryState struct {
