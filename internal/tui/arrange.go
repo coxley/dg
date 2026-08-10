@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -18,6 +20,7 @@ const (
 	arrangeHorizontalField chrome.ID = "align-horizontal"
 	arrangeVerticalField   chrome.ID = "align-vertical"
 	arrangeDistributeField chrome.ID = "distribute"
+	arrangeSpacingField    chrome.ID = "spacing"
 
 	arrangeAlignLeft            chrome.ID = "align-left"
 	arrangeAlignCenter          chrome.ID = "align-center"
@@ -28,23 +31,86 @@ const (
 	arrangeDistributeHorizontal chrome.ID = "distribute-horizontal"
 	arrangeDistributeVertical   chrome.ID = "distribute-vertical"
 
-	arrangeFormWidth = 26
+	arrangeFormWidth                = 26
+	arrangeSpacingAttentionDuration = 500 * time.Millisecond
 )
+
+type arrangeSpacing struct {
+	cells uint64
+	fixed bool
+}
 
 type arrangeSettings struct {
 	horizontal chrome.ID
 	vertical   chrome.ID
 	distribute chrome.ID
+	spacing    arrangeSpacing
 }
 
 func (s arrangeSettings) empty() bool {
-	return s == arrangeSettings{}
+	return s.horizontal == "" && s.vertical == "" && s.distribute == ""
+}
+
+type arrangeSpacingScale struct {
+	active      bool
+	approximate int64
+}
+
+func (s arrangeSpacingScale) maximum() uint64 {
+	if s.active && s.approximate < 0 {
+		return uint64(math.MaxUint32) + 1
+	}
+	if s.active {
+		return math.MaxUint32
+	}
+	return 0
+}
+
+func (s arrangeSpacingScale) evenIndex() uint64 {
+	if !s.active || s.approximate < 0 {
+		return 0
+	}
+	return uint64(s.approximate)
+}
+
+func (s arrangeSpacingScale) numberText(number uint64) string {
+	if number == s.evenIndex() {
+		if s.active {
+			return fmt.Sprintf("Even (~%d)", s.approximate)
+		}
+		return "Even"
+	}
+	if s.approximate < 0 {
+		return strconv.FormatUint(number-1, 10)
+	}
+	return strconv.FormatUint(number, 10)
+}
+
+func (s arrangeSpacingScale) spacing(number uint64) arrangeSpacing {
+	if !s.active || number == s.evenIndex() {
+		return arrangeSpacing{}
+	}
+	if s.approximate < 0 {
+		return arrangeSpacing{cells: number - 1, fixed: true}
+	}
+	return arrangeSpacing{cells: number, fixed: true}
+}
+
+func (s arrangeSpacingScale) number(spacing arrangeSpacing) uint64 {
+	if !s.active || !spacing.fixed {
+		return s.evenIndex()
+	}
+	if s.approximate < 0 {
+		return spacing.cells + 1
+	}
+	return spacing.cells
 }
 
 type arrangeForm struct {
 	form      *chrome.Form
 	container lipgloss.Style
 	styles    chrome.FormStyles
+	spacing   arrangeSpacingScale
 	lines     []string
 	bounds    chrome.Rect
 }
@@ -56,7 +122,8 @@ func newArrangeForm(container lipgloss.Style, styles chrome.FormStyles) arrangeF
 }
 
 func (f *arrangeForm) Reset() {
-	f.form = chrome.NewForm(arrangeDeclaration(), f.styles)
+	f.spacing = arrangeSpacingScale{}
+	f.form = chrome.NewForm(arrangeDeclaration(f.spacing), f.styles)
 	f.resize()
 }
 
@@ -84,11 +151,47 @@ func (f arrangeForm) Settings() arrangeSettings {
 	horizontal, _ := f.form.Selected(arrangeHorizontalField)
 	vertical, _ := f.form.Selected(arrangeVerticalField)
 	distribute, _ := f.form.Selected(arrangeDistributeField)
+	spacing, _ := f.form.Number(arrangeSpacingField)
 	return arrangeSettings{
 		horizontal: chrome.ID(horizontal),
 		vertical:   chrome.ID(vertical),
 		distribute: chrome.ID(distribute),
+		spacing:    f.spacing.spacing(spacing),
 	}
+}
+
+func (f *arrangeForm) configureSpacing(items []arrangeItem) {
+	current := f.Settings().spacing
+	distribute, _ := f.form.Selected(arrangeDistributeField)
+	var next arrangeSpacingScale
+	switch chrome.ID(distribute) {
+	case arrangeDistributeHorizontal:
+		next = arrangeSpacingScale{active: true, approximate: arrangeEvenSpacing(items, true)}
+	case arrangeDistributeVertical:
+		next = arrangeSpacingScale{active: true, approximate: arrangeEvenSpacing(items, false)}
+	}
+	f.spacing = next
+	f.form.SetNumber(
+		arrangeSpacingField,
+		next.number(current),
+		next.maximum(),
+		next.numberText,
+	)
+	f.render()
+}
+
+func (f arrangeForm) spacingBlocked(message tea.KeyPressMsg) bool {
+	if f.form.FocusID() != arrangeSpacingField || f.spacing.active {
+		return false
+	}
+	intent := chrome.ResolveControlIntent(message, false)
+	return intent == chrome.NavigateLeft || intent == chrome.NavigateRight
+}
+
+func (f *arrangeForm) highlightDistribution() tea.Cmd {
+	command := f.form.Highlight(arrangeDistributeField, arrangeSpacingAttentionDuration)
+	f.render()
+	return command
 }
 
 func (f arrangeForm) Lines() []string {
@@ -104,7 +207,7 @@ func (f *arrangeForm) resize() {
 	top := f.container.GetBorderTopSize() + f.container.GetPaddingTop()
 	f.form.SetBounds(chrome.Rect{
 		X: left, Y: top,
-		Width: arrangeFormWidth, Height: 3,
+		Width: arrangeFormWidth, Height: 4,
 	})
 	f.render()
 }
@@ -115,7 +218,7 @@ func (f *arrangeForm) render() {
 	f.bounds = chrome.Rect{Width: lipgloss.Width(view), Height: lipgloss.Height(view)}
 }
 
-func arrangeDeclaration() chrome.FormDeclaration {
+func arrangeDeclaration(spacing arrangeSpacingScale) chrome.FormDeclaration {
 	placeholder := chrome.FormOption{Label: "—"}
 	return chrome.FormDeclaration{Fields: []chrome.FormField{
 		{
@@ -143,6 +246,10 @@ func arrangeDeclaration() chrome.FormDeclaration {
 				{Label: "Horizontal", Value: string(arrangeDistributeHorizontal)},
 				{Label: "Vertical", Value: string(arrangeDistributeVertical)},
 			},
+		},
+		{
+			ID: arrangeSpacingField, Label: "Spacing", Kind: chrome.NumberField,
+			Maximum: spacing.maximum(), Number: spacing.evenIndex(), NumberText: spacing.numberText,
 		},
 	}}
 }
@@ -238,9 +345,17 @@ func (m *Model) updateArrangeKey(message tea.KeyPressMsg) tea.Cmd {
 		m.commitArrange()
 		return nil
 	}
+	if m.arrange.spacingBlocked(message) {
+		return m.arrange.highlightDistribution()
+	}
 	before := m.arrange.Settings()
 	command := m.arrange.Update(message)
-	if m.arrange.Settings() != before {
+	after := m.arrange.Settings()
+	if after.distribute != before.distribute {
+		m.arrange.configureSpacing(m.arrangePreview)
+		after = m.arrange.Settings()
+	}
+	if after != before {
 		if err := m.previewArrange(); err != nil {
 			m.setError(err.Error())
 		}
@@ -371,14 +486,33 @@ func arrangeDeltas(items []arrangeItem, settings arrangeSettings) ([][2]int64, e
 		if len(items) < 3 {
 			return nil, errors.New("distribution requires at least three selected items")
 		}
-		distributeArrange(items, deltas, settings.distribute == arrangeDistributeHorizontal)
+		distributeArrange(
+			items,
+			deltas,
+			settings.distribute == arrangeDistributeHorizontal,
+			settings.spacing,
+		)
 	default:
 		return nil, fmt.Errorf("unknown distribution %q", settings.distribute)
 	}
 	return deltas, nil
 }
 
-func distributeArrange(items []arrangeItem, deltas [][2]int64, horizontal bool) {
+func distributeArrange(
+	items []arrangeItem,
+	deltas [][2]int64,
+	horizontal bool,
+	spacing arrangeSpacing,
+) {
+	order := arrangeOrder(items, horizontal)
+	if spacing.fixed {
+		distributeArrangeFixed(items, order, deltas, horizontal, spacing.cells)
+		return
+	}
+	distributeArrangeEven(items, order, deltas, horizontal)
+}
+
+func arrangeOrder(items []arrangeItem, horizontal bool) []int {
 	order := make([]int, len(items))
 	for i := range order {
 		order[i] = i
@@ -402,6 +536,81 @@ func distributeArrange(items []arrangeItem, deltas [][2]int64, horizontal bool) 
 		}
 		return cmp.Compare(items[a].hit.ID, items[b].hit.ID)
 	})
+	return order
+}
+
+func distributeArrangeEven(
+	items []arrangeItem,
+	order []int,
+	deltas [][2]int64,
+	horizontal bool,
+) {
+	start, end, content := arrangeDistributionSpan(items, order, horizontal)
+	gapTotal := end - start - content
+	position := start
+	contentBefore := int64(0)
+	for rank, index := range order {
+		bounds := items[index].bounds
+		if rank != 0 {
+			position = start + contentBefore +
+				gapTotal*int64(rank)/int64(len(order)-1)
+		}
+		if horizontal {
+			deltas[index][0] = position - int64(bounds.Min.X)
+			contentBefore += int64(bounds.Size.Width)
+		} else {
+			deltas[index][1] = position - int64(bounds.Min.Y)
+			contentBefore += int64(bounds.Size.Height)
+		}
+	}
+}
+
+func distributeArrangeFixed(
+	items []arrangeItem,
+	order []int,
+	deltas [][2]int64,
+	horizontal bool,
+	spacing uint64,
+) {
+	bounds := items[order[0]].bounds
+	position := int64(bounds.Min.X)
+	if !horizontal {
+		position = int64(bounds.Min.Y)
+	}
+	for rank, index := range order {
+		bounds = items[index].bounds
+		if rank != 0 {
+			position += int64(spacing)
+		}
+		if horizontal {
+			deltas[index][0] = position - int64(bounds.Min.X)
+			position += int64(bounds.Size.Width) - 1
+		} else {
+			deltas[index][1] = position - int64(bounds.Min.Y)
+			position += int64(bounds.Size.Height) - 1
+		}
+	}
+}
+
+func arrangeEvenSpacing(items []arrangeItem, horizontal bool) int64 {
+	if len(items) < 2 {
+		return 0
+	}
+	order := arrangeOrder(items, horizontal)
+	start, end, content := arrangeDistributionSpan(items, order, horizontal)
+	gaps := int64(len(order) - 1)
+	spacingTotal := end - start - content + gaps
+	if spacingTotal < 0 {
+		return -((-spacingTotal + gaps/2) / gaps)
+	}
+	return (spacingTotal + gaps/2) / gaps
+}
+
+func arrangeDistributionSpan(
+	items []arrangeItem,
+	order []int,
+	horizontal bool,
+) (int64, int64, int64) {
 	first, last := items[order[0]].bounds, items[order[len(order)-1]].bounds
 	start, end := int64(first.Min.X), int64(last.Max().X)
 	if !horizontal {
@@ -415,32 +624,7 @@ func distributeArrange(items []arrangeItem, deltas [][2]int64, horizontal bool) 
 			content += int64(items[index].bounds.Size.Height)
 		}
 	}
-	gapTotal := end - start - content
-	position := start
-	for rank, index := range order {
-		bounds := items[index].bounds
-		if rank != 0 {
-			position = start + arrangeContentBefore(items, order[:rank], horizontal) +
-				gapTotal*int64(rank)/int64(len(order)-1)
-		}
-		if horizontal {
-			deltas[index][0] = position - int64(bounds.Min.X)
-		} else {
-			deltas[index][1] = position - int64(bounds.Min.Y)
-		}
-	}
-}
-
-func arrangeContentBefore(items []arrangeItem, order []int, horizontal bool) int64 {
-	var total int64
-	for _, index := range order {
-		if horizontal {
-			total += int64(items[index].bounds.Size.Width)
-		} else {
-			total += int64(items[index].bounds.Size.Height)
-		}
-	}
-	return total
+	return start, end, content
 }
 
 func offsetArrangePoint(point layout.Point, dx, dy int64) (layout.Point, bool) {

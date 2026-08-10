@@ -22,6 +22,9 @@ diagnostics used by the chrome lab.
   rendered field label.
 - Number and select fields share directional bracket focus and activation
   feedback.
+- Number declarations may map retained values to application-owned display
+  text. Transient row feedback keeps focus unchanged and restarts its expiry on
+  repeated requests.
 - A form may declare a default action. Enter on a field submits that action
   unless the field owns Enter activation; Enter on a button submits the
   focused button.

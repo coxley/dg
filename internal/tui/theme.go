@@ -153,12 +153,14 @@ func convertTint(theme *tint.Tint) Theme {
 		ActiveThumb:  scrollbarThumb,
 	}
 	form := chrome.FormStyles{
-		Label:        helpDescription,
-		HoveredLabel: helpDescription,
-		FocusedLabel: helpKey.Underline(false),
-		Value:        plain,
-		HoveredValue: plain,
-		FocusedValue: focusedControl,
+		Label:          helpDescription,
+		HoveredLabel:   helpDescription,
+		FocusedLabel:   helpKey.Underline(false),
+		AttentionLabel: activeControl,
+		Value:          plain,
+		HoveredValue:   plain,
+		FocusedValue:   focusedControl,
+		AttentionValue: activeControl,
 		Number: chrome.NumberFieldStyles{
 			Value:            plain,
 			HoveredValue:     plain,

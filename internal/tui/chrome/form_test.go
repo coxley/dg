@@ -2,9 +2,11 @@ package chrome
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -38,6 +40,22 @@ func TestFormEditsDeclaredFieldsWithinBounds(t *testing.T) {
 	selected, ok := form.Selected("select")
 	require.True(t, ok)
 	require.Equal(t, viewportTwo, selected)
+}
+
+func TestFormFormatsAndReconfiguresNumberField(t *testing.T) {
+	t.Parallel()
+
+	form := newTestForm()
+	form.SetBounds(Rect{Width: 40, Height: 8})
+	replaced := form.SetNumber("number", 2, 3, func(number uint64) string {
+		return fmt.Sprintf("step-%d", number)
+	})
+	require.True(t, replaced)
+	require.Contains(t, form.View().Content, "step-2")
+	require.Contains(t, form.AccessibleLines(), "Number:   step-2  ")
+
+	_, _ = form.Update(formKey(tea.KeyRight, ""))
+	require.Contains(t, form.View().Content, "step-3")
 }
 
 func TestFormNumberFlashDoesNotExposeANSIMarkup(t *testing.T) {
@@ -168,6 +186,32 @@ func TestFormFlashExpiresByGeneration(t *testing.T) {
 		_, _ = form.Update(message)
 
 		require.Zero(t, form.Flash("number"))
+	})
+}
+
+func TestFormRowHighlightRetainsFocusAndRestartsExpiry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		styles := testFormStyles()
+		styles.AttentionLabel = lipgloss.NewStyle().Foreground(lipgloss.Color("#111111"))
+		styles.AttentionValue = lipgloss.NewStyle().Foreground(lipgloss.Color("#222222"))
+		form := NewForm(testFormDeclaration(), styles)
+		form.SetBounds(Rect{Width: 40, Height: 8})
+		require.True(t, form.Focus("select"))
+
+		first := form.Highlight("number", 500*time.Millisecond)
+		second := form.Highlight("number", 500*time.Millisecond)
+		require.NotNil(t, first)
+		require.NotNil(t, second)
+		require.Equal(t, ID("select"), form.FocusID())
+		require.True(t, form.Highlighted("number"))
+		require.Contains(t, form.View().Content, styles.AttentionLabel.Render("Number"))
+		require.Contains(t, form.View().Content, styles.AttentionValue.Render("  1  "))
+
+		_, _ = form.Update(first())
+		require.True(t, form.Highlighted("number"))
+		_, _ = form.Update(second())
+		require.False(t, form.Highlighted("number"))
+		require.Equal(t, ID("select"), form.FocusID())
 	})
 }
 

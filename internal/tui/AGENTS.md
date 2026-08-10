@@ -235,8 +235,12 @@ its axis. Enter, Shift-L, or an outside click commits one history interaction
 and closes the form; the outside click continues to the underlying surface.
 Escape or focus loss restores the captured geometry. Alignment uses logical
 item bounds; distribution pins the extreme items and shares integer gap
-remainders. Selected groups move rigidly. Arrange remains a TUI helper and does
-not persist live layout relationships.
+remainders. Spacing defaults to that even result and reports its rounded average
+gap. Exact nonnegative spacing keeps the first item fixed and places the rest
+sequentially; zero shares adjacent borders. Spacing requires a distribution
+axis; an invalid adjustment briefly highlights that dependency without moving
+focus. Selected groups move rigidly. Arrange remains a TUI helper and does not
+persist live layout relationships.
 
 The first actual clipboard write prefers the internal native backend. It
 publishes plain text and `application/vnd.dg.fragment` in one clipboard

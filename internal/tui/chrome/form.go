@@ -41,6 +41,7 @@ type FormField struct {
 	Kind        FieldKind
 	Number      uint64
 	Maximum     uint64
+	NumberText  func(uint64) string
 	Options     []FormOption
 	Selected    int
 	Directory   string
@@ -65,15 +66,17 @@ type FormDeclaration struct {
 
 // FormStyles defines geometry-stable semantic form states.
 type FormStyles struct {
-	Label        lipgloss.Style
-	HoveredLabel lipgloss.Style
-	FocusedLabel lipgloss.Style
-	Value        lipgloss.Style
-	HoveredValue lipgloss.Style
-	FocusedValue lipgloss.Style
-	Number       NumberFieldStyles
-	Buttons      ButtonListStyles
-	TextInput    TextInputStyles
+	Label          lipgloss.Style
+	HoveredLabel   lipgloss.Style
+	FocusedLabel   lipgloss.Style
+	AttentionLabel lipgloss.Style
+	Value          lipgloss.Style
+	HoveredValue   lipgloss.Style
+	FocusedValue   lipgloss.Style
+	AttentionValue lipgloss.Style
+	Number         NumberFieldStyles
+	Buttons        ButtonListStyles
+	TextInput      TextInputStyles
 }
 
 // NumberFieldStyles defines number text and shared directional-control states.
@@ -119,7 +122,7 @@ type FormSubmitMsg struct {
 	ID ID
 }
 
-// FormFlashExpiredMsg clears directional feedback for one form generation.
+// FormFlashExpiredMsg clears transient feedback for one form generation.
 type FormFlashExpiredMsg struct {
 	form       *Form
 	generation uint64
@@ -291,6 +294,25 @@ func (f *Form) Number(id ID) (uint64, bool) {
 	return field.Number, true
 }
 
+// SetNumber replaces one Number value, bound, and optional display formatter.
+func (f *Form) SetNumber(
+	id ID,
+	number, maximum uint64,
+	numberText func(uint64) string,
+) bool {
+	for i := range f.declaration.Fields {
+		field := &f.declaration.Fields[i]
+		if field.ID == id && field.Kind == NumberField {
+			field.Number = min(number, maximum)
+			field.Maximum = maximum
+			field.NumberText = numberText
+			f.invalidate()
+			return true
+		}
+	}
+	return false
+}
+
 // Selected returns one current Select option value.
 func (f *Form) Selected(id ID) (string, bool) {
 	field, ok := f.field(id, SelectField)
@@ -345,6 +367,26 @@ func (f *Form) Flash(id ID) int {
 		return f.flash
 	}
 	return 0
+}
+
+// Highlight briefly marks one form row without moving focus.
+func (f *Form) Highlight(id ID, duration time.Duration) tea.Cmd {
+	if _, ok := f.fieldByID(id); !ok {
+		return nil
+	}
+	f.flashID = id
+	f.flash = 0
+	f.generation++
+	generation := f.generation
+	f.invalidate()
+	return tea.Tick(duration, func(time.Time) tea.Msg {
+		return FormFlashExpiredMsg{form: f, generation: generation}
+	})
+}
+
+// Highlighted reports whether id has transient row feedback.
+func (f *Form) Highlighted(id ID) bool {
+	return f.flashID == id && f.flash == 0
 }
 
 // AccessibleLines describes every field and executable action.
@@ -514,6 +556,15 @@ func (f *Form) field(id ID, kind FieldKind) (FormField, bool) {
 	return FormField{}, false
 }
 
+func (f *Form) fieldByID(id ID) (FormField, bool) {
+	for _, field := range f.declaration.Fields {
+		if field.ID == id {
+			return field, true
+		}
+	}
+	return FormField{}, false
+}
+
 func (f *Form) normalize() {
 	f.syncInputs()
 	for i := range f.declaration.Fields {
@@ -656,6 +707,8 @@ func (f *Form) renderField(field FormField, focused bool, width, valueColumn int
 	labelStyle, valueStyle := f.styles.Label, f.styles.Value
 	hovered := f.hovered && f.declaration.Fields[f.hover].ID == field.ID
 	switch {
+	case f.Highlighted(field.ID):
+		labelStyle, valueStyle = f.styles.AttentionLabel, f.styles.AttentionValue
 	case focused:
 		labelStyle, valueStyle = f.styles.FocusedLabel, f.styles.FocusedValue
 	case hovered:
@@ -688,9 +741,12 @@ func (f *Form) renderFieldValue(
 
 	var value string
 	if field.Kind == NumberField {
-		value = strconv.FormatUint(field.Number, 10)
+		value = numberFieldText(field)
 	} else if len(field.Options) != 0 {
 		value = field.Options[field.Selected].Label
+	}
+	if f.Highlighted(field.ID) {
+		return style.Render("  " + value + "  ")
 	}
 	if !focused {
 		if field.Kind == SelectField {
@@ -749,7 +805,7 @@ func (f *Form) fieldText(field FormField, focused bool) string {
 	var value string
 	switch field.Kind {
 	case NumberField:
-		value = strconv.FormatUint(field.Number, 10)
+		value = numberFieldText(field)
 	case SelectField:
 		if len(field.Options) != 0 {
 			value = field.Options[field.Selected].Label
@@ -768,6 +824,13 @@ func (f *Form) fieldText(field FormField, focused bool) string {
 		return "  " + value + "  "
 	}
 	return "❮ " + value + " ❯"
+}
+
+func numberFieldText(field FormField) string {
+	if field.NumberText != nil {
+		return field.NumberText(field.Number)
+	}
+	return strconv.FormatUint(field.Number, 10)
 }
 
 func (f *Form) syncInputs() {
@@ -825,6 +888,7 @@ func (f *Form) valueColumn(width int) int {
 			f.styles.Label,
 			f.styles.HoveredLabel,
 			f.styles.FocusedLabel,
+			f.styles.AttentionLabel,
 		} {
 			labelWidth = max(labelWidth, ansi.StringWidth(style.Render(field.Label)))
 		}
