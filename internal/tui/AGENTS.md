@@ -223,7 +223,9 @@ interaction.
 Plain Enter commits a single-line label. Shift-Enter inserts its first newline;
 plain Enter then inserts subsequent newlines. Ctrl-Enter and Super-Enter commit
 labels of any size. Editing a logical multi-selection visits only existing
-labels in visual order; Enter-based commits advance with one history transaction
+labels in top-to-bottom visual rows and left-to-right within each row. Overlapping
+vertical bounds establish rows; a tall node spanning multiple rows follows its
+rendered label position. Enter-based commits advance with one history transaction
 per label, while Escape and interaction changes commit the active label and stop.
 
 Shift-L opens an adjacent floating Arrange form without obscuring the canvas.

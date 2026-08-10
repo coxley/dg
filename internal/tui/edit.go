@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"cmp"
 	"errors"
-	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -208,17 +206,7 @@ func (m *Model) beginBatchLabelEdit() bool {
 	if len(targets) == 0 {
 		return false
 	}
-	slices.SortFunc(targets, func(a, b uint32) int {
-		aPoint := m.geo.Nodes[a].Rect.Min
-		bPoint := m.geo.Nodes[b].Rect.Min
-		if order := cmp.Compare(aPoint.Y, bPoint.Y); order != 0 {
-			return order
-		}
-		if order := cmp.Compare(aPoint.X, bPoint.X); order != 0 {
-			return order
-		}
-		return cmp.Compare(a, b)
-	})
+	orderLabelTargets(m.geo, targets)
 	m.labelTargets = targets
 	m.labelTarget = 0
 	m.labelSelection = m.geo.Selection().Snapshot()
