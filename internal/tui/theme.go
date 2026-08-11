@@ -261,7 +261,7 @@ func convertTint(theme *tint.Tint) Theme {
 			Section:    tab.Padding(1, 0, 0, 0),
 			FocusedSection: activeControl.
 				Padding(1, 0, 0, 0),
-			Divider:     tab.Foreground(muted).MarginTop(1),
+			Divider:     tab.MarginTop(1),
 			ClearDrafts: tab,
 			Footer:      tab.Foreground(muted),
 			Scrollbar:   scrollbar,

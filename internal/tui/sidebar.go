@@ -22,7 +22,7 @@ const (
 	sidebarItemPrefix     = "  "
 	sidebarFocusPrefix    = "▸ "
 	sidebarNestedIndent   = "  "
-	sidebarDividerLabel   = "────────"
+	sidebarDividerLabel   = "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈"
 
 	sidebarCanvasesTab   chrome.FocusID = "sidebar-tab:canvases"
 	sidebarDraftsSection chrome.FocusID = "sidebar-section:drafts"
