@@ -62,6 +62,7 @@ type sidebarStyles struct {
 	ActiveItem       lipgloss.Style
 	Section          lipgloss.Style
 	FocusedSection   lipgloss.Style
+	Divider          lipgloss.Style
 	ClearDrafts      lipgloss.Style
 	Footer           lipgloss.Style
 	Scrollbar        chrome.ScrollbarStyles
@@ -260,7 +261,8 @@ func convertTint(theme *tint.Tint) Theme {
 			Section:    tab.Padding(1, 0, 0, 0),
 			FocusedSection: activeControl.
 				Padding(1, 0, 0, 0),
-			ClearDrafts: tab.MarginTop(1),
+			Divider:     tab.Foreground(muted).MarginTop(1),
+			ClearDrafts: tab,
 			Footer:      tab.Foreground(muted),
 			Scrollbar:   scrollbar,
 		},

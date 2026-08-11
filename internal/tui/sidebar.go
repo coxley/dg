@@ -22,9 +22,11 @@ const (
 	sidebarItemPrefix     = "  "
 	sidebarFocusPrefix    = "▸ "
 	sidebarNestedIndent   = "  "
+	sidebarDividerLabel   = "────────"
 
-	sidebarCanvasesTab chrome.FocusID = "sidebar-tab:canvases"
-	sidebarDraftsTab   chrome.FocusID = "sidebar-tab:drafts"
+	sidebarCanvasesTab   chrome.FocusID = "sidebar-tab:canvases"
+	sidebarDraftsSection chrome.FocusID = "sidebar-section:drafts"
+	sidebarDraftsDivider chrome.FocusID = "sidebar-divider:drafts"
 )
 
 type sidebarPlacement uint8
@@ -40,6 +42,7 @@ type sidebarItem struct {
 	Kind    sidebarItemKind
 	Section string
 	Entry   canvasstore.Entry
+	Drafts  bool
 }
 
 type sidebarItemKind uint8
@@ -47,6 +50,7 @@ type sidebarItemKind uint8
 const (
 	sidebarItemRecord sidebarItemKind = iota + 1
 	sidebarItemSection
+	sidebarItemDivider
 	sidebarItemClearDrafts
 )
 
@@ -56,9 +60,8 @@ type sidebarDeclaration struct {
 }
 
 type sidebarTab struct {
-	ID     chrome.FocusID
-	Label  string
-	Drafts bool
+	ID    chrome.FocusID
+	Label string
 }
 
 type sidebarTabPlan struct {
@@ -73,7 +76,6 @@ type sidebarItemPlan struct {
 
 var sidebarTabs = [...]sidebarTab{
 	{ID: sidebarCanvasesTab, Label: "Canvases"},
-	{ID: sidebarDraftsTab, Label: "Drafts", Drafts: true},
 }
 
 type sidebarDrag struct {
@@ -94,26 +96,27 @@ type sidebarRelease struct {
 }
 
 type sidebarState struct {
-	declaration sidebarDeclaration
-	styles      sidebarStyles
-	viewport    *chrome.Viewport
-	pane        *chrome.Pane
-	focus       *chrome.FocusRegistry
-	placement   sidebarPlacement
-	open        bool
-	focused     bool
-	initialOpen bool
-	generation  uint64
-	drafts      bool
-	active      canvasstore.Entry
-	hasActive   bool
-	collapsed   map[string]bool
-	desired     int
-	drag        sidebarDrag
-	tabs        [len(sidebarTabs)]sidebarTabPlan
-	itemPlans   []sidebarItemPlan
-	hoveredTab  chrome.FocusID
-	tabHovered  bool
+	declaration     sidebarDeclaration
+	styles          sidebarStyles
+	viewport        *chrome.Viewport
+	pane            *chrome.Pane
+	focus           *chrome.FocusRegistry
+	placement       sidebarPlacement
+	open            bool
+	focused         bool
+	initialOpen     bool
+	generation      uint64
+	activeTab       chrome.FocusID
+	active          canvasstore.Entry
+	hasActive       bool
+	collapsed       map[string]bool
+	draftsCollapsed bool
+	desired         int
+	drag            sidebarDrag
+	tabs            []sidebarTabPlan
+	itemPlans       []sidebarItemPlan
+	hoveredTab      chrome.FocusID
+	tabHovered      bool
 }
 
 type sidebarMotionMsg struct {
@@ -138,6 +141,8 @@ func newSidebar(declaration sidebarDeclaration, styles sidebarStyles) sidebarSta
 		pane:        pane,
 		focus:       focus,
 		collapsed:   make(map[string]bool),
+		activeTab:   sidebarTabs[0].ID,
+		tabs:        make([]sidebarTabPlan, len(sidebarTabs)),
 	}
 	sidebar.measure(nil)
 	sidebar.render()
@@ -248,12 +253,12 @@ func (s *sidebarState) moveFocus(delta int) {
 		}
 		return
 	}
-	if len(s.declaration.Items) != 0 {
-		first := s.declaration.Items[0].ID
-		last := s.declaration.Items[len(s.declaration.Items)-1].ID
+	first, hasFirst := s.firstFocusableItem()
+	last, hasLast := s.lastFocusableItem()
+	if hasFirst && hasLast {
 		switch {
-		case delta < 0 && focused == first, delta > 0 && focused == last:
-			s.focusTab(s.drafts)
+		case delta < 0 && focused == first.ID, delta > 0 && focused == last.ID:
+			s.focusTab(s.activeTab)
 			return
 		}
 	}
@@ -294,7 +299,7 @@ func (s *sidebarState) click(point chrome.Point, surface chrome.SurfacePlan) boo
 
 func (s *sidebarState) beginCanvasDrag(point chrome.Point) bool {
 	item, ok := s.focusedItem()
-	if !ok || item.Kind != sidebarItemRecord || item.Entry.Draft {
+	if !ok || item.Kind != sidebarItemRecord {
 		return false
 	}
 	s.drag = sidebarDrag{
@@ -388,6 +393,8 @@ func (s *sidebarState) render() {
 		itemFocused := s.focused && item.ID == focused
 		active := item.Kind == sidebarItemRecord && s.hasActive && item.Entry.ID == s.active.ID
 		switch {
+		case item.Kind == sidebarItemDivider:
+			style = s.styles.Divider
 		case item.Kind == sidebarItemClearDrafts:
 			style = s.styles.ClearDrafts
 		case active:
@@ -398,12 +405,16 @@ func (s *sidebarState) render() {
 		if s.drag.moved && s.drag.valid && s.drag.targetIndex == i {
 			style = focusedStyle
 		}
-		prefix := sidebarItemPrefix
-		if itemFocused && item.Kind != sidebarItemSection {
-			prefix = sidebarFocusPrefix
+		content := sidebarItemIndent(item) + sidebarItemPrefix + item.Label
+		if item.Kind == sidebarItemDivider {
+			width := max(s.pane.Plan().Body.Width-style.GetHorizontalFrameSize(), 0)
+			content = style.Width(width).Align(lipgloss.Center).Render(item.Label)
+			style = lipgloss.NewStyle()
+		} else if itemFocused && item.Kind != sidebarItemSection {
+			content = sidebarItemIndent(item) + sidebarFocusPrefix + item.Label
 		}
 		rendered := strings.Split(
-			style.Render(sidebarItemIndent(item)+prefix+item.Label),
+			style.Render(content),
 			"\n",
 		)
 		start := len(lines) + style.GetMarginTop()
@@ -419,7 +430,8 @@ func (s *sidebarState) render() {
 }
 
 func sidebarItemIndent(item sidebarItem) string {
-	if item.Kind == sidebarItemRecord && item.Entry.Section != "" {
+	if (item.Drafts && item.Kind != sidebarItemSection) ||
+		(item.Kind == sidebarItemRecord && item.Entry.Section != "") {
 		return sidebarNestedIndent
 	}
 	return ""
@@ -428,35 +440,42 @@ func sidebarItemIndent(item sidebarItem) string {
 func (s *sidebarState) renderHeader() {
 	header := s.styles.Header
 	width := max(s.pane.Plan().Content.Width-header.GetHorizontalFrameSize(), 0)
-	firstWidth := width / len(sidebarTabs)
-	widths := [len(sidebarTabs)]int{firstWidth, width - firstWidth}
+	baseWidth := width / len(sidebarTabs)
+	remainder := width % len(sidebarTabs)
 	_, focused := s.focus.Current()
 	var content strings.Builder
+	x := 0
 	for i, tab := range sidebarTabs {
+		tabWidth := baseWidth
+		if i < remainder {
+			tabWidth++
+		}
 		style := s.styles.Tab
 		switch {
-		case tab.Drafts == s.drafts:
+		case tab.ID == s.activeTab:
 			style = s.styles.ActiveTab
 		case s.focused && focused == tab.ID:
 			style = s.styles.FocusedTab
 		case s.tabHovered && s.hoveredTab == tab.ID:
 			style = s.styles.HoveredTab
 		}
-		content.WriteString(renderSidebarTab(style, tab.Label, widths[i]))
+		content.WriteString(renderSidebarTab(style, tab.Label, tabWidth))
+		s.tabs[i] = sidebarTabPlan{
+			Tab:  tab,
+			Rect: chrome.Rect{X: x, Width: tabWidth, Height: 1},
+		}
+		x += tabWidth
 	}
 	rendered := header.Width(width).Render(content.String())
 	s.pane.SetHeader(strings.Split(rendered, "\n"))
 	plan := s.pane.Plan().Header
-	x := plan.X + header.GetMarginLeft() +
+	x = plan.X + header.GetMarginLeft() +
 		header.GetBorderLeftSize() + header.GetPaddingLeft()
 	y := plan.Y + header.GetMarginTop() +
 		header.GetBorderTopSize() + header.GetPaddingTop()
-	for i, tab := range sidebarTabs {
-		s.tabs[i] = sidebarTabPlan{
-			Tab:  tab,
-			Rect: chrome.Rect{X: x, Y: y, Width: widths[i], Height: 1},
-		}
-		x += widths[i]
+	for i := range s.tabs {
+		s.tabs[i].Rect.X += x
+		s.tabs[i].Rect.Y = y
 	}
 }
 
@@ -475,19 +494,29 @@ func (s *sidebarState) dropTarget(local chrome.Point) (string, int, bool) {
 	if !plan.Body.Contains(local) {
 		return "", -1, false
 	}
-	index, ok := s.itemAt(local.Y - plan.Body.Y + s.viewport.Plan().Offset.Y)
+	row := local.Y - plan.Body.Y + s.viewport.Plan().Offset.Y
+	index, ok := s.itemAt(row)
 	if !ok {
+		for _, itemPlan := range s.itemPlans {
+			item := s.declaration.Items[itemPlan.Index]
+			if item.Kind == sidebarItemDivider && row >= itemPlan.Rect.Y {
+				return "", -1, false
+			}
+		}
 		return "", sidebarRootDropTarget, true
 	}
 	item := s.declaration.Items[index]
 	switch item.Kind {
 	case sidebarItemSection:
+		if item.Drafts {
+			return "", -1, false
+		}
 		return item.Section, index, true
 	case sidebarItemRecord:
 		if !item.Entry.Draft {
 			return item.Entry.Section, index, true
 		}
-	case sidebarItemClearDrafts:
+	case sidebarItemDivider, sidebarItemClearDrafts:
 	}
 	return "", -1, false
 }
@@ -503,9 +532,9 @@ func (s *sidebarState) focusTarget(id chrome.FocusID) bool {
 	return false
 }
 
-func (s *sidebarState) focusTab(drafts bool) {
+func (s *sidebarState) focusTab(id chrome.FocusID) {
 	for _, tab := range sidebarTabs {
-		if tab.Drafts == drafts {
+		if tab.ID == id {
 			s.focusTarget(tab.ID)
 			s.render()
 			return
@@ -513,14 +542,14 @@ func (s *sidebarState) focusTab(drafts bool) {
 	}
 }
 
-func (s *sidebarState) focusedTab() (bool, bool) {
+func (s *sidebarState) focusedTab() (sidebarTab, bool) {
 	_, focused := s.focus.Current()
 	for _, tab := range sidebarTabs {
 		if tab.ID == focused {
-			return tab.Drafts, true
+			return tab, true
 		}
 	}
-	return false, false
+	return sidebarTab{}, false
 }
 
 func (s *sidebarState) focusActiveItem() bool {
@@ -537,17 +566,37 @@ func (s *sidebarState) focusActiveItem() bool {
 }
 
 func (s *sidebarState) focusFirstItem() bool {
-	if len(s.declaration.Items) == 0 {
+	item, ok := s.firstFocusableItem()
+	if !ok {
 		return false
 	}
-	return s.focusItem(s.declaration.Items[0])
+	return s.focusItem(item)
 }
 
 func (s *sidebarState) focusLastItem() bool {
-	if len(s.declaration.Items) == 0 {
+	item, ok := s.lastFocusableItem()
+	if !ok {
 		return false
 	}
-	return s.focusItem(s.declaration.Items[len(s.declaration.Items)-1])
+	return s.focusItem(item)
+}
+
+func (s *sidebarState) firstFocusableItem() (sidebarItem, bool) {
+	for _, item := range s.declaration.Items {
+		if item.Kind != sidebarItemDivider {
+			return item, true
+		}
+	}
+	return sidebarItem{}, false
+}
+
+func (s *sidebarState) lastFocusableItem() (sidebarItem, bool) {
+	for i := len(s.declaration.Items) - 1; i >= 0; i-- {
+		if s.declaration.Items[i].Kind != sidebarItemDivider {
+			return s.declaration.Items[i], true
+		}
+	}
+	return sidebarItem{}, false
 }
 
 func (s *sidebarState) focusItem(item sidebarItem) bool {
@@ -602,6 +651,7 @@ func (s *sidebarState) measure(allLabels []string) {
 		s.styles.ActiveItem.GetHorizontalFrameSize(),
 		s.styles.Section.GetHorizontalFrameSize(),
 		s.styles.FocusedSection.GetHorizontalFrameSize(),
+		s.styles.Divider.GetHorizontalFrameSize(),
 		s.styles.ClearDrafts.GetHorizontalFrameSize(),
 	)
 	width := max(
@@ -630,6 +680,9 @@ func (s *sidebarState) registerTargets() {
 	}
 	for _, plan := range s.itemPlans {
 		item := s.declaration.Items[plan.Index]
+		if item.Kind == sidebarItemDivider {
+			continue
+		}
 		targets = append(targets, chrome.FocusTarget{
 			ID: item.ID,
 			Rect: chrome.Rect{
@@ -670,9 +723,13 @@ func (m *Model) toggleSidebar() tea.Cmd {
 }
 
 func (m *Model) focusActiveSidebarItem() {
-	if m.entry == nil || m.entry.Draft != m.sidebar.drafts {
+	if m.entry == nil {
 		m.sidebar.focusFirstItem()
 		return
+	}
+	if m.entry.Draft && m.sidebar.draftsCollapsed {
+		m.sidebar.draftsCollapsed = false
+		m.rebuildSidebarCatalog()
 	}
 	if section := m.entry.Section; !m.entry.Draft && section != "" && m.sidebar.collapsed[section] {
 		m.sidebar.collapsed[section] = false

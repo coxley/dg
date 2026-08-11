@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSidebarBuildsCanvasSectionsAndDraftTab(t *testing.T) {
+func TestSidebarBuildsCanvasAndDraftSections(t *testing.T) {
 	t.Parallel()
 
 	model, _, store := newStoredTestModel(t, "active draft")
@@ -45,22 +45,26 @@ func TestSidebarBuildsCanvasSectionsAndDraftTab(t *testing.T) {
 		"Candidate 2",
 		"▾ [RFCs]",
 		"Proposal.bak [backup]",
-	}, labels)
+	}, labels[:7])
+	require.Equal(t, sidebarDividerLabel, labels[7])
+	require.Equal(t, "▾ [Drafts]", labels[8])
+	require.Len(t, labels, 12)
+	require.Equal(t, "[Clear Drafts]", labels[11])
+	for _, item := range model.sidebar.declaration.Items[9:11] {
+		require.True(t, item.Drafts)
+		require.NotEmpty(t, item.Label)
+	}
 	wantWidth := model.sidebar.desired
 	focusSidebarItem(t, model, "section:Interviews")
 	model.activateSidebar()
 	require.NotContains(t, sidebarLabels(model), "Candidate 1")
 	require.Equal(t, wantWidth, model.sidebar.desired)
 
-	model.switchSidebarTab(1)
-	require.True(t, model.sidebar.drafts)
+	focusSidebarItem(t, model, sidebarDraftsSection)
+	model.activateSidebar()
+	require.True(t, model.sidebar.draftsCollapsed)
 	require.Equal(t, wantWidth, model.sidebar.desired)
-	require.Len(t, model.sidebar.declaration.Items, 3)
-	for _, item := range model.sidebar.declaration.Items[:2] {
-		require.NotContains(t, item.Label, "draft")
-		require.NotEmpty(t, item.Label)
-	}
-	require.Equal(t, "[Clear Drafts]", model.sidebar.declaration.Items[2].Label)
+	require.Equal(t, "▸ [Drafts]", model.sidebar.declaration.Items[len(model.sidebar.declaration.Items)-1].Label)
 }
 
 func TestSidebarPrefixesFocusAndKeepsActiveCanvasVisible(t *testing.T) {
@@ -100,8 +104,10 @@ func TestSidebarSectionsUseDisclosureMarkerAndIndentChildren(t *testing.T) {
 	sidebar := newSidebar(sidebarDeclaration{Items: []sidebarItem{
 		{ID: "section:Sub", Label: "▾ [Sub]", Kind: sidebarItemSection},
 		canvasSidebarItem(child),
+		{ID: sidebarDraftsSection, Label: "▾ [Drafts]", Kind: sidebarItemSection, Drafts: true},
+		{ID: "draft:item", Label: "Aug 9, 17:15", Kind: sidebarItemRecord, Drafts: true},
 	}}, sidebarStyles{})
-	sidebar.setBounds(chrome.Rect{Width: 30, Height: 6})
+	sidebar.setBounds(chrome.Rect{Width: 30, Height: 8})
 	sidebar.show()
 	require.True(t, sidebar.focusTarget("section:Sub"))
 	sidebar.render()
@@ -114,6 +120,12 @@ func TestSidebarSectionsUseDisclosureMarkerAndIndentChildren(t *testing.T) {
 	sidebar.render()
 	rendered = ansi.Strip(strings.Join(sidebar.viewport.Lines(), "\n"))
 	require.Contains(t, rendered, "  ▸ Child")
+	require.Contains(t, rendered, "  ▾ [Drafts]")
+
+	require.True(t, sidebar.focusTarget("draft:item"))
+	sidebar.render()
+	rendered = ansi.Strip(strings.Join(sidebar.viewport.Lines(), "\n"))
+	require.Contains(t, rendered, "  ▸ Aug 9, 17:15")
 }
 
 func TestSidebarClearDraftsStyleAddsSeparateRow(t *testing.T) {
@@ -195,15 +207,15 @@ func TestSidebarKeyboardFocusesActiveCanvas(t *testing.T) {
 		t.Parallel()
 
 		model, _, store := newStoredTestModel(t, "active")
-		canvas, err := store.Create("", "Architecture", document.New(mustLayoutWithLabel(t, "named")))
+		canvas, err := store.Name(*model.entry, "", "Architecture")
 		require.NoError(t, err)
+		model.setActiveEntry(canvas)
 		model.updateCatalog(store.Reconcile(model.catalog))
 		model.sidebar.openInitially()
 
 		updateModelCommand(t, model, sidebarKey())
 
 		require.True(t, model.sidebar.focused)
-		require.False(t, model.sidebar.drafts)
 		item, ok := model.sidebar.focusedItem()
 		require.True(t, ok)
 		require.Equal(t, canvas.ID, item.Entry.ID)
@@ -214,13 +226,12 @@ func TestSidebarKeyboardFocusesActiveCanvas(t *testing.T) {
 
 		model, _, _ := newStoredTestModel(t, "active")
 		active := *model.entry
-		model.sidebar.drafts = true
-		model.rebuildSidebarCatalog()
+		model.sidebar.draftsCollapsed = true
 		model.sidebar.openInitially()
 
 		updateModelCommand(t, model, sidebarKey())
 
-		require.True(t, model.sidebar.drafts)
+		require.False(t, model.sidebar.draftsCollapsed)
 		item, ok := model.sidebar.focusedItem()
 		require.True(t, ok)
 		require.Equal(t, active.ID, item.Entry.ID)
@@ -239,7 +250,6 @@ func TestSidebarKeyboardFocusesActiveCanvas(t *testing.T) {
 		updateModelCommand(t, model, sidebarKey())
 
 		require.True(t, model.sidebar.focused)
-		require.False(t, model.sidebar.drafts)
 		require.False(t, model.sidebar.collapsed[active.Section])
 		item, ok := model.sidebar.focusedItem()
 		require.True(t, ok)
@@ -252,11 +262,12 @@ func TestSidebarVerticalFocusTreatsTabsAsOneRow(t *testing.T) {
 
 	sidebar := newSidebar(sidebarDeclaration{Items: []sidebarItem{
 		{ID: "first", Label: "First", Kind: sidebarItemRecord},
+		{ID: sidebarDraftsDivider, Label: sidebarDividerLabel, Kind: sidebarItemDivider},
 		{ID: "last", Label: "Last", Kind: sidebarItemRecord},
 	}}, sidebarStyles{})
 	sidebar.setBounds(chrome.Rect{Width: 30, Height: 6})
 	sidebar.show()
-	sidebar.focusTab(false)
+	sidebar.focusTab(sidebarCanvasesTab)
 
 	sidebar.moveFocus(1)
 	_, focused := sidebar.focus.Current()
@@ -273,41 +284,23 @@ func TestSidebarVerticalFocusTreatsTabsAsOneRow(t *testing.T) {
 	sidebar.moveFocus(1)
 	_, focused = sidebar.focus.Current()
 	require.Equal(t, sidebarCanvasesTab, focused)
-
-	sidebar.focusTab(true)
-	sidebar.moveFocus(1)
-	_, focused = sidebar.focus.Current()
-	require.Equal(t, chrome.FocusID("first"), focused)
 }
 
-func TestSidebarTabsShareHeaderAndActivateOnClick(t *testing.T) {
+func TestSidebarSingleTabFillsHeaderAndActivatesOnClick(t *testing.T) {
 	t.Parallel()
 
 	model, _, _ := newStoredTestModel(t, "draft")
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 12})
 	model.setMotionEnabled(false)
 	updateModelCommand(t, model, sidebarKey())
-	require.Len(t, model.sidebar.tabs, 2)
+	require.Len(t, model.sidebar.tabs, 1)
 	canvases := model.sidebar.tabs[0]
-	drafts := model.sidebar.tabs[1]
-	require.Equal(t, canvases.Rect.Right(), drafts.Rect.X)
-	require.LessOrEqual(
-		t,
-		max(canvases.Rect.Width, drafts.Rect.Width)-min(canvases.Rect.Width, drafts.Rect.Width),
-		1,
-	)
-
-	clickSidebarTab(t, model, drafts)
-	require.True(t, model.sidebar.drafts)
-	focusedDrafts, ok := model.sidebar.focusedTab()
-	require.True(t, ok)
-	require.True(t, focusedDrafts)
+	require.Equal(t, model.sidebar.pane.Plan().Content.Width, canvases.Rect.Width)
 
 	clickSidebarTab(t, model, canvases)
-	require.False(t, model.sidebar.drafts)
-	focusedDrafts, ok = model.sidebar.focusedTab()
+	tab, ok := model.sidebar.focusedTab()
 	require.True(t, ok)
-	require.False(t, focusedDrafts)
+	require.Equal(t, sidebarCanvasesTab, tab.ID)
 }
 
 func TestSidebarUsesDeclaredHeaderTabAndSectionStyles(t *testing.T) {
@@ -321,26 +314,33 @@ func TestSidebarUsesDeclaredHeaderTabAndSectionStyles(t *testing.T) {
 	styles.ActiveTab = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	styles.Section = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 	styles.FocusedSection = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	styles.Divider = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	sidebar := newSidebar(sidebarDeclaration{
-		Items: []sidebarItem{{
-			ID: "section:Design", Label: "▾ [Design]", Kind: sidebarItemSection,
-		}},
+		Items: []sidebarItem{
+			{ID: "section:Design", Label: "▾ [Design]", Kind: sidebarItemSection},
+			{ID: sidebarDraftsDivider, Label: sidebarDividerLabel, Kind: sidebarItemDivider},
+		},
 	}, styles)
 	sidebar.setBounds(chrome.Rect{Width: 30, Height: 6})
 	sidebar.show()
 
 	rendered := strings.Join(sidebar.pane.Lines(), "\n")
 	require.Contains(t, rendered, "\x1b[44m")
-	require.Contains(t, rendered, "\x1b[31m")
 	require.Contains(t, rendered, "\x1b[33m")
 	require.Contains(t, rendered, "\x1b[35m")
+	require.Contains(t, rendered, "\x1b[34m")
 
-	drafts := sidebar.tabs[1].Rect
-	sidebar.motion(chrome.Point{X: drafts.X, Y: drafts.Y}, chrome.SurfacePlan{})
+	sidebar.activeTab = ""
+	require.True(t, sidebar.focusTarget("section:Design"))
+	sidebar.render()
+	rendered = strings.Join(sidebar.pane.Lines(), "\n")
+	require.Contains(t, rendered, "\x1b[31m")
+	canvases := sidebar.tabs[0].Rect
+	sidebar.motion(chrome.Point{X: canvases.X, Y: canvases.Y}, chrome.SurfacePlan{})
 	rendered = strings.Join(sidebar.pane.Lines(), "\n")
 	require.Contains(t, rendered, "\x1b[37m")
 
-	require.True(t, sidebar.focusTarget(sidebarDraftsTab))
+	require.True(t, sidebar.focusTarget(sidebarCanvasesTab))
 	sidebar.render()
 	rendered = strings.Join(sidebar.pane.Lines(), "\n")
 	require.Contains(t, rendered, "\x1b[32m")
@@ -361,7 +361,6 @@ func TestSidebarDeletesDraftsWithActivePreservationAndConfirmation(t *testing.T)
 		require.NoError(t, err)
 	}
 	model.updateCatalog(store.Reconcile(model.catalog))
-	model.switchSidebarTab(1)
 	focusSidebarItem(t, model, "drafts:clear")
 	model.activateSidebar()
 	require.Equal(t, surfaceConfirmation, model.dialogs.ActiveID())
@@ -439,7 +438,6 @@ func TestSidebarDeleteRemovesOnlyInactiveDraft(t *testing.T) {
 	other, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, "other")))
 	require.NoError(t, err)
 	model.updateCatalog(store.Reconcile(model.catalog))
-	model.switchSidebarTab(1)
 	focusSidebarItem(t, model, chrome.FocusID("draft:"+active.ID.String()))
 	model.deleteFocusedCanvas()
 	require.Equal(t, "cannot delete the active draft", model.status)
@@ -494,6 +492,43 @@ func TestSidebarDragMovesCanvasBetweenSectionsAndRoot(t *testing.T) {
 	require.Equal(t, "moved Architecture to Canvases", model.status)
 }
 
+func TestSidebarDragNamesDraftInCanvasSection(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID, store := newStoredTestModel(t, "original")
+	draft := *model.entry
+	name := draftCanvasName(draft)
+	_, err := store.Create(
+		"Saved",
+		name,
+		document.New(mustLayoutWithLabel(t, "existing")),
+	)
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, "changed"))
+	require.NoError(t, model.rebuild())
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
+	model.setMotionEnabled(false)
+	updateModelCommand(t, model, sidebarKey())
+
+	dragSidebarItem(
+		t,
+		model,
+		chrome.FocusID("draft:"+draft.ID.String()),
+		"section:Saved",
+	)
+
+	require.NotNil(t, model.entry)
+	require.False(t, model.entry.Draft)
+	require.Equal(t, draft.ID, model.entry.ID)
+	require.Equal(t, "Saved", model.entry.Section)
+	require.Equal(t, name+" (2)", model.entry.Name)
+	require.Equal(t, "saved "+name+" (2) to Saved", model.status)
+	loaded, err := store.Load(*model.entry)
+	require.NoError(t, err)
+	require.Equal(t, "changed", loaded.Nodes[0].Label)
+}
+
 func TestSidebarStationaryClickOpensCanvasOnRelease(t *testing.T) {
 	t.Parallel()
 
@@ -504,7 +539,7 @@ func TestSidebarStationaryClickOpensCanvasOnRelease(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
 	model.setMotionEnabled(false)
 	updateModelCommand(t, model, sidebarKey())
-	model.selectSidebarTab(false)
+	model.selectSidebarTab(sidebarCanvasesTab)
 	point := sidebarItemPoint(t, model, "canvas:/Architecture")
 
 	updateModel(t, model, tea.MouseClickMsg{

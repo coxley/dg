@@ -18,12 +18,21 @@ func (m *Model) rebuildSidebarCatalog() {
 	canvasItems, canvasLabels := m.canvasSidebarItems()
 	draftItems, draftLabels := m.draftSidebarItems()
 	labels := append(canvasLabels, draftLabels...)
-	if m.sidebar.drafts {
-		m.sidebar.setContent(draftItems, labels)
-		m.sidebar.setActive(m.entry)
-		return
+	items := append(canvasItems, sidebarItem{
+		ID: sidebarDraftsDivider, Label: sidebarDividerLabel, Kind: sidebarItemDivider,
+	})
+	marker := "▾ "
+	if m.sidebar.draftsCollapsed {
+		marker = "▸ "
 	}
-	m.sidebar.setContent(canvasItems, labels)
+	items = append(items, sidebarItem{
+		ID: sidebarDraftsSection, Label: marker + "[Drafts]",
+		Kind: sidebarItemSection, Drafts: true,
+	})
+	if !m.sidebar.draftsCollapsed {
+		items = append(items, draftItems...)
+	}
+	m.sidebar.setContent(items, labels)
 	m.sidebar.setActive(m.entry)
 }
 
@@ -92,25 +101,26 @@ func (m *Model) draftSidebarItems() ([]sidebarItem, []string) {
 	items := make([]sidebarItem, 0, len(drafts)+1)
 	labels := make([]string, 0, len(drafts)+1)
 	for _, entry := range drafts {
-		label := entry.Modified.Local().Format("Jan 2, 15:04")
-		labels = append(labels, label)
+		label := draftCanvasName(entry)
+		labels = append(labels, sidebarNestedIndent+label)
 		items = append(items, sidebarItem{
-			ID:    chrome.FocusID("draft:" + entry.ID.String()),
-			Label: label,
-			Kind:  sidebarItemRecord,
-			Entry: entry,
+			ID: chrome.FocusID("draft:" + entry.ID.String()), Label: label,
+			Kind: sidebarItemRecord, Entry: entry, Drafts: true,
 		})
 	}
 	if len(drafts) != 0 {
 		const label = "[Clear Drafts]"
-		labels = append(labels, label)
+		labels = append(labels, sidebarNestedIndent+label)
 		items = append(items, sidebarItem{
-			ID:    "drafts:clear",
-			Label: label,
-			Kind:  sidebarItemClearDrafts,
+			ID: "drafts:clear", Label: label,
+			Kind: sidebarItemClearDrafts, Drafts: true,
 		})
 	}
 	return items, labels
+}
+
+func draftCanvasName(entry canvasstore.Entry) string {
+	return entry.Modified.Local().Format("Jan 2, 15:04")
 }
 
 func canvasSidebarItem(entry canvasstore.Entry) sidebarItem {
@@ -144,24 +154,31 @@ func backupName(name string) bool {
 }
 
 func (m *Model) switchSidebarTab(delta int) tea.Cmd {
-	if delta == 0 {
+	if delta == 0 || len(sidebarTabs) < 2 {
 		return nil
 	}
-	return m.selectSidebarTab(!m.sidebar.drafts)
+	index := slices.IndexFunc(sidebarTabs[:], func(tab sidebarTab) bool {
+		return tab.ID == m.sidebar.activeTab
+	})
+	if index < 0 {
+		index = 0
+	}
+	index = (index + len(sidebarTabs) + delta%len(sidebarTabs)) % len(sidebarTabs)
+	return m.selectSidebarTab(sidebarTabs[index].ID)
 }
 
-func (m *Model) selectSidebarTab(drafts bool) tea.Cmd {
-	m.sidebar.drafts = drafts
+func (m *Model) selectSidebarTab(id chrome.FocusID) tea.Cmd {
+	m.sidebar.activeTab = id
 	m.rebuildSidebarCatalog()
 	if m.sidebar.focused {
-		m.sidebar.focusTab(drafts)
+		m.sidebar.focusTab(id)
 	}
 	return m.retargetSidebar()
 }
 
 func (m *Model) activateSidebar() tea.Cmd {
-	if drafts, ok := m.sidebar.focusedTab(); ok {
-		return m.selectSidebarTab(drafts)
+	if tab, ok := m.sidebar.focusedTab(); ok {
+		return m.selectSidebarTab(tab.ID)
 	}
 	item, ok := m.sidebar.focusedItem()
 	if !ok {
@@ -173,11 +190,16 @@ func (m *Model) activateSidebar() tea.Cmd {
 			m.setError(err.Error())
 		}
 	case sidebarItemSection:
-		m.sidebar.collapsed[item.Section] = !m.sidebar.collapsed[item.Section]
+		if item.Drafts {
+			m.sidebar.draftsCollapsed = !m.sidebar.draftsCollapsed
+		} else {
+			m.sidebar.collapsed[item.Section] = !m.sidebar.collapsed[item.Section]
+		}
 		m.rebuildSidebarCatalog()
 		return m.retargetSidebar()
 	case sidebarItemClearDrafts:
 		m.openClearDraftsConfirmation()
+	case sidebarItemDivider:
 	}
 	return nil
 }
@@ -227,6 +249,9 @@ func (m *Model) demoteCanvas(entry canvasstore.Entry, active bool) {
 }
 
 func (m *Model) moveCanvasToSection(entry canvasstore.Entry, section string) tea.Cmd {
+	if entry.Draft {
+		return m.nameDraftInSection(entry, section)
+	}
 	if entry.Section == section {
 		return nil
 	}
@@ -263,6 +288,53 @@ func (m *Model) moveCanvasToSection(entry canvasstore.Entry, section string) tea
 	}
 	m.statusError = ""
 	return m.retargetSidebar()
+}
+
+func (m *Model) nameDraftInSection(entry canvasstore.Entry, section string) tea.Cmd {
+	name := draftCanvasName(entry)
+	active := m.entry != nil && sameCanvas(*m.entry, entry)
+	if active {
+		if err := m.flushActive(); err != nil {
+			m.setError(fmt.Sprintf("save draft before naming: %v", err))
+			return nil
+		}
+		entry = *m.entry
+	}
+	named, err := m.nameDraftUniquely(entry, section, name)
+	if err != nil {
+		m.setError(fmt.Sprintf("name draft: %v", err))
+		return nil
+	}
+	if active {
+		m.setActiveEntry(named)
+	}
+	m.sidebar.collapsed[section] = false
+	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+	m.sidebar.focusTarget(canvasSidebarItem(named).ID)
+	m.sidebar.focus.Reveal(m.sidebar.viewport)
+	m.sidebar.render()
+	m.status = "saved " + named.Name
+	if section != "" {
+		m.status += " to " + section
+	}
+	m.statusError = ""
+	return m.retargetSidebar()
+}
+
+func (m *Model) nameDraftUniquely(
+	entry canvasstore.Entry,
+	section, base string,
+) (canvasstore.Entry, error) {
+	for suffix := 1; ; suffix++ {
+		name := base
+		if suffix > 1 {
+			name = fmt.Sprintf("%s (%d)", base, suffix)
+		}
+		named, err := m.canvasStore.Name(entry, section, name)
+		if !errors.Is(err, canvasstore.ErrEntryExists) {
+			return named, err
+		}
+	}
 }
 
 func (s *sidebarState) focusedItem() (sidebarItem, bool) {

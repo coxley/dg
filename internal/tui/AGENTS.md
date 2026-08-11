@@ -161,17 +161,16 @@ picker. Enter on an explicitly focused button submits that button. Form
 controls use a shared left-aligned value column, including compact naming
 fields.
 
-The sidebar uses an application-declared Pane with separate Canvases and Drafts
-tabs. Each tab owns half of the header content width and supports pointer and
-keyboard focus and activation. Header, inactive, hovered, focused, and active
-tab styles remain independent. Every record row reserves a two-cell focus
-prefix; section rows use only their disclosure marker, and nested records align
-under the section title. The active canvas remains styled independently from
-keyboard focus.
-Canvases groups root records and collapsible one-level sections with independent
-normal and focused styles; Drafts shows newest-first modification times and a
-separately styled clear action. Width follows the
-widest known content with a 30-cell minimum and remains stable across tabs and
+The sidebar uses an application-declared Pane with a tabbed header. Canvases is
+the only current tab and owns the full header content width. Header, inactive,
+hovered, focused, and active tab styles remain independent. Every record row
+reserves a two-cell focus prefix; section rows use only their disclosure marker,
+and nested records align under the section title. The active canvas remains
+styled independently from keyboard focus.
+Canvases groups root records and collapsible one-level sections. A styleable
+divider separates the collapsible Drafts section, which shows newest-first
+modification times and a separately styled clear action. Width follows the
+widest known content with a 30-cell minimum and remains stable across section
 collapse. It docks only while preserving 48 canvas cells and otherwise becomes
 a drawer. One workspace transition owns the boundary and canvas origin. Back
 leaves a docked sidebar visible but returns keyboard focus to the canvas; Back
@@ -184,19 +183,20 @@ scrollbar. The floating navigation remains terminal-anchored while a dock
 opens or closes. It stays on the canvas fast path when fully contained and
 uses its compositor layer only where a dock overlaps it.
 
-Keyboard entry into the sidebar preserves the selected tab. It reveals and
-focuses the active canvas when present there, expanding its section when
-necessary; otherwise, it focuses the first row. Pointer entry preserves the
-clicked target.
+Keyboard entry into the sidebar reveals and focuses the active canvas, expanding
+its section when necessary; otherwise, it focuses the first row. Pointer entry
+preserves the clicked target.
 
-Vertical focus treats the two tabs as one row: Down enters the first list item,
-Up enters the last, and crossing either list boundary returns to the selected
-tab. Left and Right switch tabs.
+Vertical focus treats the tabs as one row: Down enters the first list item, Up
+enters the last, and crossing either list boundary returns to the selected tab.
+Left and Right switch tabs when more than one exists.
 
 Dragging a named canvas onto a section header or one of its canvases moves it
 to that section. Dropping it on the Canvases header or unused list space moves
 it to the preferred directory root. A click without pointer motion opens the
-canvas on release. Drafts do not participate in section dragging.
+canvas on release. Dragging a draft to the root or a named section promotes it
+with its displayed modification time as the name; collisions receive a numeric
+suffix.
 
 Backspace or Delete on a named canvas moves it to Drafts without changing its
 document identity. The active canvas flushes before demotion and remains open

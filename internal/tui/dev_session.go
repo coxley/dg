@@ -44,13 +44,13 @@ type devSelection struct {
 }
 
 type devSidebar struct {
-	Open      bool           `json:"open,omitempty"`
-	Focused   bool           `json:"focused,omitempty"`
-	Drafts    bool           `json:"drafts,omitempty"`
-	FocusedID chrome.FocusID `json:"focused_id,omitempty"`
-	ScrollY   int            `json:"scroll_y,omitempty"`
-	Width     int            `json:"width,omitempty"`
-	Collapsed []string       `json:"collapsed,omitempty"`
+	Open            bool           `json:"open,omitempty"`
+	Focused         bool           `json:"focused,omitempty"`
+	DraftsCollapsed bool           `json:"drafts_collapsed,omitempty"`
+	FocusedID       chrome.FocusID `json:"focused_id,omitempty"`
+	ScrollY         int            `json:"scroll_y,omitempty"`
+	Width           int            `json:"width,omitempty"`
+	Collapsed       []string       `json:"collapsed,omitempty"`
 }
 
 type devHelp struct {
@@ -118,12 +118,12 @@ func (m *Model) captureDevSession() DevSession {
 		NodeStyle: m.nodeStyle,
 		EdgeStyle: m.edgeStyle,
 		Sidebar: devSidebar{
-			Open:      m.sidebar.open,
-			Focused:   m.sidebar.focused,
-			Drafts:    m.sidebar.drafts,
-			ScrollY:   m.sidebar.viewport.Plan().Offset.Y,
-			Width:     m.sidebar.desired,
-			Collapsed: collapsedSections(m.sidebar.collapsed),
+			Open:            m.sidebar.open,
+			Focused:         m.sidebar.focused,
+			DraftsCollapsed: m.sidebar.draftsCollapsed,
+			ScrollY:         m.sidebar.viewport.Plan().Offset.Y,
+			Width:           m.sidebar.desired,
+			Collapsed:       collapsedSections(m.sidebar.collapsed),
 		},
 		Help: devHelp{
 			Visible:    m.helpInspector.visible,
@@ -223,7 +223,7 @@ func (m *Model) restoreDevSession(session DevSession) {
 	for _, section := range session.Sidebar.Collapsed {
 		m.sidebar.collapsed[section] = true
 	}
-	m.sidebar.drafts = session.Sidebar.Drafts
+	m.sidebar.draftsCollapsed = session.Sidebar.DraftsCollapsed
 	m.sidebar.desired = session.Sidebar.Width
 	m.rebuildSidebarCatalog()
 	switch {
