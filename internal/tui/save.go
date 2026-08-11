@@ -147,9 +147,9 @@ func (m *Model) requestSave() {
 		return
 	}
 	m.dialogs.OpenSave()
-	if m.entry != nil && !m.entry.Draft {
+	if m.entry != nil && m.entry.Name != "" {
 		m.dialogs.save.SetValue(m.entry.Section, m.entry.Name)
-		m.dialogs.save.SetRenaming(true)
+		m.dialogs.save.SetRenaming(!m.entry.Draft)
 	}
 	m.status = ""
 }

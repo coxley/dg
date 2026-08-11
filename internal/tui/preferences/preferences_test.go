@@ -45,6 +45,28 @@ func TestGeneralFieldsUseRequestedOrderAndTitleCase(t *testing.T) {
 	require.NotContains(t, view, "Step Cost")
 }
 
+func TestInputGroupsHugEachSectionRightEdge(t *testing.T) {
+	t.Parallel()
+
+	model := testModel()
+	sections := []struct {
+		form       *chrome.Form
+		valueWidth int
+	}{
+		{form: model.general, valueWidth: 14},
+		{form: model.routing, valueWidth: 6},
+	}
+	for _, section := range sections {
+		form := section.form
+		plan := form.Plan()
+		require.NotEmpty(t, plan.Fields)
+		for _, field := range plan.Fields[1:] {
+			require.Equal(t, plan.Fields[0].ValueX, field.ValueX)
+		}
+		require.Equal(t, plan.Bounds.Right()-section.valueWidth, plan.Fields[0].ValueX)
+	}
+}
+
 func TestTabsSwitchInRequestedOrder(t *testing.T) {
 	t.Parallel()
 

@@ -183,6 +183,9 @@ func (s *Store) CreateDraft(doc document.Document) (Entry, error) {
 		}
 		return Entry{}, err
 	}
+	if err := s.removeDraftMetadata(doc.ID); err != nil {
+		return Entry{}, errors.Join(err, os.Remove(path))
+	}
 	entry, err := entryFromFile(path, "", "", true, doc.ID)
 	if err == nil {
 		s.warm.put(warmKey(path, entry.Revision), data)
@@ -374,6 +377,9 @@ func (s *Store) Name(entry Entry, section, name string) (Entry, error) {
 	if err := os.Remove(source); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Entry{}, fmt.Errorf("remove named draft: %w", err)
 	}
+	if err := s.removeDraftMetadata(entry.ID); err != nil {
+		return Entry{}, err
+	}
 	if err := os.Remove(s.promotionPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return Entry{}, fmt.Errorf("finish draft promotion: %w", err)
 	}
@@ -420,17 +426,24 @@ func (s *Store) Demote(entry Entry) (Entry, error) {
 	if err := s.writeDemotion(journal); err != nil {
 		return Entry{}, err
 	}
+	if err := s.writeDraftMetadata(entry.ID, entry.Section, entry.Name); err != nil {
+		return Entry{}, errors.Join(err, os.Remove(s.demotionPath()))
+	}
 	if err := writeNew(target, data); err != nil {
-		_ = os.Remove(s.demotionPath())
+		cleanupErr := errors.Join(
+			s.removeDraftMetadata(entry.ID),
+			os.Remove(s.demotionPath()),
+		)
 		if errors.Is(err, fs.ErrExist) {
-			return Entry{}, ErrEntryExists
+			return Entry{}, errors.Join(ErrEntryExists, cleanupErr)
 		}
-		return Entry{}, err
+		return Entry{}, errors.Join(err, cleanupErr)
 	}
 	if err := os.Remove(source); err != nil {
 		return Entry{}, errors.Join(
 			fmt.Errorf("remove demoted canvas: %w", err),
 			os.Remove(target),
+			s.removeDraftMetadata(entry.ID),
 			os.Remove(s.demotionPath()),
 		)
 	}
@@ -438,7 +451,7 @@ func (s *Store) Demote(entry Entry) (Entry, error) {
 		return Entry{}, fmt.Errorf("finish canvas demotion: %w", err)
 	}
 	s.warm.remove(warmKey(source, entry.Revision))
-	updated, err := entryFromFile(target, "", "", true, entry.ID)
+	updated, err := entryFromFile(target, entry.Section, entry.Name, true, entry.ID)
 	if err == nil {
 		s.warm.put(warmKey(target, updated.Revision), data)
 		s.self[source] = Revision{}
@@ -466,6 +479,11 @@ func (s *Store) Delete(entry Entry) error {
 	}
 	s.warm.remove(warmKey(path, entry.Revision))
 	s.self[path] = Revision{}
+	if entry.Draft {
+		if err := s.removeDraftMetadata(entry.ID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -487,6 +505,9 @@ func (s *Store) ClearDrafts(preserve uuid.UUID) (int, error) {
 			return removed, fmt.Errorf("delete draft: %w", err)
 		}
 		removed++
+		if err := s.removeDraftMetadata(id); err != nil {
+			return removed, err
+		}
 	}
 	return removed, nil
 }
@@ -536,7 +557,11 @@ func (s *Store) inspectDraft(id uuid.UUID) (Entry, error) {
 			return Entry{}, err
 		}
 	}
-	entry, err := entryFromData(path, "", "", true, id, data)
+	section, name, err := s.readDraftMetadata(id)
+	if err != nil {
+		return Entry{}, err
+	}
+	entry, err := entryFromData(path, section, name, true, id, data)
 	if err == nil && migrated {
 		s.recordMigration(path, entry, data)
 	}
@@ -613,6 +638,10 @@ func (s *Store) namedPath(section, name string) string {
 func (s *Store) draftsDir() string { return filepath.Join(s.stateDir, "drafts") }
 func (s *Store) draftPath(id uuid.UUID) string {
 	return filepath.Join(s.draftsDir(), id.String()+".dg")
+}
+
+func (s *Store) draftMetadataPath(id uuid.UUID) string {
+	return filepath.Join(s.draftsDir(), id.String()+".json")
 }
 
 func (s *Store) promotionPath() string { return filepath.Join(s.stateDir, "promotion.json") }
@@ -732,6 +761,11 @@ type promotion struct {
 	Name    string    `json:"name"`
 }
 
+type draftMetadata struct {
+	Section string `json:"section,omitempty"`
+	Name    string `json:"name"`
+}
+
 type demotion struct {
 	ID       uuid.UUID `json:"id"`
 	Section  string    `json:"section"`
@@ -770,6 +804,9 @@ func (s *Store) recoverPromotion() error {
 		if err := os.Remove(s.draftPath(value.DraftID)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("recover promoted draft: %w", err)
 		}
+		if err := s.removeDraftMetadata(value.DraftID); err != nil {
+			return err
+		}
 	}
 	if err := os.Remove(s.promotionPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("finish draft promotion recovery: %w", err)
@@ -806,17 +843,68 @@ func (s *Store) recoverDemotion() error {
 	if err := validateLocation(value.Section, value.Name); err != nil {
 		return fmt.Errorf("validate canvas demotion: %w", err)
 	}
-	source := s.namedPath(value.Section, value.Name)
-	target := s.draftPath(value.ID)
-	if targetDoc, readErr := readDocumentFile(target); readErr == nil && targetDoc.ID == value.ID {
-		if err := checkRevision(source, value.Revision); err == nil {
-			if err := os.Remove(source); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("recover demoted canvas: %w", err)
-			}
-		}
+	if err := s.recoverDemotedCanvas(value); err != nil {
+		return err
 	}
 	if err := os.Remove(s.demotionPath()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("finish canvas demotion recovery: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) recoverDemotedCanvas(value demotion) error {
+	targetDoc, err := readDocumentFile(s.draftPath(value.ID))
+	if err != nil || targetDoc.ID != value.ID {
+		return s.removeDraftMetadata(value.ID)
+	}
+	if err := s.writeDraftMetadata(value.ID, value.Section, value.Name); err != nil {
+		return err
+	}
+	source := s.namedPath(value.Section, value.Name)
+	if err := checkRevision(source, value.Revision); err != nil {
+		return nil
+	}
+	if err := os.Remove(source); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("recover demoted canvas: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) writeDraftMetadata(id uuid.UUID, section, name string) error {
+	if err := validateLocation(section, name); err != nil {
+		return fmt.Errorf("validate draft metadata: %w", err)
+	}
+	data, err := json.Marshal(draftMetadata{Section: section, Name: name})
+	if err != nil {
+		return fmt.Errorf("encode draft metadata: %w", err)
+	}
+	if err := replaceFile(s.draftMetadataPath(id), data); err != nil {
+		return fmt.Errorf("write draft metadata: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) readDraftMetadata(id uuid.UUID) (string, string, error) {
+	data, err := os.ReadFile(s.draftMetadataPath(id)) //nolint:gosec // UUID-derived paths remain below the drafts directory.
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("read draft metadata: %w", err)
+	}
+	var value draftMetadata
+	if err := json.Unmarshal(data, &value); err != nil {
+		return "", "", fmt.Errorf("decode draft metadata: %w", err)
+	}
+	if err := validateLocation(value.Section, value.Name); err != nil {
+		return "", "", fmt.Errorf("validate draft metadata: %w", err)
+	}
+	return value.Section, value.Name, nil
+}
+
+func (s *Store) removeDraftMetadata(id uuid.UUID) error {
+	if err := os.Remove(s.draftMetadataPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove draft metadata: %w", err)
 	}
 	return nil
 }

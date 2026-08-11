@@ -381,6 +381,7 @@ func TestFormTextFieldLeftAlignsCompactValue(t *testing.T) {
 	t.Parallel()
 
 	form := NewForm(FormDeclaration{
+		RightAlignValues: true,
 		Fields: []FormField{{
 			ID: "title", Label: "Canvas name", Kind: TextField,
 			Text: "diagram", TextWidth: 12,
@@ -391,7 +392,31 @@ func TestFormTextFieldLeftAlignsCompactValue(t *testing.T) {
 	line := ansi.Strip(form.View().Content)
 	require.Equal(t, 30, ansi.StringWidth(line))
 	require.True(t, strings.HasPrefix(line, "Canvas name"), line)
+	require.Equal(t, 18, form.Plan().Fields[0].ValueX)
 	require.Equal(t, form.Plan().Fields[0].ValueX, strings.Index(line, "diagram"))
+}
+
+func TestFormRightAlignsCurrentValueColumn(t *testing.T) {
+	t.Parallel()
+
+	form := NewForm(FormDeclaration{RightAlignValues: true, Fields: []FormField{
+		{
+			ID: "theme", Label: "Theme", Kind: SelectField,
+			Options: []FormOption{{Label: "Light"}, {Label: "Longest value"}},
+		},
+		{ID: "directory", Label: "Save Directory…", Kind: DirectoryField},
+	}}, testFormStyles())
+	form.SetBounds(Rect{Width: 40, Height: 2})
+	form.MoveFocus(1)
+
+	plan := form.Plan()
+	require.Equal(t, 26, plan.Fields[0].ValueX)
+	require.Equal(t, plan.Fields[0].ValueX, plan.Fields[1].ValueX)
+	lines := strings.Split(ansi.Strip(form.View().Content), "\n")
+	require.True(t, strings.HasPrefix(lines[0], "Theme"), lines[0])
+	require.True(t, strings.HasPrefix(lines[1], "Save Directory…"), lines[1])
+	require.Equal(t, 28, strings.Index(lines[0], "Light"), lines[0])
+	require.Equal(t, 28, ansi.StringWidth(lines[1][:strings.Index(lines[1], "[ browse ]")]), lines[1])
 }
 
 func TestFormTextFieldTypesNavigationAliasesAndUsesArrowsForCaret(t *testing.T) {

@@ -194,7 +194,11 @@ func (s *Store) PreserveDraft(doc document.Document) (Entry, error) {
 			return Entry{}, err
 		}
 	}
-	draft, err := entryFromData(path, "", "", true, doc.ID, data)
+	section, name, err := s.readDraftMetadata(doc.ID)
+	if err != nil {
+		return Entry{}, err
+	}
+	draft, err := entryFromData(path, section, name, true, doc.ID, data)
 	if err == nil {
 		s.warm.put(warmKey(path, draft.Revision), data)
 		s.self[path] = draft.Revision

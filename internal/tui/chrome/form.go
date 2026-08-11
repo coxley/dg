@@ -62,6 +62,8 @@ type FormDeclaration struct {
 	Spacer        FormSpacer
 	Actions       ButtonListDeclaration
 	DefaultAction ID
+	// RightAlignValues anchors the shared value column to the form's right edge.
+	RightAlignValues bool
 }
 
 // FormStyles defines geometry-stable semantic form states.
@@ -735,6 +737,9 @@ func (f *Form) renderFieldValue(
 	focused, hovered bool,
 	style lipgloss.Style,
 ) string {
+	if field.Kind == DirectoryField {
+		return style.Render("  " + f.fieldText(field, focused) + "  ")
+	}
 	if field.Kind != NumberField && field.Kind != SelectField {
 		return style.Render(f.fieldText(field, focused))
 	}
@@ -893,7 +898,80 @@ func (f *Form) valueColumn(width int) int {
 			labelWidth = max(labelWidth, ansi.StringWidth(style.Render(field.Label)))
 		}
 	}
-	return min(labelWidth+1, width)
+	labelColumn := min(labelWidth+1, width)
+	if !f.declaration.RightAlignValues {
+		return labelColumn
+	}
+	valueWidth := 0
+	for _, field := range f.declaration.Fields {
+		if field.Kind == TextField && field.TextWidth == 0 {
+			return labelColumn
+		}
+		valueWidth = max(valueWidth, f.fieldValueWidth(field))
+	}
+	return min(max(labelColumn, width-valueWidth), width)
+}
+
+func (f *Form) fieldValueWidth(field FormField) int {
+	if field.Kind == TextField {
+		return field.TextWidth
+	}
+	if field.Kind == DirectoryField {
+		return maxStyleWidth(
+			"  "+f.fieldText(field, false)+"  ",
+			f.styles.Value,
+			f.styles.HoveredValue,
+			f.styles.FocusedValue,
+			f.styles.AttentionValue,
+		)
+	}
+	value := numberFieldText(field)
+	if field.Kind == SelectField {
+		value = ""
+		if len(field.Options) != 0 {
+			value = field.Options[field.Selected].Label
+		}
+	}
+	plain := "  " + value + "  "
+	width := maxStyleWidth(
+		plain,
+		f.styles.Number.Value,
+		f.styles.Number.HoveredValue,
+		f.styles.AttentionValue,
+	)
+	valueStyle := f.styles.Number.FocusedValue
+	if field.Kind == SelectField {
+		width = maxStyleWidth(
+			plain,
+			f.styles.Value,
+			f.styles.HoveredValue,
+			f.styles.FocusedValue,
+			f.styles.AttentionValue,
+		)
+		valueStyle = f.styles.FocusedValue
+	}
+	decrementWidth := maxStyleWidth(
+		"❮",
+		f.styles.Number.FocusedDecrement,
+		f.styles.Number.ActiveDecrement,
+	)
+	incrementWidth := maxStyleWidth(
+		"❯",
+		f.styles.Number.FocusedIncrement,
+		f.styles.Number.ActiveIncrement,
+	)
+	return max(
+		width,
+		decrementWidth+ansi.StringWidth(valueStyle.Render(" "+value+" "))+incrementWidth,
+	)
+}
+
+func maxStyleWidth(value string, styles ...lipgloss.Style) int {
+	width := 0
+	for _, style := range styles {
+		width = max(width, ansi.StringWidth(style.Render(value)))
+	}
+	return width
 }
 
 func renderFormRow(width, valueColumn int, label, value string) string {

@@ -4129,6 +4129,24 @@ func TestModelNamesDraftAndRenamesNamedCanvas(t *testing.T) {
 	require.Equal(t, "updated", loaded.Nodes[0].Label)
 }
 
+func TestModelSaveFormPrefillsDemotedCanvasName(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "node")
+	named, err := store.Name(*model.entry, "Design", "Proposal")
+	require.NoError(t, err)
+	model.setActiveEntry(named)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	model.demoteCanvas(named, true)
+
+	model.requestSave()
+
+	require.Equal(t, surfaceSave, model.dialogs.ActiveID())
+	require.Equal(t, "Design", model.dialogs.save.section)
+	require.Equal(t, "Proposal", model.dialogs.save.name)
+	require.Contains(t, model.dialogs.save.form.AccessibleLines(), "action: Name Canvas")
+}
+
 func TestModelNamingDraftDoesNotTreatWatchedRenameAsExternal(t *testing.T) {
 	t.Parallel()
 

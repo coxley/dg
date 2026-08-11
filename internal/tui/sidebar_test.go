@@ -394,6 +394,8 @@ func TestSidebarDeleteMovesNamedCanvasToDrafts(t *testing.T) {
 		require.NotNil(t, model.entry)
 		require.True(t, model.entry.Draft)
 		require.Equal(t, named.ID, model.entry.ID)
+		require.Equal(t, "Canvas", model.entry.Name)
+		require.Contains(t, sidebarLabels(model), "Canvas")
 		require.Equal(t, "dg - Draft", model.windowTitle)
 		require.Equal(t, "moved Canvas to Drafts", model.status)
 		loaded, err := store.Load(*model.entry)
@@ -425,28 +427,60 @@ func TestSidebarDeleteMovesNamedCanvasToDrafts(t *testing.T) {
 			return !entry.Draft && entry.Name == named.Name
 		}))
 		require.True(t, slices.ContainsFunc(entries, func(entry canvasstore.Entry) bool {
-			return entry.Draft && entry.ID == named.ID
+			return entry.Draft && entry.ID == named.ID && entry.Name == "Canvas"
 		}))
 	})
 }
 
-func TestSidebarDeleteRemovesOnlyInactiveDraft(t *testing.T) {
+func TestSidebarDeleteActiveDraftSelectsDraftBelow(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "active")
+	oldest := *model.entry
+	below, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, "below")))
+	require.NoError(t, err)
+	active, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, "active")))
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	require.NoError(t, model.switchCanvas(active))
+	require.NoError(t, model.geo.SetNodeLabel(0, "changed"))
+	require.NotEqual(t, model.saved, model.dirty)
+	focusSidebarItem(t, model, chrome.FocusID("draft:"+active.ID.String()))
+
+	model.deleteFocusedCanvas()
+
+	require.NotNil(t, model.entry)
+	require.Equal(t, below.ID, model.entry.ID)
+	item, ok := model.sidebar.focusedItem()
+	require.True(t, ok)
+	require.Equal(t, below.ID, item.Entry.ID)
+	require.Equal(t, "below", model.geo.Graph().Nodes[0].Label)
+	require.True(t, strings.HasPrefix(model.status, "deleted "))
+
+	focusSidebarItem(t, model, chrome.FocusID("draft:"+oldest.ID.String()))
+	model.deleteFocusedCanvas()
+	require.Equal(t, below.ID, model.entry.ID)
+	entries, err := store.List()
+	require.NoError(t, err)
+	require.Equal(t, []canvasstore.Entry{below}, entries)
+}
+
+func TestSidebarDeleteOnlyActiveDraftOpensPristineDraft(t *testing.T) {
 	t.Parallel()
 
 	model, _, store := newStoredTestModel(t, "active")
 	active := *model.entry
-	other, err := store.CreateDraft(document.New(mustLayoutWithLabel(t, "other")))
-	require.NoError(t, err)
-	model.updateCatalog(store.Reconcile(model.catalog))
 	focusSidebarItem(t, model, chrome.FocusID("draft:"+active.ID.String()))
-	model.deleteFocusedCanvas()
-	require.Equal(t, "cannot delete the active draft", model.status)
 
-	focusSidebarItem(t, model, chrome.FocusID("draft:"+other.ID.String()))
 	model.deleteFocusedCanvas()
+
+	require.Nil(t, model.entry)
+	require.Empty(t, model.geo.Nodes)
+	_, focused := model.sidebar.focus.Current()
+	require.Equal(t, sidebarDraftsSection, focused)
 	entries, err := store.List()
 	require.NoError(t, err)
-	require.Equal(t, []canvasstore.Entry{active}, entries)
+	require.Empty(t, entries)
 }
 
 func TestSidebarDragMovesCanvasBetweenSectionsAndRoot(t *testing.T) {
@@ -527,6 +561,44 @@ func TestSidebarDragNamesDraftInCanvasSection(t *testing.T) {
 	loaded, err := store.Load(*model.entry)
 	require.NoError(t, err)
 	require.Equal(t, "changed", loaded.Nodes[0].Label)
+}
+
+func TestSidebarDragMovesNamedCanvasThroughDrafts(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "original")
+	named, err := store.Name(*model.entry, "Design", "Architecture")
+	require.NoError(t, err)
+	model.setActiveEntry(named)
+	_, err = store.Create(
+		"Saved",
+		"Existing",
+		document.New(mustLayoutWithLabel(t, "existing")),
+	)
+	require.NoError(t, err)
+	model.updateCatalog(store.Reconcile(model.catalog))
+	updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 24})
+	model.setMotionEnabled(false)
+	updateModelCommand(t, model, sidebarKey())
+
+	dragSidebarItem(t, model, "canvas:Design/Architecture", sidebarDraftsSection)
+
+	require.True(t, model.entry.Draft)
+	require.Equal(t, "Design", model.entry.Section)
+	require.Equal(t, "Architecture", model.entry.Name)
+	require.Contains(t, sidebarLabels(model), "Architecture")
+
+	dragSidebarItem(
+		t,
+		model,
+		chrome.FocusID("draft:"+named.ID.String()),
+		"section:Saved",
+	)
+
+	require.False(t, model.entry.Draft)
+	require.Equal(t, "Saved", model.entry.Section)
+	require.Equal(t, "Architecture", model.entry.Name)
+	require.Equal(t, "saved Architecture to Saved", model.status)
 }
 
 func TestSidebarStationaryClickOpensCanvasOnRelease(t *testing.T) {

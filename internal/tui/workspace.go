@@ -311,6 +311,10 @@ func (m *Model) updateSurfaceMouseRelease(message tea.MouseReleaseMsg) tea.Cmd {
 	case surfaceSidebar:
 		release := m.sidebar.release()
 		switch {
+		case release.dragged && release.valid && release.targetDrafts:
+			entry := release.source.Entry
+			m.demoteCanvas(entry, m.entry != nil && sameCanvas(*m.entry, entry))
+			command = m.retargetSidebar()
 		case release.dragged && release.valid:
 			command = m.moveCanvasToSection(release.source.Entry, release.targetSection)
 		case release.source.Kind != 0 && !release.dragged:

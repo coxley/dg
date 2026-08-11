@@ -120,6 +120,9 @@ func (m *Model) draftSidebarItems() ([]sidebarItem, []string) {
 }
 
 func draftCanvasName(entry canvasstore.Entry) string {
+	if entry.Name != "" {
+		return entry.Name
+	}
 	return entry.Modified.Local().Format("Jan 2, 15:04")
 }
 
@@ -216,14 +219,70 @@ func (m *Model) deleteFocusedCanvas() {
 		return
 	}
 	if active {
-		m.setError("cannot delete the active draft")
+		m.deleteActiveDraft(entry)
+	} else {
+		m.deleteDraft(entry)
+	}
+}
+
+func (m *Model) deleteActiveDraft(entry canvasstore.Entry) {
+	next, found := m.draftDeletionTarget(entry)
+	if err := m.flushActive(); err != nil {
+		m.setError(fmt.Sprintf("save draft before deletion: %v", err))
 		return
 	}
+	entry = *m.entry
+	if found {
+		if err := m.switchCanvas(next); err != nil {
+			m.setError(fmt.Sprintf("switch before deleting draft: %v", err))
+			return
+		}
+	} else if err := m.createCanvas(); err != nil {
+		m.setError(fmt.Sprintf("open new draft before deletion: %v", err))
+		return
+	}
+	if !m.deleteDraft(entry) {
+		return
+	}
+	target := sidebarDraftsSection
+	if found {
+		target = chrome.FocusID("draft:" + next.ID.String())
+	}
+	m.sidebar.focusTarget(target)
+	m.sidebar.focus.Reveal(m.sidebar.viewport)
+	m.sidebar.render()
+}
+
+func (m *Model) deleteDraft(entry canvasstore.Entry) bool {
 	if err := m.canvasStore.Delete(entry); err != nil {
 		m.setError(fmt.Sprintf("delete draft: %v", err))
-		return
+		return false
 	}
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+	m.status = "deleted " + draftCanvasName(entry)
+	m.statusError = ""
+	return true
+}
+
+func (m *Model) draftDeletionTarget(entry canvasstore.Entry) (canvasstore.Entry, bool) {
+	items, _ := m.draftSidebarItems()
+	index := slices.IndexFunc(items, func(item sidebarItem) bool {
+		return item.Kind == sidebarItemRecord && item.Entry.ID == entry.ID
+	})
+	if index < 0 {
+		return canvasstore.Entry{}, false
+	}
+	for i := index + 1; i < len(items); i++ {
+		if items[i].Kind == sidebarItemRecord {
+			return items[i].Entry, true
+		}
+	}
+	for i := index - 1; i >= 0; i-- {
+		if items[i].Kind == sidebarItemRecord {
+			return items[i].Entry, true
+		}
+	}
+	return canvasstore.Entry{}, false
 }
 
 func (m *Model) demoteCanvas(entry canvasstore.Entry, active bool) {
@@ -243,7 +302,11 @@ func (m *Model) demoteCanvas(entry canvasstore.Entry, active bool) {
 	if active {
 		m.setActiveEntry(draft)
 	}
+	m.sidebar.draftsCollapsed = false
 	m.updateCatalog(m.canvasStore.Reconcile(m.catalog))
+	m.sidebar.focusTarget(chrome.FocusID("draft:" + draft.ID.String()))
+	m.sidebar.focus.Reveal(m.sidebar.viewport)
+	m.sidebar.render()
 	m.status = fmt.Sprintf("moved %s to Drafts", title)
 	m.statusError = ""
 }

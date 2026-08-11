@@ -82,6 +82,7 @@ type sidebarDrag struct {
 	source        sidebarItem
 	start         chrome.Point
 	targetSection string
+	targetDrafts  bool
 	targetIndex   int
 	active        bool
 	moved         bool
@@ -91,6 +92,7 @@ type sidebarDrag struct {
 type sidebarRelease struct {
 	source        sidebarItem
 	targetSection string
+	targetDrafts  bool
 	dragged       bool
 	valid         bool
 }
@@ -325,13 +327,14 @@ func (s *sidebarState) motion(point chrome.Point, surface chrome.SurfacePlan) {
 		return
 	}
 	moved := point != s.drag.start
-	section, index, valid := s.dropTarget(local)
+	section, drafts, index, valid := s.dropTarget(local)
 	if s.drag.moved == moved && s.drag.targetSection == section &&
-		s.drag.targetIndex == index && s.drag.valid == valid {
+		s.drag.targetDrafts == drafts && s.drag.targetIndex == index && s.drag.valid == valid {
 		return
 	}
 	s.drag.moved = moved
 	s.drag.targetSection = section
+	s.drag.targetDrafts = drafts
 	s.drag.targetIndex = index
 	s.drag.valid = valid
 	s.render()
@@ -345,6 +348,7 @@ func (s *sidebarState) release() sidebarRelease {
 	release := sidebarRelease{
 		source:        s.drag.source,
 		targetSection: s.drag.targetSection,
+		targetDrafts:  s.drag.targetDrafts,
 		dragged:       s.drag.moved,
 		valid:         s.drag.valid,
 	}
@@ -486,13 +490,13 @@ func renderSidebarTab(style lipgloss.Style, label string, width int) string {
 	return line + strings.Repeat(" ", max(width-ansi.StringWidth(line), 0))
 }
 
-func (s *sidebarState) dropTarget(local chrome.Point) (string, int, bool) {
+func (s *sidebarState) dropTarget(local chrome.Point) (string, bool, int, bool) {
 	plan := s.pane.Plan()
 	if plan.Header.Contains(local) {
-		return "", sidebarRootDropTarget, true
+		return "", false, sidebarRootDropTarget, true
 	}
 	if !plan.Body.Contains(local) {
-		return "", -1, false
+		return "", false, -1, false
 	}
 	row := local.Y - plan.Body.Y + s.viewport.Plan().Offset.Y
 	index, ok := s.itemAt(row)
@@ -500,25 +504,31 @@ func (s *sidebarState) dropTarget(local chrome.Point) (string, int, bool) {
 		for _, itemPlan := range s.itemPlans {
 			item := s.declaration.Items[itemPlan.Index]
 			if item.Kind == sidebarItemDivider && row >= itemPlan.Rect.Y {
-				return "", -1, false
+				return "", !s.drag.source.Entry.Draft, -1, !s.drag.source.Entry.Draft
 			}
 		}
-		return "", sidebarRootDropTarget, true
+		return "", false, sidebarRootDropTarget, true
 	}
 	item := s.declaration.Items[index]
 	switch item.Kind {
 	case sidebarItemSection:
 		if item.Drafts {
-			return "", -1, false
+			valid := !s.drag.source.Entry.Draft
+			return "", valid, index, valid
 		}
-		return item.Section, index, true
+		return item.Section, false, index, true
 	case sidebarItemRecord:
-		if !item.Entry.Draft {
-			return item.Entry.Section, index, true
+		if item.Entry.Draft {
+			valid := !s.drag.source.Entry.Draft
+			return "", valid, index, valid
 		}
-	case sidebarItemDivider, sidebarItemClearDrafts:
+		return item.Entry.Section, false, index, true
+	case sidebarItemClearDrafts:
+		valid := !s.drag.source.Entry.Draft
+		return "", valid, index, valid
+	case sidebarItemDivider:
 	}
-	return "", -1, false
+	return "", false, -1, false
 }
 
 func (s *sidebarState) focusTarget(id chrome.FocusID) bool {

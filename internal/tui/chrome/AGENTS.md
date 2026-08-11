@@ -18,8 +18,8 @@ diagnostics used by the chrome lab.
   geometry.
 - Forms expose semantic field, button, spacer, and button-list IDs through one
   retained plan. Applications own declarations and value mapping.
-- Form controls share one left-aligned value column derived from the widest
-  rendered field label.
+- Form controls share one left-aligned value column. Forms may anchor that
+  column to the right edge using the widest currently rendered control.
 - Number and select fields share directional bracket focus and activation
   feedback.
 - Number declarations may map retained values to application-owned display

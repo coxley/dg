@@ -599,6 +599,7 @@ func routingDeclaration(value Value) chrome.FormDeclaration {
 func declaration(fields []chrome.FormField) chrome.FormDeclaration {
 	result := actionDeclaration(true)
 	result.Fields = fields
+	result.RightAlignValues = true
 	return result
 }
 

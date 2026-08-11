@@ -86,8 +86,8 @@ func TestStoreDemotesNamedCanvasWithoutReencoding(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, draft.Draft)
 	require.Equal(t, doc.ID, draft.ID)
-	require.Empty(t, draft.Section)
-	require.Empty(t, draft.Name)
+	require.Equal(t, "RFCs", draft.Section)
+	require.Equal(t, "Proposal", draft.Name)
 	_, err = os.Stat(source)
 	require.ErrorIs(t, err, fs.ErrNotExist)
 	target, err := store.Path(draft)
@@ -95,6 +95,25 @@ func TestStoreDemotesNamedCanvasWithoutReencoding(t *testing.T) {
 	got, err := os.ReadFile(target)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
+
+	reopened, err := New(
+		store.preferred,
+		WithStateDir(store.stateDir),
+		WithCacheDir(store.cacheDir),
+	)
+	require.NoError(t, err)
+	entries, err := reopened.List()
+	require.NoError(t, err)
+	require.Equal(t, []Entry{draft}, entries)
+	preserved, err := reopened.PreserveDraft(doc)
+	require.NoError(t, err)
+	require.Equal(t, "RFCs", preserved.Section)
+	require.Equal(t, "Proposal", preserved.Name)
+	namedAgain, err := reopened.Name(preserved, "Saved", preserved.Name)
+	require.NoError(t, err)
+	require.Equal(t, "Saved", namedAgain.Section)
+	require.Equal(t, "Proposal", namedAgain.Name)
+	require.NoFileExists(t, reopened.draftMetadataPath(draft.ID))
 }
 
 func TestStoreDemoteRejectsStaleRevisionAndDraftCollision(t *testing.T) {
@@ -426,6 +445,7 @@ func TestStoreNamesDraftAndRecoversCompletedPromotion(t *testing.T) {
 	data, err := os.ReadFile(store.draftPath(doc.ID))
 	require.NoError(t, err)
 	require.NoError(t, store.writePromotion(promotion{DraftID: doc.ID, Name: "Named"}))
+	require.NoError(t, store.writeDraftMetadata(doc.ID, "RFCs", "Original"))
 	require.NoError(t, writeNew(store.namedPath("", "Named"), data))
 
 	reopened, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
@@ -436,6 +456,7 @@ func TestStoreNamesDraftAndRecoversCompletedPromotion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, "Named", entries[0].Name)
+	require.NoFileExists(t, reopened.draftMetadataPath(doc.ID))
 }
 
 func TestStoreRecoversCompletedDemotion(t *testing.T) {
@@ -471,6 +492,31 @@ func TestStoreRecoversCompletedDemotion(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.True(t, entries[0].Draft)
 	require.Equal(t, named.ID, entries[0].ID)
+	require.Equal(t, named.Section, entries[0].Section)
+	require.Equal(t, named.Name, entries[0].Name)
+}
+
+func TestStoreRecoversIncompleteDemotionMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	preferred := filepath.Join(root, "canvases")
+	state := filepath.Join(root, "state")
+	cache := filepath.Join(root, "cache")
+	store, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	named, err := store.Create("RFCs", "Proposal", testDocument(t, "named"))
+	require.NoError(t, err)
+	require.NoError(t, store.writeDemotion(demotion{
+		ID: named.ID, Section: named.Section, Name: named.Name, Revision: named.Revision,
+	}))
+	require.NoError(t, store.writeDraftMetadata(named.ID, named.Section, named.Name))
+
+	reopened, err := New(preferred, WithStateDir(state), WithCacheDir(cache))
+	require.NoError(t, err)
+	_, err = reopened.Load(named)
+	require.NoError(t, err)
+	require.NoFileExists(t, reopened.draftMetadataPath(named.ID))
 }
 
 func TestStoreListsOneLevelAndClearsDrafts(t *testing.T) {
@@ -485,16 +531,21 @@ func TestStoreListsOneLevelAndClearsDrafts(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.CreateDraft(testDocument(t, "remove"))
 	require.NoError(t, err)
+	named, err := store.Create("", "Demoted", testDocument(t, "demoted"))
+	require.NoError(t, err)
+	demoted, err := store.Demote(named)
+	require.NoError(t, err)
 	deep := filepath.Join(store.preferred, "One", "Two")
 	require.NoError(t, os.MkdirAll(deep, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(deep, "Ignored.dg"), []byte("invalid"), 0o600))
 
 	entries, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, entries, 4)
+	require.Len(t, entries, 5)
 	removed, err := store.ClearDrafts(preserve.ID)
 	require.NoError(t, err)
-	require.Equal(t, 1, removed)
+	require.Equal(t, 2, removed)
+	require.NoFileExists(t, store.draftMetadataPath(demoted.ID))
 	entries, err = store.List()
 	require.NoError(t, err)
 	require.Len(t, entries, 3)

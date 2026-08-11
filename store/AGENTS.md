@@ -11,9 +11,10 @@ does not import `layout`, `history`, or frontend packages.
 
 Named entries use `(Section, Name)` identity below the preferred directory.
 Draft entries use their document UUID below the application state directory.
-Names and sections contain one path component; sections are optional and only
-one level deep. `Entry.Revision` guards replacement, movement, and deletion
-against unseen external writes.
+Demoted canvases retain their last section and name in UUID-keyed draft metadata;
+new and imported drafts remain unnamed. Names and sections contain one path
+component; sections are optional and only one level deep. `Entry.Revision`
+guards replacement, movement, and deletion against unseen external writes.
 
 `.dg` files contain exactly one gzip member with versioned document JSON.
 Decode rejects additional members and JSON larger than `64 << 20` bytes.
@@ -33,12 +34,12 @@ it from the local document. A failed recreation leaves the backup intact.
 Deleted named records can only be restored without replacing a path that has
 reappeared. Draft preservation replaces the UUID-keyed durable draft.
 
-Draft naming writes the named record before deleting the draft. A promotion
-journal removes a duplicate draft after restart when the named write completed.
+Draft naming writes the named record before deleting the draft and its metadata.
+A promotion journal removes duplicate draft state after restart when the named write completed.
 If the named write did not complete, recovery preserves the draft.
-Demotion writes the draft before deleting the named record. A demotion journal
-finishes removing an unchanged named record after restart when the draft write
-completed.
+Demotion writes the draft and its metadata before deleting the named record. A
+demotion journal restores missing metadata and finishes removing an unchanged
+named record after restart when the draft write completed.
 `Import` copies a compressed external document into Drafts while preserving its
 UUID and leaving the source untouched.
 

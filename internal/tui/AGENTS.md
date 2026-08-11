@@ -192,16 +192,19 @@ enters the last, and crossing either list boundary returns to the selected tab.
 Left and Right switch tabs when more than one exists.
 
 Dragging a named canvas onto a section header or one of its canvases moves it
-to that section. Dropping it on the Canvases header or unused list space moves
-it to the preferred directory root. A click without pointer motion opens the
-canvas on release. Dragging a draft to the root or a named section promotes it
-with its displayed modification time as the name; collisions receive a numeric
-suffix.
+to that section. Dropping it on the Canvases header or unused saved-list space
+moves it to the preferred directory root. Dropping it in Drafts demotes it while
+retaining its name. A click without pointer motion opens the canvas on release.
+Dragging a draft to the root or a named section promotes it with its retained
+name or, for unnamed drafts, its displayed modification time; collisions
+receive a numeric suffix.
 
 Backspace or Delete on a named canvas moves it to Drafts without changing its
 document identity. The active canvas flushes before demotion and remains open
-as that draft. Delete permanently removes an inactive draft; the active draft
-remains protected. Clear Drafts preserves the active draft.
+as that draft. Delete permanently removes a draft. Deleting the active draft
+opens the next draft below it, falls back to the previous draft, or starts a
+pristine draft when no other draft exists. Clear Drafts preserves the active
+draft.
 
 Root renders the selected cells and pairs that text with a portable layout
 fragment. Native clipboard writes publish both formats atomically. External
