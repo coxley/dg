@@ -249,6 +249,11 @@ type routeOwner struct {
 	next uint32
 }
 
+type sharedBranchCell struct {
+	commonPort uint32
+	point      Point
+}
+
 // routeOccupancy indexes every cell and unit segment of expanded routes.
 type routeOccupancy struct {
 	segments    map[routeSegment]uint32
@@ -292,18 +297,19 @@ func (s *routeSearch) reset() {
 
 // routeScratch retains all routing work buffers across builds.
 type routeScratch struct {
-	occupancy    routeOccupancy
-	obstacles    obstacleIndex
-	search       routeSearch
-	paths        [][]Point
-	candidate    []Point
-	expanded     []Point
-	relaxed      []Point
-	segment      []Point
-	arrowPort    []bool
-	lastEdge     []uint32
-	affected     []bool
-	affectedPort []bool
+	occupancy       routeOccupancy
+	obstacles       obstacleIndex
+	search          routeSearch
+	paths           [][]Point
+	candidate       []Point
+	expanded        []Point
+	relaxed         []Point
+	segment         []Point
+	arrowPort       []bool
+	lastEdge        []uint32
+	affected        []bool
+	affectedPort    []bool
+	shortBranchArms map[sharedBranchCell]struct{}
 }
 
 func (s *routeScratch) reset(
@@ -336,6 +342,39 @@ func (s *routeScratch) resetAffected(edgeCount, portCount int) {
 	clear(s.affected)
 	s.affectedPort = slices.Grow(s.affectedPort[:0], portCount)[:portCount]
 	clear(s.affectedPort)
+}
+
+func (s *routeScratch) resetShortBranchArms(g *ir.Graph, ports []Port) {
+	if s.shortBranchArms == nil {
+		s.shortBranchArms = make(map[sharedBranchCell]struct{})
+	} else {
+		clear(s.shortBranchArms)
+	}
+	for edgeID, edge := range g.Edges {
+		if !g.EdgeExists(uint32(edgeID)) {
+			continue
+		}
+		s.markShortBranchArm(edge.PortA, edge.PortB, ports)
+		s.markShortBranchArm(edge.PortB, edge.PortA, ports)
+	}
+}
+
+func (s *routeScratch) markShortBranchArm(
+	commonPort, distinctPort uint32,
+	ports []Port,
+) {
+	if uint64(distinctPort) >= uint64(len(ports)) {
+		return
+	}
+	port := ports[distinctPort]
+	dir, ok := directionBetween(port.Anchor, port.Exit)
+	if !ok || dir == north || dir == south {
+		return
+	}
+	s.shortBranchArms[sharedBranchCell{
+		commonPort: commonPort,
+		point:      port.Exit,
+	}] = struct{}{}
 }
 
 const (
@@ -619,6 +658,7 @@ func (l *Layout) previewRoute(
 	occupancy := &scratch.occupancy
 	occupancy.reset()
 	scratch.obstacles.reset(l.Nodes)
+	scratch.resetShortBranchArms(&l.graph, l.Ports)
 	for edgeID, edge := range l.Edges {
 		if uint32(edgeID) == excludedEdge || edge.Empty() {
 			continue
@@ -735,6 +775,7 @@ func (r Router) route(l *Layout) error {
 	g := &l.graph
 	scratch := &l.scratch
 	scratch.reset(len(g.Edges), len(g.Ports), l.Nodes)
+	scratch.resetShortBranchArms(g, l.Ports)
 	for edgeID, edge := range g.Edges {
 		if !g.EdgeExists(uint32(edgeID)) ||
 			uint64(edgeID) >= uint64(len(l.edgeStyles)) {
@@ -1004,6 +1045,7 @@ func (r Router) routeSelection(l *Layout) error {
 	scratch := &l.scratch
 	scratch.reset(len(g.Edges), len(g.Ports), l.Nodes)
 	scratch.resetAffected(len(g.Edges), len(g.Ports))
+	scratch.resetShortBranchArms(g, l.Ports)
 	for edgeID, edge := range g.Edges {
 		id := uint32(edgeID)
 		if !g.EdgeExists(id) {
@@ -1534,11 +1576,12 @@ func (r Router) stepCostFor(
 		), 0, true
 	}
 
-	// Common-endpoint routes share only after the common port becomes nearer
-	// than either distinct port. Earlier joins resemble a connection between
-	// the distinct endpoints.
+	// Common-endpoint routes may share across the distance between their common
+	// port and branch point. Each distinct port retains a visible arm from the
+	// shared route into its node.
 	segmentOwners := occupancy.segments[newRouteSegment(a, b)]
 	shared := false
+	clearBranchArms := true
 	for index := segmentOwners; index != 0; index = occupancy.segmentUses[index-1].next {
 		owner := occupancy.segmentUses[index-1].edge
 		if owner == route.id {
@@ -1548,15 +1591,17 @@ func (r Router) stepCostFor(
 			!route.ports.SharesPort(g.Edges[owner]) {
 			return 0, 0, false
 		}
-		if !l.edgesShareAt(route, owner, b) {
-			return 0, 0, false
-		}
 		shared = true
+		clearBranchArms = clearBranchArms &&
+			l.sharedBranchArmsClear(route, owner, b)
 	}
 
 	cost := uint64(r.Costs.Step)
-	if shared {
+	if shared && clearBranchArms {
 		cost = uint64(r.Costs.SharedStep)
+	} else if shared {
+		// Prefer one more arm cell when both paths have the same length and bends.
+		cost = addCost(cost, uint64(r.Costs.Bend))
 	}
 
 	dir, ok := directionBetween(a, b)
@@ -1573,10 +1618,7 @@ func (r Router) stepCostFor(
 		}
 		if route.hasPorts &&
 			route.ports.SharesPort(g.Edges[use.edge]) {
-			if l.edgesShareAt(route, use.edge, b) {
-				continue
-			}
-			return 0, 0, false
+			continue
 		}
 		along, across := East|West, North|South
 		if !horizontal {
@@ -1596,11 +1638,18 @@ func (r Router) stepCostFor(
 	return cost, crossings, true
 }
 
-func (l *Layout) edgesShareAt(route routeEdge, edgeBID uint32, point Point) bool {
+func (l *Layout) sharedBranchArmsClear(
+	route routeEdge,
+	edgeBID uint32,
+	point Point,
+) bool {
 	if uint64(edgeBID) >= uint64(len(l.graph.Edges)) {
 		return false
 	}
 	edgeA, edgeB := route.ports, l.graph.Edges[edgeBID]
+	if edgeB.HasPort(edgeA.PortA) && edgeB.HasPort(edgeA.PortB) {
+		return true
+	}
 	common, otherA, ok := sharedPorts(edgeA, edgeB)
 	if !ok {
 		return false
@@ -1609,45 +1658,31 @@ func (l *Layout) edgesShareAt(route routeEdge, edgeBID uint32, point Point) bool
 	if otherB == common {
 		otherB = edgeB.PortB
 	}
-	if uint64(common) >= uint64(len(l.Ports)) ||
-		uint64(otherA) >= uint64(len(l.Ports)) ||
-		uint64(otherB) >= uint64(len(l.Ports)) {
+	if uint64(otherB) >= uint64(len(l.Ports)) {
 		return false
 	}
-	commonDistance := manhattan(point, l.Ports[common].Anchor)
-	if commonDistance <= manhattan(point, l.Ports[otherA].Anchor) &&
-		commonDistance <= manhattan(point, l.Ports[otherB].Anchor) {
-		return true
+	if uint64(otherA) < uint64(len(l.Ports)) &&
+		!branchArmClear(point, l.Ports[otherA]) {
+		return false
 	}
-	pinA, armA, okA := l.branchPinTowardCommon(route.id, common)
-	pinB, armB, okB := l.branchPinTowardCommon(edgeBID, common)
-	return okA && okB && pinA == pinB && armA == armB &&
-		commonDistance <= manhattan(pinA, l.Ports[common].Anchor)
+	if !branchArmClear(point, l.Ports[otherB]) {
+		return false
+	}
+	_, short := l.scratch.shortBranchArms[sharedBranchCell{
+		commonPort: common,
+		point:      point,
+	}]
+	return !short
 }
 
-func (l *Layout) branchPinTowardCommon(
-	edgeID, commonPort uint32,
-) (Point, Connections, bool) {
-	if uint64(edgeID) >= uint64(len(l.graph.Edges)) ||
-		uint64(edgeID) >= uint64(len(l.edgeBends)) ||
-		len(l.edgeBends[edgeID]) == 0 {
-		return Point{}, 0, false
+func branchArmClear(point Point, port Port) bool {
+	// Two columns match one row in the terminal cell aspect ratio.
+	minimum := uint64(1)
+	dir, ok := directionBetween(port.Anchor, port.Exit)
+	if ok && (dir == east || dir == west) {
+		minimum = 2
 	}
-	edge := l.graph.Edges[edgeID]
-	if edge.PortA == commonPort {
-		bend := l.edgeBends[edgeID][0]
-		dir, ok := connectionDirection(bend.Incoming)
-		if !ok {
-			return Point{}, 0, false
-		}
-		arm, _ := directionConnections(oppositeDirection(dir))
-		return bend.Point, arm, true
-	}
-	if edge.PortB == commonPort {
-		bend := l.edgeBends[edgeID][len(l.edgeBends[edgeID])-1]
-		return bend.Point, bend.Outgoing, true
-	}
-	return Point{}, 0, false
+	return manhattan(point, port.Anchor) >= minimum
 }
 
 func sharedPorts(a, b ir.Edge) (common, otherA uint32, ok bool) {

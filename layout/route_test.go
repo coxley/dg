@@ -222,7 +222,7 @@ func TestPreviewStepCostSharesDestinationPort(t *testing.T) {
 	require.Zero(t, crossings)
 }
 
-func TestStepCostRejectsEarlyCommonEndpointMerge(t *testing.T) {
+func TestStepCostSharesCommonEndpointSegmentAtAnyDistance(t *testing.T) {
 	t.Parallel()
 
 	graph := ir.Graph{Edges: []ir.Edge{
@@ -240,14 +240,48 @@ func TestStepCostRejectsEarlyCommonEndpointMerge(t *testing.T) {
 	occupancy := newRouteOccupancy()
 	occupancy.addExpanded(0, []Point{NewPoint(1, 2), NewPoint(2, 2)})
 
-	_, _, ok := DefaultRouter().stepCost(
+	router := DefaultRouter()
+	cost, crossings, ok := router.stepCost(
 		&geo,
 		1,
 		NewPoint(1, 2),
 		NewPoint(2, 2),
 		&occupancy,
 	)
-	require.False(t, ok)
+	require.True(t, ok)
+	require.Equal(t, uint64(router.Costs.SharedStep), cost)
+	require.Zero(t, crossings)
+}
+
+func TestStepCostPreservesDistinctPortBranchArms(t *testing.T) {
+	t.Parallel()
+
+	graph := ir.Graph{Edges: []ir.Edge{
+		{PortA: 0, PortB: 1},
+		{PortA: 0, PortB: 2},
+	}}
+	geo := Layout{
+		graph: graph,
+		Ports: []Port{
+			{Anchor: NewPoint(20, 2)},
+			{Anchor: NewPoint(3, 2), Exit: NewPoint(2, 2)},
+			{Anchor: NewPoint(3, 4), Exit: NewPoint(2, 4)},
+		},
+	}
+	occupancy := newRouteOccupancy()
+	occupancy.addExpanded(0, []Point{NewPoint(1, 2), NewPoint(2, 2)})
+
+	router := DefaultRouter()
+	cost, crossings, ok := router.stepCost(
+		&geo,
+		1,
+		NewPoint(1, 2),
+		NewPoint(2, 2),
+		&occupancy,
+	)
+	require.True(t, ok)
+	require.Equal(t, uint64(router.Costs.Step+router.Costs.Bend), cost)
+	require.Zero(t, crossings)
 }
 
 func TestStepCostChargesUnrelatedCrossing(t *testing.T) {
@@ -389,6 +423,121 @@ func TestBuildAlignsCommonPortBranches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, north, upperDirection, "upper route: %+v", geo.Edges[upper].Points)
 	require.Equal(t, south, lowerDirection, "lower route: %+v", geo.Edges[lower].Points)
+}
+
+func TestBuildRoutesTridentIndependentOfOrientationAndOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		source     Point
+		targets    [3]Point
+		sourceSide ir.Side
+		targetSide ir.Side
+		minimumArm uint64
+	}{
+		{
+			name:       "vertical",
+			source:     NewPoint(20, 1),
+			targets:    [3]Point{NewPoint(9, 15), NewPoint(20, 15), NewPoint(31, 15)},
+			sourceSide: ir.Bottom,
+			targetSide: ir.Top,
+			minimumArm: 1,
+		},
+		{
+			name:       "horizontal",
+			source:     NewPoint(1, 20),
+			targets:    [3]Point{NewPoint(30, 9), NewPoint(30, 20), NewPoint(30, 31)},
+			sourceSide: ir.RightSide,
+			targetSide: ir.LeftSide,
+			minimumArm: 2,
+		},
+	}
+	orders := [][3]int{
+		{0, 1, 2},
+		{0, 2, 1},
+		{1, 0, 2},
+		{1, 2, 0},
+		{2, 0, 1},
+		{2, 1, 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, order := range orders {
+				name := fmt.Sprintf("order=%d-%d-%d", order[0], order[1], order[2])
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					geo, err := New()
+					require.NoError(t, err)
+					source, err := geo.NewNodeAt("source", test.source)
+					require.NoError(t, err)
+					var targets [3]uint32
+					for i, point := range test.targets {
+						targets[i], err = geo.NewNodeAt(fmt.Sprintf("node %d", i), point)
+						require.NoError(t, err)
+					}
+					var edges [3]uint32
+					for _, target := range order {
+						edges[target] = geo.ConnectNodes(
+							source,
+							test.sourceSide,
+							test.targetSide,
+							targets[target],
+						)
+					}
+
+					require.NoError(t, geo.Build())
+					var paths [3][]Point
+					for i, edge := range edges {
+						paths[i], err = appendExpandedPath(nil, geo.Edges[edge].Points)
+						require.NoError(t, err)
+					}
+					common := 0
+					for common < min(len(paths[0]), len(paths[1]), len(paths[2])) &&
+						paths[0][common] == paths[1][common] &&
+						paths[0][common] == paths[2][common] {
+						common++
+					}
+					require.Greater(t, common, 2)
+					branch := paths[0][common-1]
+					for _, edgeID := range edges {
+						edge := geo.graph.Edges[edgeID]
+						require.GreaterOrEqual(
+							t,
+							manhattan(branch, geo.Ports[edge.PortB].Anchor),
+							test.minimumArm,
+						)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestBuildSelectionMovesTridentBranch(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	source, err := geo.NewNodeAt("Foo", NewPoint(40, 1))
+	require.NoError(t, err)
+	left, err := geo.NewNodeAt("Bar", NewPoint(29, 15))
+	require.NoError(t, err)
+	middle, err := geo.NewNodeAt("Baz", NewPoint(40, 15))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("Qux", NewPoint(51, 15))
+	require.NoError(t, err)
+	for _, target := range [...]uint32{middle, left, right} {
+		geo.ConnectNodes(source, ir.Bottom, ir.Top, target)
+	}
+	require.NoError(t, geo.Build())
+	require.True(t, geo.Selection().SelectOnly(Hit{ID: left, Kind: HitNode}))
+	require.NoError(t, geo.MoveSelection(11, -8))
+
+	require.NoError(t, geo.BuildSelection())
 }
 
 func TestBuildSelectionRestoresAlignedCommonPortBranches(t *testing.T) {

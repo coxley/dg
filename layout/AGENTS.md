@@ -155,9 +155,12 @@ Default costs provide these reference points:
 Lower shared-step cost favors trunks. Higher bend, crossing, or endpoint cost
 favors straighter, separated, exterior routes.
 
-Only edges with a common endpoint may share segments. Sharing starts where the
-common endpoint is nearer than both distinct endpoints. Unrelated edges may
-cross, but they may not share a segment or touch another edge's endpoint.
+Only edges with a common endpoint may share segments. Common-endpoint sharing
+may extend the full distance from the endpoint to the branch point; legality
+must not depend on distance or edge insertion order. Unrelated edges may cross,
+but they may not share a segment or touch another edge's endpoint.
+Shared branches prefer two horizontal cells or one vertical cell before each
+distinct port. Shorter arms remain legal but pay ordinary step and bend costs.
 After the initial ID-ordered pass, the router aligns an earlier sibling's first
 branch with a later sibling's branch when moving the segment preserves route
 legality and score. This local refinement produces one clean junction without
@@ -246,6 +249,10 @@ Use profile children to choose the next change:
 Raster cells store directional connectivity and object ownership. Complete
 front nodes occlude unrelated lower geometry. Collinear node boundaries may
 merge. Common-endpoint edges retain joined connectivity.
+
+Layers control raster ownership and occlusion, not route legality. Ordinary
+nodes remain hard routing obstacles at every layer. Routes may traverse their
+endpoint nodes and nodes attached to that same host edge.
 
 `Layout.Hits` returns visible objects in interaction priority order. It checks
 compact edge segments rather than every rendered edge cell.
