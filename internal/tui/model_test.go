@@ -234,6 +234,30 @@ func TestModelArrowMoveIsUndoable(t *testing.T) {
 	require.Equal(t, after, model.geo.Nodes[nodeID].Rect.Min)
 }
 
+func TestModelAutosaveDoesNotSplitMouseDragHistory(t *testing.T) {
+	t.Parallel()
+
+	model, nodeID, _ := newStoredTestModel(t, "node")
+	updateModel(t, model, tea.WindowSizeMsg{Width: 80, Height: 24})
+	require.NoError(t, model.geo.PlaceNode(nodeID, layout.NewPoint(3, 2)))
+	require.NoError(t, model.rebuild())
+	before := model.geo.Nodes[nodeID].Rect.Min
+	mouse := modelMouseAt(model, model.geo.Nodes[nodeID].LabelPoint, tea.MouseLeft)
+	updateModel(t, model, tea.MouseClickMsg(mouse))
+
+	drag := mouse
+	drag.X++
+	updateModel(t, model, tea.MouseMotionMsg(drag))
+	_ = updateModelCommand(t, model, autosaveMsg(model.dirty))
+	drag.X += 3
+	_ = updateModelCommand(t, model, tea.MouseMotionMsg(drag))
+	_ = updateModelCommand(t, model, tea.MouseReleaseMsg(drag))
+	require.Equal(t, before.Add(4, 0), model.geo.Nodes[nodeID].Rect.Min)
+
+	model.undo()
+	require.Equal(t, before, model.geo.Nodes[nodeID].Rect.Min)
+}
+
 func TestModelFocusCyclesNodesAndArrowMovesFocusedNode(t *testing.T) {
 	t.Parallel()
 

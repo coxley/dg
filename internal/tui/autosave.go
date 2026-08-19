@@ -28,6 +28,9 @@ func (m *Model) updatePersistence(message tea.Msg) (tea.Cmd, bool) {
 	switch message := message.(type) {
 	case autosaveMsg:
 		if uint64(message) == m.dirty && m.dirty != m.saved && m.canvasStore != nil {
+			if m.interaction.transaction.open() {
+				return autosaveAfter(uint64(message)), true
+			}
 			if err := m.persistActive(); err != nil {
 				m.setError(err.Error())
 			}
