@@ -116,11 +116,6 @@ type Model struct {
 	styledRuns map[styledRunKey]string
 	background backgroundRenderer
 
-	// Bubble Tea compares consecutive cursor pointers, so each View writes the
-	// cursor value that the previous View does not reference.
-	viewCursor [2]tea.Cursor
-	nextCursor uint8
-
 	width       int
 	height      int
 	status      string
@@ -294,8 +289,6 @@ func newModel(geo *layout.Layout, options ...Option) (*Model, error) {
 	})
 	m.arrange = newArrangeForm(m.theme.Navigation.Container, m.theme.Preferences.Form)
 	m.canvas = canvasview.New(m.theme.Canvas)
-	m.viewCursor[0] = *tea.NewCursor(0, 0)
-	m.viewCursor[1] = m.viewCursor[0]
 	m.clearSelection()
 	for i := range geo.Nodes {
 		if !geo.Nodes[i].Empty() {

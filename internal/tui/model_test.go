@@ -3326,6 +3326,28 @@ func TestModelEditShortcutsUseCurrentMultilineRow(t *testing.T) {
 	require.Equal(t, model.geo.Nodes[nodeID].LabelPoint.Add(0, 1), model.cursor)
 }
 
+func TestModelControlURemovesBlankLine(t *testing.T) {
+	t.Parallel()
+
+	const label = "one\n\ntwo"
+	model, nodeID := newTestModel(t)
+	require.NoError(t, model.geo.SetNodeLabel(nodeID, label))
+	require.NoError(t, model.rebuild())
+	model.cursor = model.geo.Nodes[nodeID].LabelPoint
+	model.refreshHits()
+	updateModel(t, model, keyPress('e', "e"))
+	model.editCaret = len("one\n")
+	model.moveCursorToCaret()
+
+	updateModel(t, model, tea.KeyPressMsg(tea.Key{Code: 'u', Mod: tea.ModCtrl}))
+
+	require.Equal(t, "one\ntwo", model.geo.Label(nodeID))
+	require.Equal(t, len("one"), model.editCaret)
+	want, visible := model.geo.LabelLinePoint(nodeID, 0, 2, uint32(len("one")))
+	require.True(t, visible)
+	require.Equal(t, want.Add(uint32(len("one")), 0), model.cursor)
+}
+
 func TestModelCreatesNodesWithEnterAndEscape(t *testing.T) {
 	t.Parallel()
 
@@ -4026,12 +4048,19 @@ func TestModelViewShowsCursorWhileEditing(t *testing.T) {
 	updateModel(t, model, tea.WindowSizeMsg{Width: 12, Height: 12})
 	updateModel(t, model, keyPress(tea.KeyTab, ""))
 	updateModel(t, model, keyPress('e', "e"))
-	view := model.View()
+	first := model.View()
+	require.NotNil(t, first.Cursor)
+	firstPosition := first.Cursor.Position
 
-	require.NotNil(t, view.Cursor)
-	require.Equal(t, int(model.cursor.X-model.viewport.X), view.Cursor.X)
-	require.Equal(t, int(model.cursor.Y-model.viewport.Y), view.Cursor.Y)
-	require.NotSame(t, view.Cursor, model.View().Cursor)
+	require.Equal(t, int(model.cursor.X-model.viewport.X), first.Cursor.X)
+	require.Equal(t, int(model.cursor.Y-model.viewport.Y), first.Cursor.Y)
+	updateModel(t, model, keyPress(tea.KeyLeft, ""))
+	second := model.View()
+	updateModel(t, model, keyPress(tea.KeyLeft, ""))
+	third := model.View()
+	require.NotSame(t, first.Cursor, second.Cursor)
+	require.NotSame(t, first.Cursor, third.Cursor)
+	require.Equal(t, firstPosition, first.Cursor.Position)
 }
 
 func TestModelWindowTitleTracksActiveCanvas(t *testing.T) {

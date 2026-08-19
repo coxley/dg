@@ -102,11 +102,8 @@ func (m *Model) View() tea.View {
 	case m.dialogs.ActiveID() != surfaceNone:
 	case m.interaction.session.kind == sessionLabelEdit:
 		if x, y, ok := m.cursorPosition(); ok && m.editCaretVisible {
-			cursor := &m.viewCursor[m.nextCursor]
-			m.nextCursor ^= 1
-			cursor.X = x
-			cursor.Y = y
-			view.Cursor = cursor
+			// Bubble Tea retains Cursor for later view comparisons, so each View owns its value.
+			view.Cursor = tea.NewCursor(x, y)
 		}
 	}
 	return view

@@ -76,8 +76,11 @@ func (m *Model) applyLabelEditIntent(intent chrome.TextEditIntent) bool {
 		}
 		return true
 	case chrome.TextEditDeleteToLineStart:
-		if start := int(line.Start); start != m.editCaret {
+		start := int(line.Start)
+		if start != m.editCaret {
 			m.replaceLabelRange(start, m.editCaret, nil)
+		} else if line.Start == line.End && start > 0 && m.editBuffer[start-1] == '\n' {
+			m.replaceLabelRange(start-1, start, nil)
 		}
 		return true
 	case chrome.TextEditDeleteToLineEnd:
