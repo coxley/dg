@@ -222,7 +222,7 @@ func TestPreviewStepCostSharesDestinationPort(t *testing.T) {
 	require.Zero(t, crossings)
 }
 
-func TestStepCostSharesCommonEndpointSegmentAtAnyDistance(t *testing.T) {
+func TestStepCostAllowsDistantCommonEndpointSharing(t *testing.T) {
 	t.Parallel()
 
 	graph := ir.Graph{Edges: []ir.Edge{
@@ -249,7 +249,7 @@ func TestStepCostSharesCommonEndpointSegmentAtAnyDistance(t *testing.T) {
 		&occupancy,
 	)
 	require.True(t, ok)
-	require.Equal(t, uint64(router.Costs.SharedStep), cost)
+	require.Equal(t, uint64(router.Costs.Step), cost)
 	require.Zero(t, crossings)
 }
 
@@ -423,6 +423,49 @@ func TestBuildAlignsCommonPortBranches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, north, upperDirection, "upper route: %+v", geo.Edges[upper].Points)
 	require.Equal(t, south, lowerDirection, "lower route: %+v", geo.Edges[lower].Points)
+}
+
+func TestBuildKeepsSharedBranchAtCommonPortAfterOneCellMove(t *testing.T) {
+	t.Parallel()
+
+	for _, commonX := range []uint32{19, 20} {
+		t.Run(fmt.Sprintf("common-x=%d", commonX), func(t *testing.T) {
+			t.Parallel()
+
+			geo, err := New()
+			require.NoError(t, err)
+			foo, err := geo.NewNodeAt("foo", NewPoint(6, 2))
+			require.NoError(t, err)
+			bar, err := geo.NewNodeAt("bar", NewPoint(6, 9))
+			require.NoError(t, err)
+			baz, err := geo.NewNodeAt("baz", NewPoint(commonX, 5))
+			require.NoError(t, err)
+			upper := geo.ConnectNodes(foo, ir.RightSide, ir.LeftSide, baz)
+			lower := geo.ConnectNodes(bar, ir.RightSide, ir.LeftSide, baz)
+			require.NoError(t, geo.Build())
+
+			upperPath, err := appendExpandedPath(nil, geo.Edges[upper].Points)
+			require.NoError(t, err)
+			lowerPath, err := appendExpandedPath(nil, geo.Edges[lower].Points)
+			require.NoError(t, err)
+			common := 0
+			for common < min(len(upperPath), len(lowerPath)) &&
+				upperPath[len(upperPath)-1-common] == lowerPath[len(lowerPath)-1-common] {
+				common++
+			}
+			require.Greater(t, common, 1)
+			_, commonPort, err := geo.EdgePorts(upper)
+			require.NoError(t, err)
+			require.Equal(
+				t,
+				geo.Ports[commonPort].Exit,
+				upperPath[len(upperPath)-common],
+				"upper=%+v lower=%+v",
+				geo.Edges[upper].Points,
+				geo.Edges[lower].Points,
+			)
+		})
+	}
 }
 
 func TestBuildRoutesTridentIndependentOfOrientationAndOrder(t *testing.T) {
@@ -713,6 +756,99 @@ func TestRouteAllowsOverlappingEndpointNodes(t *testing.T) {
 
 	require.NoError(t, geo.Build())
 	require.False(t, geo.Edges[edgeID].Empty())
+}
+
+func TestRouteTraversesNodesContainingItsEndpointNodes(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	outer, err := geo.NewNodeAt("", NewPoint(3, 1))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(outer, Size{Width: 24, Height: 19}))
+	container, err := geo.NewNodeAt("", NewPoint(5, 2))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(container, Size{Width: 18, Height: 16}))
+	foo, err := geo.NewNodeAt("foo", NewPoint(8, 5))
+	require.NoError(t, err)
+	bar, err := geo.NewNodeAt("bar", NewPoint(8, 12))
+	require.NoError(t, err)
+	clients, err := geo.NewNodeAt("clients", NewPoint(30, 5))
+	require.NoError(t, err)
+	database, err := geo.NewNodeAt("database", NewPoint(30, 12))
+	require.NoError(t, err)
+	edges := []uint32{
+		geo.ConnectNodes(foo, ir.Bottom, ir.Top, bar),
+		geo.ConnectNodes(clients, ir.LeftSide, ir.RightSide, foo),
+		geo.ConnectNodes(bar, ir.RightSide, ir.LeftSide, database),
+	}
+
+	require.NoError(t, geo.Build())
+	for _, edgeID := range edges {
+		require.False(t, geo.Edges[edgeID].Empty())
+	}
+
+	path, err := appendExpandedPath(nil, geo.Edges[edges[1]].Points)
+	require.NoError(t, err)
+	var crossing Point
+	for _, point := range path {
+		if geo.Nodes[container].Rect.OnBoundary(point) {
+			crossing = point
+			break
+		}
+	}
+	require.NotEqual(t, Point{}, crossing)
+	grid, err := Rasterize(geo)
+	require.NoError(t, err)
+	owner, ok := grid.OwnerAt(crossing)
+	require.True(t, ok)
+	require.Equal(t, Hit{ID: edges[1], Kind: HitEdge}, owner)
+
+	require.NoError(t, geo.BringToFront(Hit{ID: container, Kind: HitNode}))
+	grid, err = Rasterize(geo)
+	require.NoError(t, err)
+	owner, ok = grid.OwnerAt(crossing)
+	require.True(t, ok)
+	require.Equal(t, Hit{ID: container, Kind: HitNode}, owner)
+}
+
+func TestRouteDoesNotTraverseNodePartiallyOverlappingEndpoint(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	container, err := geo.NewNodeAt("", NewPoint(10, 5))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(container, Size{Width: 15, Height: 12}))
+	left, err := geo.NewNodeAt("left", NewPoint(7, 9))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", NewPoint(30, 9))
+	require.NoError(t, err)
+	geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+
+	require.ErrorIs(t, geo.Build(), ErrNoRoute)
+}
+
+func TestRouteStillAvoidsContainerUnrelatedToItsEndpoints(t *testing.T) {
+	t.Parallel()
+
+	geo, err := New()
+	require.NoError(t, err)
+	container, err := geo.NewNodeAt("", NewPoint(10, 5))
+	require.NoError(t, err)
+	require.NoError(t, geo.SetNodeSize(container, Size{Width: 15, Height: 12}))
+	left, err := geo.NewNodeAt("left", NewPoint(1, 9))
+	require.NoError(t, err)
+	right, err := geo.NewNodeAt("right", NewPoint(30, 9))
+	require.NoError(t, err)
+	edgeID := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	require.NoError(t, geo.Build())
+
+	path, err := appendExpandedPath(nil, geo.Edges[edgeID].Points)
+	require.NoError(t, err)
+	for _, point := range path {
+		require.False(t, geo.Nodes[container].Rect.Contains(point), "route crosses at %+v", point)
+	}
 }
 
 func TestRoutePrefersDetourAroundEndpointNodes(t *testing.T) {

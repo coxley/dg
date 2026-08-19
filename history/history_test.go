@@ -169,6 +169,45 @@ func TestHistoryInterruptRejectsStaleTransaction(t *testing.T) {
 	require.Equal(t, layout.NewPoint(2, 2), geo.Nodes[nodeID].Rect.Min)
 }
 
+func TestHistoryCrossesUnbuildableIntermediateState(t *testing.T) {
+	t.Parallel()
+
+	geo, history := newHistoryLayout(t)
+	source, err := geo.NewNodeAt("source", layout.NewPoint(2, 2))
+	require.NoError(t, err)
+	destination, err := geo.NewNodeAt("destination", layout.NewPoint(24, 2))
+	require.NoError(t, err)
+	blocker, err := geo.NewNodeAt("blocker", layout.NewPoint(12, 12))
+	require.NoError(t, err)
+	port, ok := centerPort(geo, source, ir.RightSide)
+	require.True(t, ok)
+	geo.ConnectNodes(source, ir.RightSide, ir.LeftSide, destination)
+	require.NoError(t, geo.Build())
+	history.Clear()
+
+	initial := geo.Nodes[blocker].Rect.Min
+	bad := geo.Ports[port].Exit
+	good := layout.NewPoint(16, 12)
+	require.NoError(t, geo.PlaceNode(blocker, bad))
+	require.ErrorIs(t, geo.Build(), layout.ErrNoRoute)
+	require.NoError(t, geo.PlaceNode(blocker, good))
+	require.NoError(t, geo.Build())
+
+	changed, err := history.Undo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, initial, geo.Nodes[blocker].Rect.Min)
+	require.False(t, history.CanUndo())
+	require.True(t, history.CanRedo())
+
+	changed, err = history.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, good, geo.Nodes[blocker].Rect.Min)
+	require.True(t, history.CanUndo())
+	require.False(t, history.CanRedo())
+}
+
 func TestHistoryLimitDropsOldestInteraction(t *testing.T) {
 	t.Parallel()
 

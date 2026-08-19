@@ -153,32 +153,93 @@ func (h *History) Interrupt() {
 	}
 }
 
-// Undo commits an open transaction and restores the previous interaction.
+// Undo commits an open transaction and restores the nearest buildable earlier
+// interaction boundary.
 func (h *History) Undo() (bool, error) {
 	h.Interrupt()
 	if h == nil || h.cursor == 0 {
 		return false, nil
 	}
-	if err := h.applyEntry(h.entries[h.cursor-1], layout.ReplayBackward); err != nil {
+	distance, err := h.undoEntries()
+	if err != nil {
 		return false, fmt.Errorf("undo history: %w", err)
 	}
-	h.cursor--
+	h.cursor -= distance
 	h.notifyChanged()
 	return true, nil
 }
 
-// Redo reapplies the next reverted interaction.
+// Redo reapplies changes through the nearest buildable later interaction
+// boundary.
 func (h *History) Redo() (bool, error) {
 	h.Interrupt()
 	if h == nil || h.cursor == len(h.entries) {
 		return false, nil
 	}
-	if err := h.applyEntry(h.entries[h.cursor], layout.ReplayForward); err != nil {
+	distance, err := h.redoEntries()
+	if err != nil {
 		return false, fmt.Errorf("redo history: %w", err)
 	}
-	h.cursor++
+	h.cursor += distance
 	h.notifyChanged()
 	return true, nil
+}
+
+func (h *History) undoEntries() (int, error) {
+	last := h.cursor - 1
+	firstErr := h.applyEntry(h.entries[last], layout.ReplayBackward)
+	if firstErr == nil {
+		return 1, nil
+	}
+	if h.entries[last].reload {
+		return 0, firstErr
+	}
+
+	for first := last - 1; first >= 0; first-- {
+		if h.entries[first].reload {
+			if err := h.layout.Restore(h.entries[first].before); err == nil {
+				return h.cursor - first, nil
+			}
+			break
+		}
+		changes := appendEntryChanges(nil, h.entries[first:h.cursor])
+		if err := h.layout.Replay(changes, layout.ReplayBackward); err == nil {
+			return h.cursor - first, nil
+		}
+	}
+	return 0, firstErr
+}
+
+func (h *History) redoEntries() (int, error) {
+	first := h.cursor
+	firstErr := h.applyEntry(h.entries[first], layout.ReplayForward)
+	if firstErr == nil {
+		return 1, nil
+	}
+	if h.entries[first].reload {
+		return 0, firstErr
+	}
+
+	for last := first + 1; last < len(h.entries); last++ {
+		if h.entries[last].reload {
+			if err := h.layout.Restore(h.entries[last].after); err == nil {
+				return last - h.cursor + 1, nil
+			}
+			break
+		}
+		changes := appendEntryChanges(nil, h.entries[h.cursor:last+1])
+		if err := h.layout.Replay(changes, layout.ReplayForward); err == nil {
+			return last - h.cursor + 1, nil
+		}
+	}
+	return 0, firstErr
+}
+
+func appendEntryChanges(dst []layout.Change, entries []entry) []layout.Change {
+	for _, entry := range entries {
+		dst = append(dst, entry.changes...)
+	}
+	return dst
 }
 
 // CanUndo reports whether Undo can change the layout.

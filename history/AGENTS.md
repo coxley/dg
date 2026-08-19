@@ -32,6 +32,12 @@ History as separate operations.
 - `Interrupt` commits the latest visible state.
 - stale transactions return `ErrTransactionClosed`.
 
+Undo and redo normally replay one interaction. When that interaction ends at
+an unbuildable intermediate state, history widens the atomic replay through
+adjacent entries until it reaches the nearest buildable boundary. The cursor
+crosses the complete span, so the same redo or undo also avoids the invalid
+midpoint.
+
 History retains 256 entries by default. `WithLimit` changes that bound.
 Coalescing belongs to Layout because `layout.Change` remains opaque.
 `SetChangeCallback` reports completed visible changes, including undo and redo,

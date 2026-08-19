@@ -2647,7 +2647,7 @@ func TestRejectedRigidDropsDoNotPoisonUndo(t *testing.T) {
 		dx := int64(model.geo.Nodes[blocker].Rect.Min.X) -
 			int64(model.geo.Nodes[left].Rect.Min.X) + 2
 		dy := int64(model.geo.Nodes[blocker].Rect.Min.Y) -
-			int64(model.geo.Nodes[left].Rect.Min.Y) + 2
+			int64(model.geo.Nodes[left].Rect.Min.Y) - 1
 		require.NoError(t, model.geo.MoveSelection(dx, dy))
 
 		model.finishMove()

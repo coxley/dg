@@ -1582,6 +1582,7 @@ func (r Router) stepCostFor(
 	segmentOwners := occupancy.segments[newRouteSegment(a, b)]
 	shared := false
 	clearBranchArms := true
+	nearCommon := true
 	for index := segmentOwners; index != 0; index = occupancy.segmentUses[index-1].next {
 		owner := occupancy.segmentUses[index-1].edge
 		if owner == route.id {
@@ -1592,14 +1593,15 @@ func (r Router) stepCostFor(
 			return 0, 0, false
 		}
 		shared = true
-		clearBranchArms = clearBranchArms &&
-			l.sharedBranchArmsClear(route, owner, b)
+		armsClear, stepNearCommon := l.sharedStepPreferences(route, owner, b)
+		clearBranchArms = clearBranchArms && armsClear
+		nearCommon = nearCommon && stepNearCommon
 	}
 
 	cost := uint64(r.Costs.Step)
-	if shared && clearBranchArms {
+	if shared && clearBranchArms && nearCommon {
 		cost = uint64(r.Costs.SharedStep)
-	} else if shared {
+	} else if shared && !clearBranchArms {
 		// Prefer one more arm cell when both paths have the same length and bends.
 		cost = addCost(cost, uint64(r.Costs.Bend))
 	}
@@ -1638,41 +1640,45 @@ func (r Router) stepCostFor(
 	return cost, crossings, true
 }
 
-func (l *Layout) sharedBranchArmsClear(
+func (l *Layout) sharedStepPreferences(
 	route routeEdge,
 	edgeBID uint32,
 	point Point,
-) bool {
+) (bool, bool) {
 	if uint64(edgeBID) >= uint64(len(l.graph.Edges)) {
-		return false
+		return false, false
 	}
 	edgeA, edgeB := route.ports, l.graph.Edges[edgeBID]
 	if edgeB.HasPort(edgeA.PortA) && edgeB.HasPort(edgeA.PortB) {
-		return true
+		return true, true
 	}
 	common, otherA, ok := sharedPorts(edgeA, edgeB)
 	if !ok {
-		return false
+		return false, false
 	}
 	otherB := edgeB.PortA
 	if otherB == common {
 		otherB = edgeB.PortB
 	}
-	if uint64(otherB) >= uint64(len(l.Ports)) {
-		return false
+	if uint64(common) >= uint64(len(l.Ports)) ||
+		uint64(otherB) >= uint64(len(l.Ports)) {
+		return false, false
 	}
-	if uint64(otherA) < uint64(len(l.Ports)) &&
-		!branchArmClear(point, l.Ports[otherA]) {
-		return false
+	commonDistance := manhattan(point, l.Ports[common].Anchor)
+	armsClear := true
+	stepNearCommon := true
+	if uint64(otherA) < uint64(len(l.Ports)) {
+		armsClear = branchArmClear(point, l.Ports[otherA])
+		stepNearCommon = commonDistance <= manhattan(point, l.Ports[otherA].Anchor)
 	}
-	if !branchArmClear(point, l.Ports[otherB]) {
-		return false
-	}
+	armsClear = armsClear && branchArmClear(point, l.Ports[otherB])
+	stepNearCommon = stepNearCommon &&
+		commonDistance <= manhattan(point, l.Ports[otherB].Anchor)
 	_, short := l.scratch.shortBranchArms[sharedBranchCell{
 		commonPort: common,
 		point:      point,
 	}]
-	return !short
+	return armsClear && !short, stepNearCommon
 }
 
 func branchArmClear(point Point, port Port) bool {
@@ -1825,8 +1831,8 @@ func (l *Layout) routeEdge(edgeID uint32) routeEdge {
 	}
 }
 
-// blockedForRoute checks indexed node obstacles with endpoint and host-edge
-// attachment exemptions.
+// blockedForRoute checks indexed node obstacles with endpoint, container, and
+// host-edge attachment exemptions.
 func (l *Layout) blockedForRoute(route routeEdge, p Point) bool {
 	if !route.hasPorts {
 		return l.blocked(p)
@@ -1867,7 +1873,8 @@ func (l *Layout) nodeBlocksRoute(
 	// Endpoint nodes may overlap. Their edge can traverse the overlap and
 	// the raster layer later hides the covered part of the route.
 	for i := range route.endpointCount {
-		if route.endpointNodes[i] == nodeID {
+		endpointNode := route.endpointNodes[i]
+		if endpointNode == nodeID || l.nodeContainsNode(nodeID, endpointNode) {
 			return false
 		}
 	}
@@ -1878,6 +1885,22 @@ func (l *Layout) nodeBlocksRoute(
 		}
 	}
 	return true
+}
+
+func (l *Layout) nodeContainsNode(containerID, nodeID uint32) bool {
+	if uint64(containerID) >= uint64(len(l.Nodes)) ||
+		uint64(nodeID) >= uint64(len(l.Nodes)) {
+		return false
+	}
+	container := l.Nodes[containerID].Rect
+	node := l.Nodes[nodeID].Rect
+	if container.Empty() || node.Empty() {
+		return false
+	}
+	containerMax := container.Max()
+	nodeMax := node.Max()
+	return node.Min.X >= container.Min.X && node.Min.Y >= container.Min.Y &&
+		nodeMax.X <= containerMax.X && nodeMax.Y <= containerMax.Y
 }
 
 func (l *Layout) blocked(p Point) bool {

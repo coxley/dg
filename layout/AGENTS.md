@@ -182,6 +182,11 @@ may traverse. Node obstacles are route-specific because endpoints and host-edge
 attachments receive exemptions. Only explore landmarks when queue and
 search-map work dominates after the current bounds and minimum-step checks.
 
+A node that fully contains either endpoint node is a route-specific container
+for that edge. The edge may cross every enclosing container, including nested
+containers. Partial overlap grants no exemption, and unrelated edges still
+route around the node.
+
 Smart-arrow routes prefer two straight cells before a bend. Keep that clearance
 when it does not lengthen the route. Permit shorter clearance when the extra
 cell would force a much worse route. The router first searches with full
@@ -252,7 +257,8 @@ merge. Common-endpoint edges retain joined connectivity.
 
 Layers control raster ownership and occlusion, not route legality. Ordinary
 nodes remain hard routing obstacles at every layer. Routes may traverse their
-endpoint nodes and nodes attached to that same host edge.
+endpoint nodes, nodes that fully contain an endpoint node, and nodes attached
+to that same host edge.
 
 `Layout.Hits` returns visible objects in interaction priority order. It checks
 compact edge segments rather than every rendered edge cell.
