@@ -66,12 +66,15 @@ type requestCopyMsg struct {
 	text            string
 	preferredPrefix string
 	payload         []byte
+	file            string
 	modifier        tea.KeyMod
 }
 
 type releaseCopyMsg struct {
 	modifier tea.KeyMod
 }
+
+type writeFileMsg string
 
 type probeExpiredMsg struct {
 	generation uint64
@@ -110,11 +113,14 @@ type ErrorMsg struct {
 	Err error
 }
 
-func writeNative(text string, payload []byte) error {
+func writeNative(text string, payload []byte, file string) error {
 	if err := native.Init(); err != nil {
 		return err
 	}
 	values := []native.Data{{Format: native.FmtText, Bytes: []byte(text)}}
+	if file != "" {
+		values = append(values, native.Data{Format: native.FmtFile, Bytes: []byte(file)})
+	}
 	if len(payload) != 0 {
 		encoded, err := encodePayload(text, payload)
 		if err != nil {
@@ -139,7 +145,7 @@ func readNative() []byte {
 // Model owns clipboard capability, copy gestures, and export-form state.
 type Model struct {
 	mode          mode
-	nativeWrite   func(string, []byte) error
+	nativeWrite   func(string, []byte, string) error
 	nativeRead    func() []byte
 	pending       requestCopyMsg
 	nativeErr     error
@@ -179,6 +185,11 @@ func RequestCopy(
 	}
 }
 
+// WriteFile returns a message that writes a path as text and as a native file.
+func WriteFile(path string) tea.Msg {
+	return writeFileMsg(path)
+}
+
 // ReleaseCopy returns a message that completes an armed copy on modifier release.
 func ReleaseCopy(modifier tea.KeyMod) tea.Msg {
 	return releaseCopyMsg{modifier: modifier}
@@ -204,6 +215,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case requestCopyMsg:
 		return m, m.request(message)
+	case writeFileMsg:
+		m.CancelPending()
+		return m, m.write(requestCopyMsg{text: string(message), file: string(message)})
 	case releaseCopyMsg:
 		return m, m.release(message)
 	case debounceExpiredMsg:
@@ -295,6 +309,14 @@ func (m *Model) CancelExport() {
 // UseNative configures the native writer for tests.
 func (m *Model) UseNative(write func(string, []byte) error) {
 	m.mode = nativeClipboard
+	m.nativeWrite = func(text string, payload []byte, _ string) error {
+		return write(text, payload)
+	}
+}
+
+// UseNativeFormats configures the native multi-format writer for tests.
+func (m *Model) UseNativeFormats(write func(string, []byte, string) error) {
+	m.mode = nativeClipboard
 	m.nativeWrite = write
 }
 
@@ -372,7 +394,7 @@ func (m *Model) write(copy requestCopyMsg) tea.Cmd {
 		return wrap(func() tea.Msg {
 			return nativeWriteMsg{
 				copy: copy,
-				err:  m.nativeWrite(copy.text, copy.payload),
+				err:  m.nativeWrite(copy.text, copy.payload, copy.file),
 			}
 		})
 	default:

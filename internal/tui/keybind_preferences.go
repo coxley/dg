@@ -3,8 +3,6 @@ package tui
 import (
 	"cmp"
 	"slices"
-	"strings"
-	"unicode"
 
 	"github.com/coxley/dg/internal/settings"
 	"github.com/coxley/dg/internal/tui/chrome"
@@ -33,70 +31,15 @@ var keybindScopeLabels = map[chrome.ScopeID]string{
 	scopeModal:       "Modal",
 }
 
-var keybindActionLabels = map[chrome.CommandID]string{
-	commandActivate:        "Complete Connection",
-	commandArrowEnd:        "Cycle End Arrow",
-	commandArrowStart:      "Cycle Start Arrow",
-	commandArrange:         "Arrange Selection",
-	commandBack:            "Go Back",
-	commandBorder:          "Cycle Border",
-	commandCancel:          "Cancel Tool",
-	commandCopy:            "Copy Selection",
-	commandCommitLabel:     "Commit Label",
-	commandDashed:          "Toggle Dashed Stroke",
-	commandDelete:          "Delete Selection",
-	commandDuplicate:       "Duplicate Selection",
-	commandEditLabel:       "Edit Label",
-	commandExpand:          "Expand Selection",
-	commandFocusNext:       "Focus Next Node",
-	commandFocusPrevious:   "Focus Previous Node",
-	commandHelp:            "Toggle Help",
-	commandLayerBack:       "Send to Back",
-	commandLayerBackward:   "Send Backward",
-	commandLayerForward:    "Bring Forward",
-	commandLayerFront:      "Bring to Front",
-	commandLine:            "Line Tool",
-	commandMoveDown:        "Navigate Down",
-	commandMoveLeft:        "Navigate Left",
-	commandMoveRight:       "Navigate Right",
-	commandMoveUp:          "Navigate Up",
-	commandNewCanvas:       "New Canvas",
-	commandNewNode:         "New Node",
-	commandPadding:         "Cycle Padding",
-	commandPreferences:     "Open Preferences",
-	commandQuit:            "Quit",
-	commandRectangle:       "Rectangle Tool",
-	commandRedo:            "Redo",
-	commandSave:            "Save Canvas",
-	commandSidebar:         "Toggle Sidebar",
-	commandSidebarActivate: "Open Item",
-	commandSidebarDelete:   "Delete Canvas",
-	commandSidebarNext:     "Next Item",
-	commandSidebarPrevious: "Previous Item",
-	commandSidebarTabNext:  "Next Tab",
-	commandSidebarTabPrev:  "Previous Tab",
-	commandTextHorizontal:  "Cycle Horizontal Alignment",
-	commandTextVertical:    "Cycle Vertical Alignment",
-	commandUndo:            "Undo",
-}
-
 func keybindActions() []preferencesview.KeybindAction {
-	seen := make(map[[2]string]bool)
 	actions := make([]preferencesview.KeybindAction, 0, len(applicationBindings))
-	for _, binding := range applicationBindings {
-		key := [2]string{string(binding.Scope), string(binding.Command)}
-		if seen[key] {
-			continue
+	for _, action := range applicationActions {
+		for _, binding := range action.Bindings {
+			actions = append(actions, preferencesview.KeybindAction{
+				Scope: binding.Scope, ScopeLabel: keybindScopeLabels[binding.Scope],
+				Command: action.Command, Label: action.Label,
+			})
 		}
-		seen[key] = true
-		label := keybindActionLabels[binding.Command]
-		if label == "" {
-			label = titleCase(string(binding.Command))
-		}
-		actions = append(actions, preferencesview.KeybindAction{
-			Scope: binding.Scope, ScopeLabel: keybindScopeLabels[binding.Scope],
-			Command: binding.Command, Label: label,
-		})
 	}
 	slices.SortStableFunc(actions, func(a, b preferencesview.KeybindAction) int {
 		if order := cmp.Compare(keybindScopeOrder[a.Scope], keybindScopeOrder[b.Scope]); order != 0 {
@@ -224,16 +167,4 @@ func findKeybindValue(
 		}
 	}
 	return preferencesview.Keybind{}, false
-}
-
-func titleCase(value string) string {
-	words := strings.Split(value, "-")
-	for i, word := range words {
-		runes := []rune(word)
-		if len(runes) != 0 {
-			runes[0] = unicode.ToUpper(runes[0])
-		}
-		words[i] = string(runes)
-	}
-	return strings.Join(words, " ")
 }

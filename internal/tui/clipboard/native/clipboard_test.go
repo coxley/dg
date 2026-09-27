@@ -14,13 +14,15 @@ func TestPrepareWriteManyOwnsDistinctFormats(t *testing.T) {
 	fragment := []byte(`{"version":1}`)
 	values, err := prepareWriteMany([]Data{
 		{Format: FmtText, Bytes: text},
+		{Format: FmtFile, Bytes: []byte("/tmp/diagram.dg")},
 		{Format: custom, Bytes: fragment},
 	})
 	require.NoError(t, err)
 	text[0] = 'X'
 	fragment[0] = 'X'
 	require.Equal(t, []byte("diagram"), values[0].Bytes)
-	require.Equal(t, []byte(`{"version":1}`), values[1].Bytes)
+	require.Equal(t, []byte("/tmp/diagram.dg"), values[1].Bytes)
+	require.Equal(t, []byte(`{"version":1}`), values[2].Bytes)
 }
 
 func TestPrepareWriteManyRejectsInvalidFormats(t *testing.T) {

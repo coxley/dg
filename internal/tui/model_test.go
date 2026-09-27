@@ -1295,10 +1295,10 @@ func setHelpKeyboardEnhancements(t testing.TB, model *Model, enhanced bool) {
 }
 
 func helpChordRequiresDisambiguation(chord chrome.Chord) bool {
-	value := string(chord)
-	return strings.HasPrefix(value, "super+") ||
-		value == labelCommitControlChord ||
-		strings.Contains(value, "ctrl+shift+")
+	parts := strings.Split(string(chord), "+")
+	return slices.Contains(parts, "super") ||
+		slices.Contains(parts, "ctrl") &&
+			(slices.Contains(parts, "shift") || slices.Contains(parts, "enter"))
 }
 
 func helpKeyPress(t testing.TB, chord chrome.Chord) tea.KeyPressMsg {
@@ -1376,6 +1376,7 @@ func helpCommandPerformed(
 		commandUndo:
 		return helpEditCommandPerformed(commandID, command, before, after)
 	case commandHelp,
+		commandPalette,
 		commandPreferences,
 		commandQuit,
 		commandSave,
@@ -1507,6 +1508,8 @@ func helpChromeCommandPerformed(
 	switch commandID {
 	case commandHelp:
 		return after.helpVisible != before.helpVisible
+	case commandPalette:
+		return after.dialog == surfacePalette
 	case commandPreferences:
 		return after.dialog == surfacePreferences && after.preferenceEdit
 	case commandQuit:

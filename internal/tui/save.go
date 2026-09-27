@@ -79,7 +79,7 @@ func (*saveDialogBody) PreferredWidth() int { return 52 }
 func (*saveDialogBody) Scopes() []chrome.ScopeID {
 	return []chrome.ScopeID{scopeModal, scopeGlobal}
 }
-func (*saveDialogBody) TextEntry() bool { return true }
+func (b *saveDialogBody) TextEntry() bool { return b.form.TextEntry() }
 
 func (b *saveDialogBody) SetBounds(bounds chrome.Rect) {
 	b.bounds = bounds

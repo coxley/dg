@@ -403,6 +403,8 @@ func x11FormatForTarget(name string) (Format, bool) {
 		return FmtText, true
 	case "image/png":
 		return FmtImage, true
+	case fileURIListMIME:
+		return FmtFile, true
 	}
 	if strings.Contains(name, "/") {
 		return Register(name), true
@@ -441,7 +443,15 @@ func x11WriteMany(values []Data) (<-chan struct{}, error) {
 			x.Close()
 			return nil, errUnavailable
 		}
-		data[i] = x11SelectionData{target: target, bytes: value.Bytes}
+		contents := value.Bytes
+		if value.Format == FmtFile {
+			contents, err = encodeFileURIList(value.Bytes)
+			if err != nil {
+				x.Close()
+				return nil, err
+			}
+		}
+		data[i] = x11SelectionData{target: target, bytes: contents}
 	}
 
 	if _, err := x.send(x11wire.SetSelectionOwner(x.win, sel, x11wire.CurrentTime)); err != nil {
@@ -475,6 +485,8 @@ func x11TargetName(format Format) (string, error) {
 		return "UTF8_STRING", nil
 	case FmtImage:
 		return "image/png", nil
+	case FmtFile:
+		return fileURIListMIME, nil
 	default:
 		mime, ok := formatMIME(format)
 		if !ok {

@@ -76,6 +76,28 @@ func TestNativeWriteReportsSuccess(t *testing.T) {
 	require.IsType(t, CopiedMsg{}, command())
 }
 
+func TestWriteFilePublishesTextAndFile(t *testing.T) {
+	t.Parallel()
+
+	model := newTestModel()
+	var text, file string
+	model.UseNativeFormats(func(gotText string, payload []byte, gotFile string) error {
+		text = gotText
+		file = gotFile
+		require.Empty(t, payload)
+		return nil
+	})
+
+	_, command := model.Update(WriteFile("/full/path/Canvas Name.dg"))
+	require.NotNil(t, command)
+	result := command().(UpdateMsg)
+	_, command = model.Update(result)
+
+	require.IsType(t, CopiedMsg{}, command())
+	require.Equal(t, "/full/path/Canvas Name.dg", text)
+	require.Equal(t, text, file)
+}
+
 func TestCopyDebounceWaitsForInactivity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		model := newTestModel()

@@ -407,6 +407,12 @@ func (f *Form) AccessibleLines() []string {
 	return lines
 }
 
+// TextEntry reports whether the focused field accepts text.
+func (f *Form) TextEntry() bool {
+	return f.focus >= 0 && f.focus < len(f.declaration.Fields) &&
+		f.declaration.Fields[f.focus].Kind == TextField
+}
+
 // RunAccessible writes stable labels for screen-reader execution paths.
 func (f *Form) RunAccessible(writer io.Writer) error {
 	for _, line := range f.AccessibleLines() {

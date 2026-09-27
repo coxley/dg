@@ -49,6 +49,12 @@ func read(t Format) (buf []byte, err error) {
 		return x11Read("UTF8_STRING")
 	case FmtImage:
 		return x11Read("image/png")
+	case FmtFile:
+		data, err := x11Read(fileURIListMIME)
+		if err != nil || data == nil {
+			return data, err
+		}
+		return decodeFileURIList(data)
 	default:
 		mime, ok := formatMIME(t)
 		if !ok {

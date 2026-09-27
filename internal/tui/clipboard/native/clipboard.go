@@ -128,6 +128,8 @@ const (
 	FmtText Format = iota
 	// FmtImage indicates image/png clipboard format
 	FmtImage
+	// FmtFile indicates one absolute UTF-8 file path.
+	FmtFile
 )
 
 var (
@@ -227,7 +229,7 @@ func prepareWriteMany(values []Data) ([]Data, error) {
 			return nil, fmt.Errorf("clipboard format %q appears more than once", value.Format.MIME())
 		}
 		seen[value.Format] = struct{}{}
-		if value.Format != FmtText && value.Format != FmtImage {
+		if value.Format != FmtText && value.Format != FmtImage && value.Format != FmtFile {
 			if _, ok := formatMIME(value.Format); !ok {
 				return nil, errUnsupported
 			}
@@ -276,12 +278,12 @@ type Data struct {
 // whenever any change of clipboard data in one of the desired formats
 // happens. Each received value carries the format it was detected in, so a
 // single Watch call can observe multiple formats at once. If no format is
-// given, all supported formats (FmtText and FmtImage) are observed.
+// given, all supported formats are observed.
 //
 // The returned channel will be closed once the given context is canceled.
 func Watch(ctx context.Context, t ...Format) <-chan Data {
 	if len(t) == 0 {
-		t = []Format{FmtText, FmtImage}
+		t = []Format{FmtText, FmtImage, FmtFile}
 	}
 
 	out := make(chan Data)

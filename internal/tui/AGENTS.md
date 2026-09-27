@@ -134,12 +134,19 @@ layout.
 
 ## Dialogs, settings, sidebar, and clipboard
 
-Name Canvas, Export, Preferences, Confirmation, and Notice declare distinct
-workspace surfaces through one dialog controller. Left-dragging empty dialog cells moves a
+Name Canvas, Export, Preferences, Confirmation, Notice, and Command Palette
+declare distinct workspace surfaces through one dialog controller. Left-dragging empty dialog cells moves a
 floating shell; right-dragging resizes it. Fit alone selects floating or
 full-screen placement. One retained dialog plan supplies rendering and local
 pointer coordinates. Back and outside-click behavior comes from each
 declaration.
+
+Command Palette opens with Command-/ when the terminal supports key
+disambiguation. It remains available outside text entry and confirmation
+dialogs. It lists one row per action, sorts executable actions before disabled
+actions, and keeps disabled actions visible for discovery. Fuzzy search keeps
+the same executable-first partition. The current keybinding stays aligned to
+the right edge, with one blank cell before a visible scrollbar.
 
 The preferences model reports an editable draft; root previews router, shortcut,
 and semantic tint changes and owns the layout history transaction. Cancel,

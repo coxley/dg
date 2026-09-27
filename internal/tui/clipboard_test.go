@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -146,7 +147,45 @@ func TestCopySelectionReportsClipboardFailure(t *testing.T) {
 	model, _ := newTestModel(t)
 	updateModel(t, model, clipboardview.ErrorMsg{Err: errors.New("unavailable")})
 
-	require.Equal(t, "copy selection: unavailable", model.status)
+	require.Equal(t, "copy to clipboard: unavailable", model.status)
+}
+
+func TestCopyCanvasPathWritesFullPath(t *testing.T) {
+	t.Parallel()
+
+	model, _, store := newStoredTestModel(t, "active draft")
+	want, err := store.Path(*model.entry)
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(want))
+	var copied string
+	var copiedFile string
+	model.clipboard.UseNativeFormats(func(text string, payload []byte, file string) error {
+		copied = text
+		copiedFile = file
+		require.Empty(t, payload)
+		return nil
+	})
+
+	command := model.copyCanvasPath()
+	require.NotNil(t, command)
+	command = updateModelCommand(t, model, command())
+	require.NotNil(t, command)
+	command = updateModelCommand(t, model, command())
+
+	require.NotNil(t, command)
+	require.Equal(t, want, copied)
+	require.Equal(t, want, copiedFile)
+	require.Equal(t, surfaceNotice, model.dialogs.ActiveID())
+	require.Equal(t, "Copied to clipboard", model.dialogs.notice.text)
+}
+
+func TestCopyCanvasPathRequiresMaterializedCanvas(t *testing.T) {
+	t.Parallel()
+
+	model, _ := newTestModel(t)
+
+	require.Nil(t, model.copyCanvasPath())
+	require.Equal(t, "copy canvas path: active canvas has no file", model.statusError)
 }
 
 func TestClipboardFragmentPastesIntoSameAndOtherCanvas(t *testing.T) {

@@ -30,6 +30,7 @@ type Theme struct {
 	Navigation    nav.Styles
 	Modal         modalview.Styles
 	Confirmation  modalview.ConfirmationStyles
+	Palette       paletteStyles
 	Help          helpStyles
 	Sidebar       sidebarStyles
 	Status        statusStyles
@@ -237,6 +238,17 @@ func convertTint(theme *tint.Tint) Theme {
 			Title:   helpKey,
 			Message: plain,
 			Actions: form,
+		},
+		Palette: paletteStyles{
+			Input:      form.TextInput,
+			Prompt:     helpKey.Underline(false),
+			Divider:    plain.Foreground(muted).Faint(true),
+			Relevant:   plain,
+			Irrelevant: plain.Faint(true),
+			Selected:   activeNav,
+			Hovered:    hoverNav.Underline(true),
+			Footer:     plain.Foreground(muted).Faint(true),
+			Scrollbar:  scrollbar,
 		},
 		Help: helpStyles{
 			Container:       commonBox.Border(lipgloss.HiddenBorder(), false),

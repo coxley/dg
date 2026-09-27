@@ -12,11 +12,13 @@ import (
 const (
 	labelCommitControlChord = "ctrl+enter"
 	labelCommitSuperChord   = "super+enter"
+	paletteDefaultChord     = "super+/"
 
 	scopeCanvas      chrome.ScopeID = "canvas"
 	scopeGlobal      chrome.ScopeID = "global"
 	scopeLabel       chrome.ScopeID = "label"
 	scopeModal       chrome.ScopeID = "modal"
+	scopePalette     chrome.ScopeID = "palette"
 	scopePreferences chrome.ScopeID = "preferences"
 	scopeDirectory   chrome.ScopeID = "directory"
 	scopeSidebar     chrome.ScopeID = "sidebar"
@@ -29,6 +31,7 @@ const (
 	commandBorder          chrome.CommandID = "border"
 	commandCancel          chrome.CommandID = "cancel"
 	commandCopy            chrome.CommandID = "copy"
+	commandCopyCanvasPath  chrome.CommandID = "copy-canvas-path"
 	commandCommitLabel     chrome.CommandID = "commit-label"
 	commandDashed          chrome.CommandID = "dashed"
 	commandDelete          chrome.CommandID = "delete"
@@ -51,6 +54,7 @@ const (
 	commandNewCanvas       chrome.CommandID = "new-canvas"
 	commandNewNode         chrome.CommandID = "new-node"
 	commandPadding         chrome.CommandID = "padding"
+	commandPalette         chrome.CommandID = "palette"
 	commandPreferences     chrome.CommandID = "preferences"
 	commandQuit            chrome.CommandID = "quit"
 	commandRectangle       chrome.CommandID = "rectangle"
@@ -68,57 +72,102 @@ const (
 	commandUndo            chrome.CommandID = "undo"
 )
 
-var applicationBindings = []chrome.Binding{
-	{Scope: scopeSidebar, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "return to canvas"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("tab", "down", "j"), Command: commandSidebarNext, Label: "next item"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("shift+tab", "up", "k"), Command: commandSidebarPrevious, Label: "previous item"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("enter"), Command: commandSidebarActivate, Label: "open item"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("right", "l"), Command: commandSidebarTabNext, Label: "next tab"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("left", "h"), Command: commandSidebarTabPrev, Label: "previous tab"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("backspace", "delete"), Command: commandSidebarDelete, Label: "delete canvas"},
-	{Scope: scopeSidebar, Chords: chrome.Keys("ctrl+n"), Command: commandNewCanvas, Label: "new canvas"},
-	{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "close picker"},
-	{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Command: commandBack, Label: "cancel preferences"},
-	{Scope: scopeModal, Chords: chrome.Keys("esc"), Command: commandBack, Label: "close"},
-	{Scope: scopeLabel, Chords: chrome.Keys("esc"), Command: commandCancel, Label: "finish label"},
-	{Scope: scopeLabel, Chords: chrome.Keys(labelCommitControlChord, labelCommitSuperChord), Command: commandCommitLabel, Label: "commit label"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("up"), Command: commandMoveUp, Label: "move up"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("right"), Command: commandMoveRight, Label: "move right"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("down"), Command: commandMoveDown, Label: "move down"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("left"), Command: commandMoveLeft, Label: "move left"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("tab"), Command: commandFocusNext, Label: "next node"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("shift+tab"), Command: commandFocusPrevious, Label: "previous node"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("enter"), Command: commandActivate, Label: "complete connection"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("e"), Command: commandEditLabel, Label: "edit label"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("n"), Command: commandNewNode, Label: "new node"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+n"), Command: commandNewCanvas, Label: "new canvas"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("r"), Command: commandRectangle, Label: string(commandRectangle)},
-	{Scope: scopeCanvas, Chords: chrome.Keys("l"), Command: commandLine, Label: "line"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("shift+l"), Command: commandArrange, Label: "arrange"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("b"), Command: commandBorder, Label: "border"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("p"), Command: commandPadding, Label: "padding"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("-"), Command: commandDashed, Label: "dashed"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("a"), Command: commandArrowEnd, Label: "end arrow"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("shift+a"), Command: commandArrowStart, Label: "start arrow"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("t"), Command: commandTextHorizontal, Label: "horizontal text"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("shift+t"), Command: commandTextVertical, Label: "vertical text"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("d"), Command: commandDuplicate, Label: "duplicate"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("backspace", "delete"), Command: commandDelete, Label: "delete"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("["), Command: commandLayerBackward, Label: "send backward"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("]"), Command: commandLayerForward, Label: "bring forward"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("{", "shift+["), Command: commandLayerBack, Label: "send to back"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("}", "shift+]"), Command: commandLayerFront, Label: "bring to front"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("u", "ctrl+z"), Command: commandUndo, Label: "undo"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+r", "ctrl+y", "ctrl+shift+z"), Command: commandRedo, Label: "redo"},
-	{Scope: scopeCanvas, Chords: primaryKeys("a"), Command: commandExpand, Label: "expand selection"},
-	{Scope: scopeCanvas, Chords: primaryKeys("g"), Command: commandGroup, Label: "group / ungroup"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+c", "super+c"), Command: commandCopy, Label: "copy"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("esc"), Command: commandCancel, Label: "cancel tool"},
-	{Scope: scopeCanvas, Chords: chrome.Keys("q"), Command: commandQuit, Label: "cursor / quit"},
-	{Scope: scopeGlobal, Chords: chrome.Keys("?"), Command: commandHelp, Label: "toggle help"},
-	{Scope: scopeGlobal, Chords: primaryKeys("p"), Command: commandPreferences, Label: string(scopePreferences)},
-	{Scope: scopeGlobal, Chords: primaryKeys("s"), Command: commandSave, Label: string(commandSave)},
-	{Scope: scopeGlobal, Chords: primaryKeys("b"), Command: commandSidebar, Label: "toggle sidebar"},
+type actionBinding struct {
+	Scope  chrome.ScopeID
+	Chords []chrome.Chord
+	Label  string
+}
+
+type action struct {
+	Command     chrome.CommandID
+	Label       string
+	Bindings    []actionBinding
+	HidePalette bool
+}
+
+var applicationActions = []action{
+	{
+		Command: commandBack, Label: "Go Back", HidePalette: true,
+		Bindings: []actionBinding{
+			{Scope: scopeSidebar, Chords: chrome.Keys("esc", "q"), Label: "return to canvas"},
+			{Scope: scopeDirectory, Chords: chrome.Keys("esc", "q"), Label: "close picker"},
+			{Scope: scopePreferences, Chords: chrome.Keys("esc", "q"), Label: "cancel preferences"},
+			{Scope: scopeModal, Chords: chrome.Keys("esc"), Label: "close"},
+		},
+	},
+	{Command: commandSidebarNext, Label: "Next Item", Bindings: []actionBinding{{Scope: scopeSidebar, Chords: chrome.Keys("tab", "down", "j"), Label: "next item"}}},
+	{Command: commandSidebarPrevious, Label: "Previous Item", Bindings: []actionBinding{{Scope: scopeSidebar, Chords: chrome.Keys("shift+tab", "up", "k"), Label: "previous item"}}},
+	{Command: commandSidebarActivate, Label: "Open Item", Bindings: []actionBinding{{Scope: scopeSidebar, Chords: chrome.Keys("enter"), Label: "open item"}}},
+	{Command: commandSidebarTabNext, Label: "Next Tab", Bindings: []actionBinding{{Scope: scopeSidebar, Chords: chrome.Keys("right", "l"), Label: "next tab"}}},
+	{Command: commandSidebarTabPrev, Label: "Previous Tab", Bindings: []actionBinding{{Scope: scopeSidebar, Chords: chrome.Keys("left", "h"), Label: "previous tab"}}},
+	{Command: commandSidebarDelete, Label: "Delete Canvas", Bindings: []actionBinding{{Scope: scopeSidebar, Chords: chrome.Keys("backspace", "delete"), Label: "delete canvas"}}},
+	{Command: commandMoveUp, Label: "Navigate Up", HidePalette: true, Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("up"), Label: "move up"}}},
+	{Command: commandMoveRight, Label: "Navigate Right", HidePalette: true, Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("right"), Label: "move right"}}},
+	{Command: commandMoveDown, Label: "Navigate Down", HidePalette: true, Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("down"), Label: "move down"}}},
+	{Command: commandMoveLeft, Label: "Navigate Left", HidePalette: true, Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("left"), Label: "move left"}}},
+	{Command: commandFocusNext, Label: "Focus Next Node", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("tab"), Label: "next node"}}},
+	{Command: commandFocusPrevious, Label: "Focus Previous Node", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("shift+tab"), Label: "previous node"}}},
+	{Command: commandActivate, Label: "Complete Connection", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("enter"), Label: "complete connection"}}},
+	{Command: commandEditLabel, Label: "Edit Label", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("e"), Label: "edit label"}}},
+	{Command: commandNewNode, Label: "New Node", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("n"), Label: "new node"}}},
+	{
+		Command: commandNewCanvas, Label: "New Canvas",
+		Bindings: []actionBinding{
+			{Scope: scopeSidebar, Chords: chrome.Keys("ctrl+n"), Label: "new canvas"},
+			{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+n"), Label: "new canvas"},
+		},
+	},
+	{Command: commandRectangle, Label: "Rectangle Tool", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("r"), Label: string(commandRectangle)}}},
+	{Command: commandLine, Label: "Line Tool", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("l"), Label: "line"}}},
+	{Command: commandArrange, Label: "Arrange Selection", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("shift+l"), Label: "arrange"}}},
+	{Command: commandBorder, Label: "Cycle Border", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("b"), Label: "border"}}},
+	{Command: commandPadding, Label: "Cycle Padding", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("p"), Label: "padding"}}},
+	{Command: commandDashed, Label: "Toggle Dashed Stroke", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("-"), Label: "dashed"}}},
+	{Command: commandArrowEnd, Label: "Cycle End Arrow", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("a"), Label: "end arrow"}}},
+	{Command: commandArrowStart, Label: "Cycle Start Arrow", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("shift+a"), Label: "start arrow"}}},
+	{Command: commandTextHorizontal, Label: "Cycle Horizontal Alignment", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("t"), Label: "horizontal text"}}},
+	{Command: commandTextVertical, Label: "Cycle Vertical Alignment", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("shift+t"), Label: "vertical text"}}},
+	{Command: commandDuplicate, Label: "Duplicate Selection", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("d"), Label: "duplicate"}}},
+	{Command: commandDelete, Label: "Delete Selection", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("backspace", "delete"), Label: "delete"}}},
+	{Command: commandLayerBackward, Label: "Send Backward", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("["), Label: "send backward"}}},
+	{Command: commandLayerForward, Label: "Bring Forward", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("]"), Label: "bring forward"}}},
+	{Command: commandLayerBack, Label: "Send to Back", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("{", "shift+["), Label: "send to back"}}},
+	{Command: commandLayerFront, Label: "Bring to Front", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("}", "shift+]"), Label: "bring to front"}}},
+	{Command: commandUndo, Label: "Undo", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("u", "ctrl+z"), Label: "undo"}}},
+	{Command: commandRedo, Label: "Redo", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+r", "ctrl+y", "ctrl+shift+z"), Label: "redo"}}},
+	{Command: commandExpand, Label: "Expand Selection", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: primaryKeys("a"), Label: "expand selection"}}},
+	{Command: commandGroup, Label: "Group / Ungroup", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: primaryKeys("g"), Label: "group / ungroup"}}},
+	{Command: commandCopy, Label: "Copy Selection", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("ctrl+c", "super+c"), Label: "copy"}}},
+	{
+		Command: commandCancel, Label: "Cancel Tool",
+		Bindings: []actionBinding{
+			{Scope: scopeLabel, Chords: chrome.Keys("esc"), Label: "finish label"},
+			{Scope: scopeCanvas, Chords: chrome.Keys("esc"), Label: "cancel tool"},
+		},
+	},
+	{Command: commandCommitLabel, Label: "Commit Label", Bindings: []actionBinding{{Scope: scopeLabel, Chords: chrome.Keys(labelCommitControlChord, labelCommitSuperChord), Label: "commit label"}}},
+	{Command: commandQuit, Label: "Quit", Bindings: []actionBinding{{Scope: scopeCanvas, Chords: chrome.Keys("q"), Label: "cursor / quit"}}},
+	{Command: commandHelp, Label: "Toggle Help", Bindings: []actionBinding{{Scope: scopeGlobal, Chords: chrome.Keys("?"), Label: "toggle help"}}},
+	{Command: commandCopyCanvasPath, Label: "Copy Path to Canvas", Bindings: []actionBinding{{Scope: scopeGlobal}}},
+	{Command: commandPreferences, Label: "Open Preferences", Bindings: []actionBinding{{Scope: scopeGlobal, Chords: primaryKeys("p"), Label: string(scopePreferences)}}},
+	{Command: commandSave, Label: "Save Canvas", Bindings: []actionBinding{{Scope: scopeGlobal, Chords: primaryKeys("s"), Label: string(commandSave)}}},
+	{Command: commandSidebar, Label: "Toggle Sidebar", Bindings: []actionBinding{{Scope: scopeGlobal, Chords: primaryKeys("b"), Label: "toggle sidebar"}}},
+	{Command: commandPalette, Label: "Open Command Palette", HidePalette: true, Bindings: []actionBinding{{Scope: scopeGlobal, Chords: chrome.Keys(paletteDefaultChord), Label: "open command palette"}}},
+}
+
+var applicationBindings = flattenActionBindings(applicationActions)
+
+func flattenActionBindings(actions []action) []chrome.Binding {
+	var bindings []chrome.Binding
+	for _, action := range actions {
+		for _, binding := range action.Bindings {
+			bindings = append(bindings, chrome.Binding{
+				Scope: binding.Scope, Chords: binding.Chords,
+				Command: action.Command, Label: binding.Label,
+			})
+		}
+	}
+	return bindings
 }
 
 func primaryKeys(key string) []chrome.Chord {
@@ -187,8 +236,10 @@ func (m *Model) updateSemanticCommand(message chrome.CommandMsg) tea.Cmd {
 		commandUndo:
 		return m.updateEditCommand(message.Command)
 	case commandBack,
+		commandCopyCanvasPath,
 		commandHelp,
 		commandNewCanvas,
+		commandPalette,
 		commandPreferences,
 		commandQuit,
 		commandSave,
@@ -569,8 +620,12 @@ func (m *Model) updateChromeCommand(command chrome.CommandID) tea.Cmd {
 		}
 	case commandHelp:
 		m.openHelp()
+	case commandCopyCanvasPath:
+		return m.copyCanvasPath()
 	case commandNewCanvas:
 		m.newCanvas()
+	case commandPalette:
+		return m.openPalette()
 	case commandPreferences:
 		if m.dialogs.ActiveID() == surfacePreferences {
 			return m.dismissDialog()

@@ -114,7 +114,7 @@ func TestResolverAdvertisesAmbiguousChordsOnlyWithKeyDisambiguation(t *testing.T
 	resolver, err := NewResolver([]Binding{
 		{
 			Scope:   testScopeGlobal,
-			Chords:  Keys(escapeChord, "ctrl+enter", "ctrl+y", "ctrl+shift+z"),
+			Chords:  Keys(escapeChord, "ctrl+enter", "ctrl+y", "ctrl+shift+z", "super+shift+x"),
 			Command: testBack,
 		},
 	})
@@ -130,6 +130,7 @@ func TestResolverAdvertisesAmbiguousChordsOnlyWithKeyDisambiguation(t *testing.T
 		{Scope: testScopeGlobal, Chord: "ctrl+enter", Command: testBack},
 		{Scope: testScopeGlobal, Chord: "ctrl+y", Command: testBack},
 		{Scope: testScopeGlobal, Chord: "ctrl+shift+z", Command: testBack},
+		{Scope: testScopeGlobal, Chord: "shift+super+x", Command: testBack},
 	}, resolver.Effective([]ScopeID{testScopeGlobal}))
 }
 

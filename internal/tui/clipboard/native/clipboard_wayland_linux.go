@@ -356,6 +356,12 @@ func wlRead(t Format) ([]byte, error) {
 		return wlReadSelection(textMIMEs)
 	case FmtImage:
 		return wlReadSelection(imageMIMEs)
+	case FmtFile:
+		data, err := wlReadSelection([]string{fileURIListMIME})
+		if err != nil || data == nil {
+			return data, err
+		}
+		return decodeFileURIList(data)
 	default:
 		mime, ok := formatMIME(t)
 		if !ok {
@@ -491,6 +497,9 @@ func wlEnumerateFormats() []Format {
 // types to FmtText, image/png to FmtImage, and anything else to a custom format
 // registered on demand.
 func wlFormatForMIME(m string) Format {
+	if m == fileURIListMIME {
+		return FmtFile
+	}
 	for _, tm := range textMIMEs {
 		if m == tm {
 			return FmtText
@@ -624,11 +633,19 @@ func wlWriteMany(values []Data) (<-chan struct{}, error) {
 	var data []wlSelectionData
 	for _, value := range values {
 		var mimes []string
+		contents := value.Bytes
 		switch value.Format {
 		case FmtText:
 			mimes = textMIMEs
 		case FmtImage:
 			mimes = imageMIMEs
+		case FmtFile:
+			mimes = []string{fileURIListMIME}
+			var err error
+			contents, err = encodeFileURIList(value.Bytes)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			mime, ok := formatMIME(value.Format)
 			if !ok {
@@ -637,7 +654,7 @@ func wlWriteMany(values []Data) (<-chan struct{}, error) {
 			mimes = []string{mime}
 		}
 		for _, mime := range mimes {
-			data = append(data, wlSelectionData{mime: mime, bytes: value.Bytes})
+			data = append(data, wlSelectionData{mime: mime, bytes: contents})
 		}
 	}
 
@@ -761,11 +778,15 @@ func wlServeSend(w *wlConn, body []byte, data []wlSelectionData) {
 func wlWatch(ctx context.Context, t Format) <-chan []byte {
 	recv := make(chan []byte, 1)
 	var mimes []string
+	file := false
 	switch t {
 	case FmtText:
 		mimes = textMIMEs
 	case FmtImage:
 		mimes = imageMIMEs
+	case FmtFile:
+		mimes = []string{fileURIListMIME}
+		file = true
 	default:
 		mime, ok := formatMIME(t)
 		if !ok {
@@ -801,6 +822,12 @@ func wlWatch(ctx context.Context, t Format) <-chan []byte {
 		d, err := wlReceiveOffer(w, sel, chosen)
 		if err != nil || len(d) == 0 {
 			return nil
+		}
+		if file {
+			d, err = decodeFileURIList(d)
+			if err != nil {
+				return nil
+			}
 		}
 		return d
 	}

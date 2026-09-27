@@ -25,9 +25,10 @@ import (
 var (
 	appkit = must(purego.Dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", purego.RTLD_GLOBAL|purego.RTLD_NOW))
 
-	_NSPasteboardTypeString = must2(purego.Dlsym(appkit, "NSPasteboardTypeString"))
-	_NSPasteboardTypePNG    = must2(purego.Dlsym(appkit, "NSPasteboardTypePNG"))
-	_NSPasteboardTypeTIFF   = must2(purego.Dlsym(appkit, "NSPasteboardTypeTIFF"))
+	_NSPasteboardTypeString  = must2(purego.Dlsym(appkit, "NSPasteboardTypeString"))
+	_NSPasteboardTypePNG     = must2(purego.Dlsym(appkit, "NSPasteboardTypePNG"))
+	_NSPasteboardTypeTIFF    = must2(purego.Dlsym(appkit, "NSPasteboardTypeTIFF"))
+	_NSPasteboardTypeFileURL = must2(purego.Dlsym(appkit, "NSPasteboardTypeFileURL"))
 
 	class_NSPasteboard      = objc.GetClass("NSPasteboard")
 	class_NSData            = objc.GetClass("NSData")
@@ -41,8 +42,10 @@ var (
 	sel_length               = objc.RegisterName("length")
 	sel_getBytesLength       = objc.RegisterName("getBytes:length:")
 	sel_dataForType          = objc.RegisterName("dataForType:")
+	sel_stringForType        = objc.RegisterName("stringForType:")
 	sel_clearContents        = objc.RegisterName("clearContents")
 	sel_setDataForType       = objc.RegisterName("setData:forType:")
+	sel_setStringForType     = objc.RegisterName("setString:forType:")
 	sel_dataWithBytesLength  = objc.RegisterName("dataWithBytes:length:")
 	sel_stringWithUTF8String = objc.RegisterName("stringWithUTF8String:")
 	sel_changeCount          = objc.RegisterName("changeCount")
@@ -120,6 +123,8 @@ func darwinFormatFor(t string) (Format, bool) {
 		return FmtText, true
 	case "public.png", "public.tiff":
 		return FmtImage, true
+	case "public.file-url":
+		return FmtFile, true
 	case "public.html":
 		return Register("text/html"), true
 	case "com.adobe.pdf":
@@ -148,6 +153,8 @@ func read(t Format) (buf []byte, err error) {
 		return clipboard_read_string(), nil
 	case FmtImage:
 		return clipboard_read_image(), nil
+	case FmtFile:
+		return clipboard_read_file()
 	default:
 		mime, ok := formatMIME(t)
 		if !ok {
@@ -260,11 +267,35 @@ func clipboard_read_image() []byte {
 	return buf.Bytes()
 }
 
+func clipboard_read_file() ([]byte, error) {
+	defer newAutoreleasePool()()
+	pasteboard := objc.ID(class_NSPasteboard).Send(sel_generalPasteboard)
+	uri := nsStringGo(pasteboard.Send(sel_stringForType, _NSPasteboardTypeFileURL))
+	if uri == "" {
+		return nil, nil
+	}
+	return decodeFileURI([]byte(uri))
+}
+
 func clipboardWriteMany(values []Data) bool {
 	defer newAutoreleasePool()()
 	pasteboard := objc.ID(class_NSPasteboard).Send(sel_generalPasteboard)
 	pasteboard.Send(sel_clearContents)
 	for _, value := range values {
+		if value.Format == FmtFile {
+			uri, err := encodeFileURI(value.Bytes)
+			if err != nil {
+				return false
+			}
+			if pasteboard.Send(
+				sel_setStringForType,
+				nsString(string(uri)),
+				_NSPasteboardTypeFileURL,
+			) == 0 {
+				return false
+			}
+			continue
+		}
 		data := objc.ID(class_NSData).Send(
 			sel_dataWithBytesLength,
 			unsafe.SliceData(value.Bytes),

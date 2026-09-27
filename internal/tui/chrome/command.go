@@ -356,10 +356,10 @@ func projectChord(chord Chord, profile KeyProfile, disambiguate bool) (Chord, bo
 }
 
 func chordRequiresDisambiguation(chord Chord) bool {
-	value := string(chord)
-	return strings.HasPrefix(value, "super+") ||
-		value == "ctrl+enter" ||
-		strings.Contains(value, "ctrl+shift+")
+	parts := strings.Split(string(chord), "+")
+	return slices.Contains(parts, "super") ||
+		slices.Contains(parts, "ctrl") &&
+			(slices.Contains(parts, "shift") || slices.Contains(parts, "enter"))
 }
 
 func effectiveProfile(profile KeyProfile) KeyProfile {

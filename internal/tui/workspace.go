@@ -20,6 +20,7 @@ const (
 	surfaceExport       chrome.SurfaceID = "export-dialog"
 	surfaceNotice       chrome.SurfaceID = "notice-dialog"
 	surfaceConfirmation chrome.SurfaceID = "confirmation-dialog"
+	surfacePalette      chrome.SurfaceID = "palette-dialog"
 )
 
 const (

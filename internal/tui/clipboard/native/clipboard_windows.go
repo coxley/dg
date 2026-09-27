@@ -100,6 +100,63 @@ func writeText(buf []byte) error {
 	return nil
 }
 
+func readFile() ([]byte, error) {
+	hDrop, _, err := getClipboardData.Call(cFmtHDrop)
+	if hDrop == 0 {
+		return nil, err
+	}
+	length, _, err := dragQueryFileW.Call(hDrop, 0, 0, 0)
+	if length == 0 {
+		return nil, err
+	}
+	path := make([]uint16, length+1)
+	written, _, err := dragQueryFileW.Call(
+		hDrop,
+		0,
+		uintptr(unsafe.Pointer(&path[0])),
+		uintptr(len(path)),
+	)
+	if written == 0 {
+		return nil, err
+	}
+	return []byte(string(utf16.Decode(path[:written]))), nil
+}
+
+func writeFile(buf []byte) error {
+	path, err := syscall.UTF16FromString(string(buf))
+	if err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
+	if len(path) == 1 {
+		return errors.New("invalid empty file path")
+	}
+	path = append(path, 0)
+	const headerSize = 20
+	data := make([]byte, headerSize+len(path)*2)
+	binary.LittleEndian.PutUint32(data[0:], headerSize)
+	binary.LittleEndian.PutUint32(data[16:], 1)
+	for i, value := range path {
+		binary.LittleEndian.PutUint16(data[headerSize+i*2:], value)
+	}
+
+	hMem, _, err := gAlloc.Call(gmemMoveable, uintptr(len(data)))
+	if hMem == 0 {
+		return fmt.Errorf("failed to allocate file clipboard data: %w", err)
+	}
+	p, _, err := gLock.Call(hMem)
+	if p == 0 {
+		gFree.Call(hMem)
+		return fmt.Errorf("failed to lock file clipboard data: %w", err)
+	}
+	memMove.Call(p, uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)))
+	gUnlock.Call(hMem)
+	if value, _, err := setClipboardData.Call(cFmtHDrop, hMem); value == 0 {
+		gFree.Call(hMem)
+		return fmt.Errorf("failed to set file clipboard data: %w", err)
+	}
+	return nil
+}
+
 // readImage reads the clipboard and returns PNG encoded image data
 // if presents. The caller is responsible for opening/closing the
 // clipboard before calling this function.
@@ -346,6 +403,8 @@ func windowsFormatFor(format uintptr) (Format, bool) {
 	switch format {
 	case cFmtUnicodeText:
 		return FmtText, true
+	case cFmtHDrop:
+		return FmtFile, true
 	case cFmtDIBV5, cFmtDIB, cFmtBitmap:
 		return FmtImage, true
 	}
@@ -419,6 +478,8 @@ func read(t Format) (buf []byte, err error) {
 		format = cFmtDIBV5
 	case FmtText:
 		format = cFmtUnicodeText
+	case FmtFile:
+		format = cFmtHDrop
 	default:
 		mime, ok := formatMIME(t)
 		if !ok {
@@ -446,6 +507,8 @@ func read(t Format) (buf []byte, err error) {
 		return readImage()
 	case cFmtUnicodeText:
 		return readText()
+	case cFmtHDrop:
+		return readFile()
 	default:
 		return readCustom(format)
 	}
@@ -475,6 +538,8 @@ func writeMany(values []Data) (<-chan struct{}, error) {
 				err = writeImage(value.Bytes)
 			case FmtText:
 				err = writeText(value.Bytes)
+			case FmtFile:
+				err = writeFile(value.Bytes)
 			default:
 				mime, ok := formatMIME(value.Format)
 				if !ok {
@@ -557,6 +622,7 @@ const (
 	cFmtBitmap      = 2 // Win+PrintScreen
 	cFmtDIB         = 8
 	cFmtUnicodeText = 13
+	cFmtHDrop       = 15
 	cFmtDIBV5       = 17
 	// Screenshot taken from special shortcut is in different format (why??), see:
 	// https://jpsoft.com/forums/threads/detecting-clipboard-format.5225/
@@ -648,4 +714,7 @@ var (
 	// bytes. Used to size reads of raw custom-format data.
 	// https://docs.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-globalsize
 	gSize = kernel32.NewProc("GlobalSize")
+
+	shell32        = syscall.NewLazyDLL("shell32")
+	dragQueryFileW = shell32.NewProc("DragQueryFileW")
 )

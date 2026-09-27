@@ -58,6 +58,7 @@ var dialogSpecs = [...]dialogSpec{
 	{ID: surfaceExport, DismissOutside: true},
 	{ID: surfaceNotice, Variant: modalview.Notice, DismissAnyKey: true},
 	{ID: surfaceConfirmation, DismissOutside: true},
+	{ID: surfacePalette, DismissOutside: true},
 }
 
 type dialogPlan struct {
@@ -67,16 +68,18 @@ type dialogPlan struct {
 
 // dialogController owns dialog selection, shell geometry, and body routing.
 type dialogController struct {
-	active       chrome.SurfaceID
-	shell        modalview.Model
-	preferences  *preferenceDialogBody
-	save         *saveDialogBody
-	export       exportDialogBody
-	notice       noticeDialogBody
-	confirmation *confirmationDialogBody
-	plan         dialogPlan
-	screen       chrome.Size
-	avoidTop     int
+	active        chrome.SurfaceID
+	shell         modalview.Model
+	preferences   *preferenceDialogBody
+	save          *saveDialogBody
+	export        exportDialogBody
+	notice        noticeDialogBody
+	confirmation  *confirmationDialogBody
+	palette       *paletteDialogBody
+	paletteSource chrome.SurfaceID
+	plan          dialogPlan
+	screen        chrome.Size
+	avoidTop      int
 }
 
 func newDialogController(
@@ -97,6 +100,7 @@ func newDialogController(
 		save:         newSaveDialogBody(theme.Save),
 		export:       exportDialogBody{clipboard: clipboard},
 		confirmation: newConfirmationDialogBody(theme.Confirmation),
+		palette:      newPaletteDialogBody(theme.Palette),
 	}
 }
 
@@ -140,6 +144,18 @@ func (d *dialogController) OpenChoice(
 ) {
 	d.confirmation.ResetChoice(title, message, confirm, accept, cancelLabel, cancel)
 	d.open(surfaceConfirmation)
+}
+
+func (d *dialogController) OpenPalette(items []paletteItem) {
+	d.paletteSource = d.active
+	d.palette.Reset(items)
+	d.open(surfacePalette)
+}
+
+func (d *dialogController) RestorePaletteSource() {
+	source := d.paletteSource
+	d.paletteSource = surfaceNone
+	d.Restore(source)
 }
 
 func (d *dialogController) open(id chrome.SurfaceID) {
@@ -380,6 +396,7 @@ func (d *dialogController) SetStyles(theme Theme) {
 	d.save.SetStyles(theme.Save)
 	d.export.SetStyles(theme.ExportForm)
 	d.confirmation.SetStyles(theme.Confirmation)
+	d.palette.SetStyles(theme.Palette)
 }
 
 func (d *dialogController) activeBody() dialogBody {
@@ -394,6 +411,8 @@ func (d *dialogController) activeBody() dialogBody {
 		return &d.notice
 	case surfaceConfirmation:
 		return d.confirmation
+	case surfacePalette:
+		return d.palette
 	default:
 		return nil
 	}
@@ -586,6 +605,11 @@ func (m *Model) handleDialogResult(result dialogBodyResult) tea.Cmd {
 	case noticeDismissedMsg:
 		m.dialogs.notice.Clear()
 		m.dialogs.Restore(message.ReturnTo)
+	case paletteDismissedMsg:
+		m.dialogs.RestorePaletteSource()
+	case paletteSelectedMsg:
+		m.dialogs.RestorePaletteSource()
+		effect = m.updateSemanticCommand(chrome.CommandMsg{Command: message.Command})
 	case clearDraftsMsg:
 		m.clearDrafts()
 	case externalChoiceMsg:

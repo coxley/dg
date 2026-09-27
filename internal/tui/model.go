@@ -125,9 +125,10 @@ type Model struct {
 	exitErr     error
 	panicValue  any
 
-	clipboard    *clipboardview.Model
-	copyModifier tea.KeyMod
-	paste        clipboardPasteState
+	clipboard              *clipboardview.Model
+	keyboardDisambiguation bool
+	copyModifier           tea.KeyMod
+	paste                  clipboardPasteState
 
 	preferences    preferenceState
 	settingsStore  *settings.Store
@@ -410,7 +411,8 @@ func (m *Model) Update(message tea.Msg) (_ tea.Model, command tea.Cmd) {
 		return m, m.updateTerminalFocus(message)
 	case tea.KeyboardEnhancementsMsg:
 		syncWorkspace = true
-		m.bindings.SetKeyDisambiguation(message.SupportsKeyDisambiguation())
+		m.keyboardDisambiguation = message.SupportsKeyDisambiguation()
+		m.bindings.SetKeyDisambiguation(m.keyboardDisambiguation)
 		m.clipboard.SetReleaseEvents(message.SupportsEventTypes())
 	case tea.ClipboardMsg:
 		return m, m.updateClipboard(message)
@@ -549,7 +551,7 @@ func (m *Model) updatePresentation(message tea.Msg) (tea.Cmd, bool) {
 	case clipboardview.CopiedMsg:
 		return m.showNotice("Copied to clipboard", surfaceNone), true
 	case clipboardview.ErrorMsg:
-		m.setError("copy selection: " + message.Err.Error())
+		m.setError("copy to clipboard: " + message.Err.Error())
 		return nil, true
 	case updateAvailableMsg:
 		m.updateNotice.show(message)
@@ -672,6 +674,13 @@ func (m *Model) updateKey(message tea.KeyPressMsg) tea.Cmd {
 			m.updateNotice.blur()
 			return nil
 		}
+	}
+	if m.bindings.MatchesKey(message, commandPalette) {
+		if !m.keyboardDisambiguation || m.textEntryActive() ||
+			m.dialogs.ActiveID() == surfaceConfirmation {
+			return nil
+		}
+		return m.openPalette()
 	}
 	if m.dialogs.CapturesKey() {
 		return m.updateDialog(message)

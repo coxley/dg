@@ -53,6 +53,23 @@ func (m *Model) copySelection() tea.Cmd {
 	))
 }
 
+func (m *Model) copyCanvasPath() tea.Cmd {
+	if m.dialogs.ActiveID() != surfaceNone {
+		return nil
+	}
+	if m.canvasStore == nil || m.entry == nil {
+		m.setError("copy canvas path: active canvas has no file")
+		return nil
+	}
+	path, err := m.canvasStore.Path(*m.entry)
+	if err != nil {
+		m.setError("copy canvas path: " + err.Error())
+		return nil
+	}
+	m.status = ""
+	return m.updateClipboard(clipboardview.WriteFile(path))
+}
+
 func (m *Model) releaseCopy(message tea.KeyReleaseMsg) tea.Cmd {
 	var modifier tea.KeyMod
 	switch message.Code {

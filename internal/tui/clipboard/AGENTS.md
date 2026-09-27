@@ -11,9 +11,12 @@ MIT-licensed clipboard backend with atomic multi-format writes.
 ## Boundaries
 
 - The parent renders the selected diagram and sends its text and optional
-  portable fragment with `RequestCopy`.
+  portable fragment with `RequestCopy`. `WriteFile` bypasses gesture debounce
+  for direct path-copy actions.
 - Native writes atomically replace the clipboard with plain text and the
   fragment MIME type. OSC52 fallback writes plain text only.
+- `WriteFile` atomically publishes the raw path as text and one native file
+  reference. OSC52 fallback publishes only the raw path.
 - Fragment payloads smaller than `4 << 10` bytes remain raw. Larger payloads
   use gzip BestSpeed when it shrinks the value. Decoding rejects values larger
   than `64 << 20` bytes.
