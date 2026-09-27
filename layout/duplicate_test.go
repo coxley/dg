@@ -140,6 +140,81 @@ func TestDuplicateDrilledNodesOmitsParentGroup(t *testing.T) {
 	require.Zero(t, groups)
 }
 
+func TestDuplicateSelectionPreservesRelativeLayerOrder(t *testing.T) {
+	t.Parallel()
+	const (
+		backLabel  = "back"
+		frontLabel = "front"
+	)
+
+	t.Run("direct nodes", func(t *testing.T) {
+		geo, err := New()
+		require.NoError(t, err)
+		back, err := geo.NewNode(backLabel)
+		require.NoError(t, err)
+		front, err := geo.NewNode(frontLabel)
+		require.NoError(t, err)
+		require.NoError(t, geo.SendToBack(Hit{ID: front, Kind: HitNode}))
+		require.True(t, geo.Selection().SelectOnly(Hit{ID: back, Kind: HitNode}))
+		require.True(t, geo.Selection().Toggle(Hit{ID: front, Kind: HitNode}))
+
+		require.NoError(t, geo.DuplicateSelection(20, 0))
+
+		require.Equal(t, []string{frontLabel, backLabel}, selectedLayerLabels(geo))
+	})
+
+	t.Run("group descendants", func(t *testing.T) {
+		geo, err := New()
+		require.NoError(t, err)
+		back, err := geo.NewNode(backLabel)
+		require.NoError(t, err)
+		front, err := geo.NewNode(frontLabel)
+		require.NoError(t, err)
+		group, err := geo.NewGroup([]ir.Member{
+			{ID: front, Kind: ir.MemberNode},
+			{ID: back, Kind: ir.MemberNode},
+		})
+		require.NoError(t, err)
+		require.True(t, geo.Selection().SelectOnly(Hit{ID: group, Kind: HitGroup}))
+
+		require.NoError(t, geo.DuplicateSelection(20, 0))
+
+		require.Equal(t, []string{backLabel, frontLabel}, selectedLayerLabels(geo))
+	})
+
+	t.Run("contained edge", func(t *testing.T) {
+		geo, err := New()
+		require.NoError(t, err)
+		back, err := geo.NewNode(backLabel)
+		require.NoError(t, err)
+		front, err := geo.NewNode(frontLabel)
+		require.NoError(t, err)
+		edge := geo.ConnectNodes(back, ir.RightSide, ir.LeftSide, front)
+		require.NoError(t, geo.SendBackward(Hit{ID: edge, Kind: HitEdge}))
+		require.True(t, geo.Selection().SelectOnly(Hit{ID: back, Kind: HitNode}))
+		require.True(t, geo.Selection().Toggle(Hit{ID: front, Kind: HitNode}))
+
+		require.NoError(t, geo.DuplicateSelection(20, 0))
+
+		require.Equal(t, []string{backLabel, "edge", frontLabel}, selectedLayerLabels(geo))
+	})
+}
+
+func selectedLayerLabels(geo *Layout) []string {
+	var labels []string
+	for hit := range geo.DrawOrder() {
+		if !geo.Selection().Contains(hit) {
+			continue
+		}
+		if hit.Kind == HitEdge {
+			labels = append(labels, "edge")
+			continue
+		}
+		labels = append(labels, geo.Label(hit.ID))
+	}
+	return labels
+}
+
 func TestCloneIsIndependentAndPreservesSelection(t *testing.T) {
 	t.Parallel()
 

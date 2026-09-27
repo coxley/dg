@@ -316,8 +316,9 @@ func TestHistoryUndoesDuplicateSelection(t *testing.T) {
 	require.NoError(t, err)
 	right, err := geo.NewNodeAt("right", layout.NewPoint(12, 3))
 	require.NoError(t, err)
-	geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
+	edge := geo.ConnectNodes(left, ir.RightSide, ir.LeftSide, right)
 	require.NoError(t, geo.Build())
+	require.NoError(t, geo.SendBackward(layout.Hit{ID: edge, Kind: layout.HitEdge}))
 	history.Clear()
 
 	geo.Selection().SelectOnly(layout.Hit{ID: left, Kind: layout.HitNode})
@@ -326,6 +327,7 @@ func TestHistoryUndoesDuplicateSelection(t *testing.T) {
 	require.NoError(t, geo.DuplicateSelection(4, 5))
 	require.NoError(t, geo.Build())
 	require.NoError(t, transaction.Commit())
+	wantOrder := slices.Collect(geo.DrawOrder())
 
 	changed, err := history.Undo()
 	require.NoError(t, err)
@@ -333,6 +335,11 @@ func TestHistoryUndoesDuplicateSelection(t *testing.T) {
 	require.Len(t, geo.Graph().Nodes, 4)
 	require.False(t, geo.NodeExists(2))
 	require.False(t, geo.NodeExists(3))
+
+	changed, err = history.Redo()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, wantOrder, slices.Collect(geo.DrawOrder()))
 }
 
 func TestHistoryReplaysRouterChange(t *testing.T) {

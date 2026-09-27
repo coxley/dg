@@ -339,6 +339,7 @@ func (l *Layout) copyNodesFrom(
 	dx, dy int64,
 	copyRoutes bool,
 ) error {
+	sourceOrder := source.copiedLayerOrder(selectedNodes)
 	portMap := make([]uint32, len(source.graph.Ports))
 	nodeMap := make([]uint32, len(source.graph.Nodes))
 	edgeMap := make([]uint32, len(source.graph.Edges))
@@ -419,6 +420,9 @@ func (l *Layout) copyNodesFrom(
 		l.selection.Toggle(Hit{ID: duplicateID, Kind: HitEdge})
 		edgeMap[edgeID] = duplicateID + 1
 	}
+	if err := l.applyCopiedLayerOrder(sourceOrder, nodeMap, edgeMap); err != nil {
+		return err
+	}
 	for _, sourceID := range selectedNodes {
 		attachment, ok := source.NodeAttachment(sourceID)
 		if !ok ||
@@ -442,6 +446,60 @@ func (l *Layout) copyNodesFrom(
 		}
 	}
 	return l.copySelectedGroups(source, nodeMap, selectedGroups)
+}
+
+func (l *Layout) copiedLayerOrder(selectedNodes []uint32) []Hit {
+	selected := make([]bool, len(l.graph.Nodes))
+	for _, nodeID := range selectedNodes {
+		selected[nodeID] = true
+	}
+	order := make([]Hit, 0, len(selectedNodes))
+	for hit := range l.DrawOrder() {
+		switch hit.Kind {
+		case HitNode:
+			if selected[hit.ID] {
+				order = append(order, hit)
+			}
+		case HitEdge:
+			edge := l.graph.Edges[hit.ID]
+			nodeA := l.graph.Ports[edge.PortA].Node
+			nodeB := l.graph.Ports[edge.PortB].Node
+			if selected[nodeA] && selected[nodeB] {
+				order = append(order, hit)
+			}
+		default:
+			continue
+		}
+	}
+	return order
+}
+
+func (l *Layout) applyCopiedLayerOrder(
+	sourceOrder []Hit,
+	nodeMap, edgeMap []uint32,
+) error {
+	first := len(l.drawOrder) - len(sourceOrder)
+	for offset, source := range sourceOrder {
+		var mapped uint32
+		switch source.Kind {
+		case HitNode:
+			mapped = nodeMap[source.ID]
+		case HitEdge:
+			mapped = edgeMap[source.ID]
+		default:
+			return fmt.Errorf("copy layer has unsupported kind: %+v", source)
+		}
+		if mapped == 0 {
+			return fmt.Errorf("copy layer missing %+v", source)
+		}
+		if err := l.setLayerIndex(
+			Hit{ID: mapped - 1, Kind: source.Kind},
+			first+offset,
+		); err != nil {
+			return fmt.Errorf("copy layer %+v: %w", source, err)
+		}
+	}
+	return nil
 }
 
 func (l *Layout) copySelectedGroups(
